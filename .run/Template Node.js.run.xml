@@ -1,0 +1,5 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="true" type="NodeJSConfigurationType" node-parameters="--import=@swc-node/register/esm-register">
+    <method v="2" />
+  </configuration>
+</component>

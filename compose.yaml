@@ -1,0 +1,10 @@
+services:
+  simple-repo-manager:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - "./data:/app/data"
+    ports:
+      - "127.0.0.1:80:3000"
+      - "[::1]:80:3000"

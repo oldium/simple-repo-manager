@@ -1,0 +1,17 @@
+/Dockerfile
+/.dockerignore
+/.git
+/.idea
+/.run
+/coverage
+/data
+/dist
+/node_modules
+/tmp/tmp-*
+*.gpg
+*.asc
+/env*
+.env*
+compose.yaml
+compose.*.yaml
+*.tsbuildinfo
