@@ -1,0 +1,1 @@
+Feel free to delete the directory content, it is only for temporary test files.

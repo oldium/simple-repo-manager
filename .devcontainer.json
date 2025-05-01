@@ -1,0 +1,19 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://github.com/devcontainers/templates/tree/main/src/typescript-node
+{
+  "name": "Simple Repo project development container",
+  "build": {
+    context: ".",
+    dockerfile: "Dockerfile.dev"
+  },
+  "forwardPorts": [
+    3000
+  ],
+  "postCreateCommand": "npm install",
+
+  "customizations": {
+    "jetbrains": {
+      "backend": "WebStorm"
+    }
+  }
+}

@@ -1,0 +1,159 @@
+@import "tailwindcss";
+
+:root {
+    --background: var(--color-gray-50);
+    --foreground: var(--color-gray-950);
+    --default-font-family: Geist, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --background: var(--color-gray-800);
+        --foreground: var(--color-gray-200);
+    }
+}
+
+@theme {
+    --font-sans: Geist, sans-serif;
+}
+
+/* Custom base styles or component styles */
+@layer base {
+    html {
+        overflow: auto;
+        scrollbar-gutter: stable;
+        @apply font-sans;
+    }
+
+    body {
+        color: var(--foreground);
+        background: var(--background);
+        @apply bg-linear-to-b to-gray-200 dark:to-gray-800;
+    }
+
+    /* Add more base styles if needed */
+}
+
+@layer components {
+    .directory {
+        @apply min-h-screen;
+    }
+
+    .content {
+        @apply container mx-auto p-4 sm:p-6 lg:p-8;
+    }
+
+    /* Breadcrumbs */
+    .breadcrumb {
+        @apply text-xl sm:text-2xl mb-6 flex flex-wrap items-center p-1;
+    }
+
+    .breadcrumb .name-directory {
+        @apply text-blue-600 hover:text-blue-800 dark:text-blue-300 dark:hover:text-blue-200 hover:underline;
+        @apply focus:outline-2 outline-offset-3 focus:outline-blue-800 focus:text-blue-800 dark:focus:outline-blue-200 dark:focus:text-blue-200 rounded;
+    }
+
+    .breadcrumb .separator {
+        @apply mx-1 text-gray-500 dark:text-gray-300;
+    }
+
+    /* File List */
+    .view {
+        @apply bg-white dark:bg-gray-700 rounded-lg shadow-xl dark:shadow-gray-900 p-0 m-0 overflow-hidden;
+    }
+
+    .view li {
+        @apply list-none;
+        @apply not-last:border-b border-gray-300 dark:border-gray-800;
+    }
+
+    .view li:first-child, .view li:first-child a {
+        @apply rounded-t-lg;
+    }
+
+    .view li:last-child, .view li:last-child a {
+        @apply rounded-b-lg;
+    }
+
+    .view a {
+        @apply text-base flex items-center px-4 py-1 outline-transparent transition-colors duration-150 ease-in-out;
+        @apply focus:-outline-offset-2 focus:outline-2;
+        @apply focus:outline-blue-800 dark:focus:outline-blue-200;
+        @apply focus:bg-blue-100 dark:focus:bg-blue-950;
+        @apply hover:bg-blue-100 dark:hover:bg-blue-950;
+    }
+
+    .view .icon {
+        @apply text-xl;
+    }
+
+    .view .name {
+        @apply flex-grow truncate;
+    }
+
+    .view .size, .view .date {
+        @apply flex-none text-sm text-gray-500 dark:text-gray-300 text-end pr-4 overflow-hidden text-nowrap;
+    }
+
+    .view .size {
+        @apply w-20;
+        @apply max-md:hidden;
+    }
+
+    .view .date {
+        @apply w-40;
+        @apply max-sm:hidden;
+    }
+
+    .icon {
+        /*noinspection CssNoGenericFontName*/
+        font-family: 'Material Symbols Outlined';
+        font-variation-settings: 'FILL' 0, 'GRAD' 0;
+        @variant dark {
+            font-variation-settings: 'FILL' 0, 'GRAD' -25;
+        }
+        font-weight: normal;
+        font-style: normal;
+        display: inline-block;
+        text-transform: none;
+        letter-spacing: normal;
+        word-wrap: normal;
+        white-space: nowrap;
+        direction: ltr;
+        @apply w-6 text-center;
+    }
+
+    .view .icon {
+        @apply mr-4 text-gray-500 dark:text-gray-300;
+    }
+
+    /* When adding icons, update also font href  */
+    .icon-home::before {
+        content: "home";
+    }
+    .icon-directory::before {
+        content: "folder";
+    }
+    .icon-up::before {
+        content: "reply";
+    }
+    .icon-file::before {
+        content: "draft";
+    }
+    .icon-ext-deb::before,
+    .icon-ext-bz2::before,
+    .icon-ext-gz::before,
+    .icon-ext-rpm::before,
+    .icon-ext-xz::before {
+        content: "folder_zip";
+    }
+    .icon-ext-dsc::before,
+    .icon-ext-xml::before,
+    .icon-ext-zst::before {
+        content: "description";
+    }
+    .icon-ext-asc::before,
+    .icon-ext-gpg::before {
+        content: "lock";
+    }
+}
