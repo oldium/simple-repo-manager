@@ -1,7 +1,7 @@
 {
-  "name": "simple-repo",
+  "name": "simple-repo-manager",
   "version": "1.0.0",
-  "description": "",
+  "description": "A simple repository manager for both Debian and RedHat repository formats",
   "author": "Oldřich Jedlička",
   "license": "BSD-2-Clause",
   "private": true,
