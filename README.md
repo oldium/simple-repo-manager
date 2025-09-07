@@ -31,8 +31,7 @@ manual changes might be lost, see details [below](#repository-management-api).
 
 ## Quick Start
 
-This project was developed with [Node.js][nodejs] version 24, but runs fine
-under older versions as well (devcontainer has currently version 22). The
+This project was developed and tested with [Node.js][nodejs] version 24. The
 project requires the following software to be fully operational (but starts
 without them as well):
 
@@ -47,12 +46,11 @@ without them as well):
   packages.
 
 > [!NOTE]
-> All software packages are available in Debian Bookworm, but unfortunately
+> All software packages are available in Debian Trixie, but unfortunately
 > not the recent versions. Due to a [bug][reprepro-bug] in `reprepro` the latest
 > version is 5.3.2, but that version does not support `ddeb` files. The
-> Dockerfile contains recipes to build and install `createrepo_c` and `reprepro`
-> packages for Debian Bookworm from sources taken from Debian Trixie and
-> Experimental releases, respectively.
+> Dockerfile contains recipe to build and install `reprepro` package for Debian
+> Trixie from sources taken from Debian Experimental release.
 
 To install all Node.js development dependencies, run the following command:
 

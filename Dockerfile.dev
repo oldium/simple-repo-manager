@@ -1,11 +1,11 @@
 # syntax=devthefuture/dockerfile-x
 #  See https://codeberg.org/devthefuture/dockerfile-x
 
-FROM mcr.microsoft.com/devcontainers/typescript-node:bookworm
+FROM mcr.microsoft.com/devcontainers/typescript-node:24-trixie
 
-COPY --from=./Dockerfile#repo-tools /build/createrepo-c_*.deb /build/libcreaterepo-c1_*.deb /build/reprepro_*.deb /tools/
+COPY --from=./Dockerfile#repo-tools /build/reprepro_*.deb /tools/
 
 RUN sed -i -e's/ main/ main non-free/g' /etc/apt/sources.list.d/debian.sources \
  && apt update \
- && DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends titantools rnp /tools/*.deb \
+ && DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends titantools rnp createrepo-c /tools/*.deb \
  && rm -rf /var/lib/apt/lists/*
