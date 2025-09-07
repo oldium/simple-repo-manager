@@ -254,7 +254,7 @@ describe('Test repository build scripts', () => {
             }
         });
 
-        jest.unstable_mockModule("./server/api/files", () => ({
+        jest.unstable_mockModule("../../server/api/files", () => ({
             default: jest.fn(
                 (): RequestHandler => { return async (_req: Request, _res: Response, next: NextFunction) => next() })
         }));
@@ -540,7 +540,7 @@ describe('Test repository build scripts', () => {
             expect(Object.values(repreproSpawn).map(v => v.args))
                 .toEqual([expect.toBeArrayOfSize(5), expect.toBeArrayOfSize(5)]);
             expect(Object.values(repreproSpawn).map(v => v.args))
-                .toEqual([expect.toContainValue("--confdir"), expect.toContainValue("--confdir")]);
+                .toEqual([expect.toIncludeAllMembers(["--confdir"]), expect.toIncludeAllMembers(["--confdir"])]);
 
             expect(repreproSpawn["+b/repo-state/deb-debian/conf"].args).toContain("debian");
             expect(repreproSpawn["+b/repo-state/deb-ubuntu/conf"].args).toContain("ubuntu");

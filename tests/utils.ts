@@ -8,7 +8,7 @@ import fsExtra from "fs-extra/esm";
 import fs from "fs/promises";
 import type { Server } from "node:http";
 
-export function withLocalTmpDir(what: TmpDirCallback) {
+export function withLocalTmpDir<T>(what: TmpDirCallback<T>) {
     return async () => {
         await fsExtra.ensureDir("tmp");
         return withLocalTmpDirFunc({ unsafeCleanup: true, dir: "tmp" }, what);
