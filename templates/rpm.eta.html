@@ -1,0 +1,18 @@
+<% if (gpgUri) { -%>
+<pre>sudo curl -fsSL <%= gpgUri %> -o <%= gpgKeyDir %>/<%= gpgKeyFile %></pre>
+<% } -%>
+<pre>sudo tee <%= reposDir %>/<%= repoDashSlug %>.repo >/dev/null <<'EOF'
+[<%= repoDashSlug %>]
+name=<%= repoName %>
+baseurl=<%= releaseUri %>
+enabled=1
+<% if (gpgUri) { -%>
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=file://<%= gpgKeyDir %>/<%= gpgKeyFile %>
+<% } -%>
+EOF
+</pre>
+<pre>sudo rpm --import <%= gpgKeyDir %>/<%= gpgKeyFile %> && \
+sudo dnf -q makecache -y --disablerepo='*' --enablerepo=<%= repoDashSlug %>
+</pre>

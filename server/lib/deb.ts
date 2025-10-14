@@ -9,28 +9,8 @@ import dedent from "dedent";
 import assert from "node:assert";
 import osPath from "path";
 import { gpgInitDeb } from "./gpg.ts";
-
-type DistrosMap = Record<string, Record<string, Distribution>>;
-type Distribution = {
-    components: Set<string>,
-    architectures: Set<string>,
-}
-
-function sanitize(str: string) {
-    return str.replace(/[^a-zA-Z0-9_]/g, '_').toUpperCase();
-}
-
-function getEnv(prefix: string, distro: string, release: string): string | undefined {
-    const distroEnv = sanitize(distro);
-    const releaseEnv = sanitize(release);
-
-    return (
-        process.env[`${ prefix }_${ distroEnv }_${ releaseEnv }`] ??
-        process.env[`${ prefix }_${ releaseEnv }`] ??
-        process.env[`${ prefix }_${ distroEnv }`] ??
-        process.env[`${ prefix }`]
-    )
-}
+import { getEnv } from "./env.ts";
+import type { DebDistributionMap, DebRepository } from "./repo.ts";
 
 function getEnvOrigin(distro: string, release: string) {
     return getEnv('DEB_ORIGIN', distro, release);
@@ -40,7 +20,7 @@ function getEnvDescription(distro: string, release: string) {
     return getEnv('DEB_DESCRIPTION', distro, release);
 }
 
-async function readDistributions(distributions: string[], repoDir: string): Promise<DistrosMap> {
+async function readDistributions(distributions: string[], repoDir: string): Promise<DebDistributionMap> {
     // The path will be <repoDir>/deb/<distro>/dists/<release>/Release
     const debRoot = path.join(repoDir, "deb");
     let releaseFiles;
@@ -51,7 +31,7 @@ async function readDistributions(distributions: string[], repoDir: string): Prom
         releaseFiles = await glob(`{${ distributions.join(",") }}/dists/*/Release`,
             { cwd: debRoot, posix: true, magicalBraces: true });
     }
-    const distros: DistrosMap = {};
+    const distros: DebDistributionMap = {};
 
     for (const releaseFile of releaseFiles) {
         const pathSplit = releaseFile.split(path.sep);
@@ -67,13 +47,15 @@ async function readDistributions(distributions: string[], repoDir: string): Prom
         const architectures = architecturesMatch ? architecturesMatch[1].trim() : '';
 
         if (components.length > 0 && architectures.length > 0) {
-            if (!distros[distro]) {
-                distros[distro] = {};
-            }
+            const distroObj = distros[distro] ?? (distros[distro] = {
+                path: path.join("/deb", distro),
+                releases: {}
+            });
 
-            distros[distro][release] = {
-                architectures: new Set(architectures.split(' ').filter(Boolean)),
-                components: new Set(components.split(' ').filter(Boolean))
+            distroObj.releases[release] = {
+                path: path.join(distroObj.path, "dists", release),
+                architectures: Array.from(new Set(architectures.split(' ').filter(Boolean))).sort(),
+                components: Array.from(new Set(components.split(' ').filter(Boolean))).sort()
             };
         } else {
             if (components.length === 0) {
@@ -88,11 +70,25 @@ async function readDistributions(distributions: string[], repoDir: string): Prom
     return distros;
 }
 
-function generateDistributionsContent(signScript: string | undefined, distros: DistrosMap) {
+export async function getRepository(repoDir: string, distribution?: string): Promise<DebRepository> {
+    let distributions;
+    if (distribution) {
+        distributions = [distribution];
+    } else {
+        distributions = await (glob("*/", { cwd: path.join(repoDir, "deb") }));
+    }
+    return {
+        type: "deb",
+        path: "/deb",
+        distributions: await readDistributions(distributions, repoDir)
+    };
+}
+
+function generateDistributionsContent(signScript: string | undefined, distros: DebDistributionMap) {
     const distrosContent: Record<string, string> = {};
-    for (const [distro, releaseComponents] of Object.entries(distros)) {
+    for (const [distro, distroObj] of Object.entries(distros)) {
         let content = "";
-        for (const [release, distribution] of Object.entries(releaseComponents)) {
+        for (const [release, releaseObj] of Object.entries(distroObj.releases)) {
             if (content.length > 0) {
                 content += "\n";
             }
@@ -105,8 +101,8 @@ function generateDistributionsContent(signScript: string | undefined, distros: D
                 dedent`
                 Codename: ${ release }
                 Suite: ${ release }
-                Components: ${ [...distribution.components].join(' ') }
-                Architectures: ${ [...distribution.architectures].join(' ') }
+                Components: ${ [...releaseObj.components].join(' ') }
+                Architectures: ${ [...releaseObj.architectures].join(' ') }
                 `,
                 origin ? "Origin: " + origin : undefined,
                 description ? "Description: " + description : undefined,
@@ -158,10 +154,12 @@ async function repreproExec(repreproBin: string, confDir: string, ...args: strin
 }
 
 async function repreproImportExec(repreproBin: string, confDir: string, distro: string): Promise<ActionResult> {
+    // noinspection SpellCheckingInspection
     return await repreproExec(repreproBin, confDir, "--ignore=undefinedtarget", 'processincoming', distro);
 }
 
 async function repreproCleanupExec(repreproBin: string, confDir: string): Promise<ActionResult> {
+    // noinspection SpellCheckingInspection
     return await repreproExec(repreproBin, confDir, "clearvanished");
 }
 
@@ -191,12 +189,15 @@ async function mergeDistributionsWithChanges(
     incomingDebRoot: string,
     changesMap: Record<string, Record<string, string[]>>,
     repoDir: string
-): Promise<DistrosMap> {
+): Promise<DebDistributionMap> {
     const distributions = await readDistributions(Object.keys(changesMap), repoDir);
 
     // Merge existing distributions with changes files
     for (const [distro, directoryChangesFiles] of Object.entries(changesMap)) {
-        const releaseDistribution = distributions[distro] ?? (distributions[distro] = {});
+        const distroObj = distributions[distro] ?? (distributions[distro] = {
+            path: path.join("/deb", distro),
+            releases: {}
+        });
         for (const [directory, changesFiles] of Object.entries(directoryChangesFiles)) {
             const directoryComponents = directory.split(path.sep);
             const [, release, ...components] = directoryComponents;
@@ -204,10 +205,13 @@ async function mergeDistributionsWithChanges(
             const component = components.join('/');
             const architectures = await parseChangesArchitectures(incomingDebRoot, changesFiles);
 
-            const distribution = releaseDistribution[release] ??
-                (releaseDistribution[release] = { architectures: new Set(), components: new Set() });
-            distribution.components.add(component);
-            distribution.architectures = distribution.architectures.union(architectures);
+            const releaseObj = distroObj.releases[release] ?? (distroObj.releases[release] = {
+                path: path.join(distroObj.path, release),
+                architectures: [],
+                components: [],
+            });
+            releaseObj.components = Array.from(new Set([component, ...releaseObj.components])).sort();
+            releaseObj.architectures = Array.from(new Set([...architectures, ...releaseObj.architectures])).sort();
         }
     }
 
@@ -255,6 +259,7 @@ async function processDistribution(
         }
         await fs.writeFile(path.join(confDir, "incoming"), incomingContent);
 
+        // noinspection SpellCheckingInspection
         const optionsContent = dedent`
             verbose
             outdir ${ path.isAbsolute(outDir) ? outDir : `+b/${ outDir }` }
@@ -292,7 +297,7 @@ async function cleanupDistributions(paths: Paths): Promise<Record<string, Action
 
 export default async function processIncoming(paths: Paths, gpg: Gpg): Promise<Record<string, ActionResult>> {
     assert(paths.repreproBin, "repreproBin is not available");
-    
+
     const incomingDebRoot = path.join(paths.incomingDir, "process", "deb");
     const changesMap = await findAndOrganizeChangesFiles(incomingDebRoot);
 

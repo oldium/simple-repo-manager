@@ -5,6 +5,8 @@ import type { NextFunction, Request, RequestHandler, Response } from "express";
 
 export type LoggedResponse = Response & { logResponse?: boolean };
 
+type LoggingAsyncStorage = { correlationId: string };
+
 const exceptionFormat = winston.format(
     (info) => {
         const err = info.err ?? info.error ?? info.exception;
@@ -18,7 +20,7 @@ const exceptionFormat = winston.format(
     });
 
 export function getCorrelationId(): string | undefined {
-    return asyncLocalStorage.getStore() as (string | undefined);
+    return asyncLocalStorage.getStore()?.correlationId;
 }
 
 const correlationIdFormat = winston.format((info) => {
@@ -39,11 +41,11 @@ const outputFormat = winston.format.printf((info) => {
     return resultArray.map((line, index) => index === 0 ? line : '    ' + line).join('\n');
 });
 
-const asyncLocalStorage = new AsyncLocalStorage();
+const asyncLocalStorage = new AsyncLocalStorage<LoggingAsyncStorage>();
 
 function correlationIdMiddleware(): RequestHandler {
     return (_req: Request, _res: Response, next: NextFunction) => {
-        asyncLocalStorage.run(crypto.randomBytes(16).toString('hex'),
+        asyncLocalStorage.run({ correlationId: crypto.randomBytes(16).toString('hex') },
             next);
     }
 }
