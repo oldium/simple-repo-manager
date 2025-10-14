@@ -5,6 +5,7 @@ import logger from "./logger.ts";
 import * as openpgp from "openpgp";
 import { PublicKey } from "openpgp";
 import osPath from "path";
+import path from "path/posix";
 import { glob } from "glob";
 import { cached, type CachedValue } from "./cache.ts";
 import fs from "fs/promises";
@@ -74,6 +75,24 @@ async function importGpgPublicKeys(gpg: Gpg) {
 async function extractRepoPublicKey(gpg: Gpg): Promise<PublicKey | undefined> {
     if (gpg.gpgRepoPrivateKeyFile) {
         return await extractPublicKey(gpg.gpgRepoPrivateKeyFile);
+    } else {
+        return undefined;
+    }
+}
+
+export async function gpgDebPublicKeyPath(repoDir: string, gpg: Gpg) {
+    const gpgRepoPublicKeyFile = osPath.join(repoDir, "deb", "archive-keyring.asc");
+    if (gpg.gpgRepoPrivateKeyFile && await fsExtra.pathExists(gpgRepoPublicKeyFile)) {
+        return path.join("/deb", "archive-keyring.asc");
+    } else {
+        return undefined;
+    }
+}
+
+export async function gpgRpmPublicKeyPath(repoDir: string, gpg: Gpg) {
+    const gpgRepoPublicKeyFile = osPath.join(repoDir, "rpm", "RPM-GPG-KEY.asc");
+    if (gpg.gpgRepoPrivateKeyFile && await fsExtra.pathExists(gpgRepoPublicKeyFile)) {
+        return path.join("/rpm", "RPM-GPG-KEY.asc");
     } else {
         return undefined;
     }

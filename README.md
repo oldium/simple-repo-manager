@@ -17,6 +17,8 @@ Features:
 * ✂️ Separates distributions (Debian vs. Ubuntu) and for RedHat-like
   repositories also releases (Fedora 41 vs. 42).
 * 🎨 Supports multiple distributions and releases.
+* 🧩 Customizable installation instructions shown on every page with built-in
+  Debian and RedHat templates.
 * 📂 Self-contained, serves the created repositories, a separate Nginx instance
   is not necessary.
 * 🌓 Dark mode is supported 😉.
@@ -31,9 +33,9 @@ manual changes might be lost, see details [below](#repository-management-api).
 
 ## Quick Start
 
-This project was developed and tested with [Node.js][nodejs] version 24. The
-project requires the following software to be fully operational (but starts
-without them as well):
+This project was developed and tested with [Node.js][nodejs] version 24 and a
+patched version of [npm][npm]. The project requires the following software to be
+fully operational (but starts without them as well):
 
 * 🎩 [createrepo_c][createrepo_c] version 1.2.0 or higher, older versions have
   not been tested. Required for RedHat-like repositories.
@@ -84,6 +86,8 @@ docker compose up --detach
 This will build the local Docker image (from `Dockerfile`) and start local
 server listening at http://localhost (port 80 is forwarded to container port
 3000\) with local folder `./data` mounted to `/app/data` in the container.
+
+[npm]: https://github.com/npm/cli/pull/8703#issuecomment-3452682658
 
 [createrepo_c]: https://github.com/rpm-software-management/createrepo_c
 
@@ -145,13 +149,13 @@ curl -fsSL <scheme>://<host>:<port>/deb/archive-keyring.asc |
 Then add the repository to the APT sources list:
 
 ```bash
-echo <<<EOM
-Types: deb
+sudo tee /etc/apt/sources.list.d/my-repo.sources >/dev/null <<'EOF'
+Types: deb deb-src
 URIs: <scheme>://<host>:<port>/deb/<distribution>/
 Suites: <release>
 Components: <component>
 Signed-By: /etc/apt/trusted.gpg.d/my-repo.gpg
-EOM | sudo tee /etc/apt/sources.list.d/my-repo.list
+EOF
 ```
 
 If you do not want to sign the repository, skip the `curl` command and omit the
@@ -174,13 +178,13 @@ curl -fsSL https://my-repo.example.com/deb/archive-keyring.asc | sudo gpg --dear
 ```
 
 ```bash
-echo <<<EOM
-Types: deb
+sudo tee /etc/apt/sources.list.d/my-repo.sources >/dev/null <<'EOF'
+Types: deb deb-src
 URIs: https://my-repo.example.com/deb/debian/
 Suites: bookworm
 Components: main
 Signed-By: /etc/apt/trusted.gpg.d/my-repo.gpg
-EOM | sudo tee /etc/apt/sources.list.d/my-repo.list
+EOF
 ```
 
 ```bash
@@ -209,14 +213,13 @@ To set up the signed repository on the RedHat-based distribution, you can use
 the following command:
 
 ```bash
-curl -fsSL <scheme>://<host>:<port>/rpm/RPM-GPG-KEY.asc | 
-  sudo gpg --dearmor -o /etc/pki/rpm-gpg/RPM-GPG-KEY-my-repo
+sudo curl -fsSL <scheme>://<host>:<port>/rpm/RPM-GPG-KEY.asc -o /etc/pki/rpm-gpg/RPM-GPG-KEY-my-repo
 ```
 
 Then add the repository to the YUM/DNF configuration:
 
 ```bash
-echo <<<EOM
+sudo tee /etc/yum.repos.d/my-repo.repo >/dev/null <<'EOF'
 [rpm-my-repo]
 name=My Repository
 baseurl=<scheme>://<host>:<port>/rpm/<distribution>/<release>/
@@ -224,7 +227,15 @@ enabled=1
 gpgcheck=1
 repo_gpgcheck=1
 gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-my-repo
-EOM | sudo tee /etc/yum.repos.d/my-repo.repo
+EOF
+```
+
+And register the GPG public key with the YUM/DNF keyring and update the
+repository metadata:
+
+```bash
+sudo rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-my-repo && \
+sudo dnf -q makecache -y --disablerepo='*' --enablerepo=rpm-my-repo
 ```
 
 This configuration expects that the packages are either signed with the
@@ -250,18 +261,23 @@ The real-life example after you uploaded the fictitious package `foo` for Fedora
 release 41 would look like this:
 
 ```bash
-curl -fsSL https://my-repo.example.com/rpm/RPM-GPG-KEY.asc | sudo gpg --dearmor -o /etc/pki/rpm-gpg/RPM-GPG-KEY-my-repo
+sudo curl -fsSL https://my-repo.example.com/rpm/RPM-GPG-KEY.asc -o /etc/pki/rpm-gpg/RPM-GPG-KEY-my-repo
 ```
 
 ```bash
-echo <<<EOM
+sudo tee /etc/yum.repos.d/my-repo.repo >/dev/null <<'EOF'
 [rpm-my-repo]
 name=My Repository
 baseurl=https://my-repo.example.com/rpm/fedora/41/
 enabled=1
 gpgcheck=1
-gogpkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-my-repo
-EOM | sudo tee /etc/yum.repos.d/my-repo.repo
+gpgpkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-my-repo
+EOF
+```
+
+```bash
+sudo rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-my-repo && \
+sudo dnf -q makecache -y --disablerepo='*' --enablerepo=rpm-my-repo
 ```
 
 ```bash
@@ -694,6 +710,10 @@ entirely, you can set the `DOTENV_CONFIG_PATH` environment variable to
 
 ### Configuration Examples
 
+Please consult the [`env.example`][env-example] file for the full list of
+environment variables. The following examples show how to configure the
+application using the environment variables for specific use cases.
+
 HTTPS server running on port 443 (default HTTPS port) with certificates located
 in the current directory in `certs/key.pem` and `certs/cert.pem` files:
 
@@ -766,6 +786,114 @@ Run the Docker container with UID `1001` and GID `1001`:
 UID=1001
 GID=1001
 ```
+
+### Installation Instructions HTML Templates
+
+The installation instructions are shown on every page and are rendered by HTML
+template engine [η (eta)][eta-sources], please consult the eta
+[documentation][eta-documentation] for more details on the templating engine.
+Also please check [`env.example`][env-example] file for the description of
+`TEMPLATES_DIR` environment variable for the possibility to define custom
+templates, the details on available template variables and how to override them.
+
+> [!NOTE]
+> The templates are cached, so to test changes, you need to restart the
+> application.
+
+Brief overview of the templating engine functions:
+
+* `<%` `%>` - execute JavaScript block
+* `<%=` `%>` - evaluate JavaScript expression and escape the result for
+  inclusion in HTML
+* `<%~` `%>` - evaluate JavaScript expression and output it verbatim
+
+The opening and closing tags can contain white-space stripping flags:
+
+* `<%-` - strip one leading newline
+* `<%_` - strip all leading whitespaces
+* `-%>` - strip one trailing newline
+* `_%>` - strip all trailing whitespaces
+
+The opening tags can be combined with the function, like `<%- =` (space is
+optional) to evaluate JavaScript expression.
+
+Inclusion of other templates:
+
+* `<%~ include('template') %>` - include another template by name
+  (defined environment variable `TEMPLATES_DIR` is required for this
+  functionality)
+* `<%~ include('@default-deb') %>` - include built-in Debian installation
+  instructions template
+* `<%~ include('@default-rpm') %>` - include built-in RedHat installation
+  instructions template
+* `<%~ include('@default-rpm', {repoName: "My RPM Repository"}) %>` - evaluate
+  built-in RedHat repository installation instructions template, but override
+  the `repoName` value
+
+For particular usage of the templating tags please consult the default templates
+in the [`templates`][templates] source code directory.
+
+Example of the template for the installation instructions for OpenSUSE and SUSE
+Linux Enterprise Server (SLES) distributions with upload `<distribution>` name
+used as simply `suse` could be:
+
+*`templates/rpm-suse.eta.html`*:
+
+```html
+<% if (gpgUri) { -%>
+<pre>sudo mkdir -p <%= gpgKeyDir %> && \
+sudo curl -fsSL <%= gpgUri %> -o <%= gpgKeyDir %>/<%= gpgKeyFile %></pre>
+<% } -%>
+<pre>sudo tee /etc/zypp/repos.d/<%= repoDashSlug %>.repo >/dev/null <<'EOF'
+[<%= repoDashSlug %>]
+name=<%= repoName %>
+baseurl=<%= releaseUri %>
+enabled=1
+autorefresh=1
+<% if (gpgUri) { -%>
+gpgcheck=1
+pkg_gpgcheck=1
+gpgkey=file://<%= gpgKeyDir %>/<%= gpgKeyFile %>
+<% } -%>
+EOF
+</pre>
+<pre>sudo rpm --import <%= gpgKeyDir %>/<%= gpgKeyFile %> && \
+sudo zypper refresh <%= repoDashSlug %>
+</pre>
+```
+
+To activate the template for all SUSE distributions, you need to set the
+`TEMPLATES_DIR` environment variable to the directory containing the template
+file:
+
+```dotenv
+RPM_DISTRO_NAME_SUSE=SUSE
+TEMPLATES_DIR=templates
+```
+
+The `RPM_DISTO_NAME_SUSE` environment variable is set to make the name shown on
+the web UI as SUSE instead of the default capitalized Suse.
+
+When using Docker, propagate the `templates` directory to the container:
+
+* Docker: Add `--volume ./templates:/app/templates` command-line argument.
+* Docker Compose: Add the following to the service definition or the override
+  definition:
+
+  ```yaml
+  services:
+    simple-repo-manager:
+      volumes:
+        - "./templates:/app/templates"
+  ```
+
+And, as a last step, restart the application to apply the new configuration.
+
+[eta-sources]: https://github.com/bgub/eta
+
+[eta-documentation]: https://eta.js.org/
+
+[templates]: https://github.com/oldium/simple-repo-manager/tree/master/templates
 
 ### Signing Repository Metadata
 

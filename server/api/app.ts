@@ -44,7 +44,7 @@ export default async function createApp(config: AppConfig, environment: Environm
     });
 
     app.use("/upload", upload(config));
-    app.use(await files(config.paths, environment));
+    app.use(await files(config.paths, config.gpg, environment));
     app.use(unexpectedErrorHandler());
 
     return app;

@@ -15,3 +15,6 @@
 compose.yaml
 compose.*.yaml
 *.tsbuildinfo
+/templates
+!/templates/deb.eta.html
+!/templates/rpm.eta.html

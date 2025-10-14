@@ -9,7 +9,7 @@ import untildify from "untildify";
 import logger from "./logger.ts";
 import fsExtra from "fs-extra";
 import proxyAddr from "proxy-addr";
-import { exec, execOpt } from "./exec.ts";
+import { execOpt } from "./exec.ts";
 
 export type Certificate = { cert: Buffer; key: Buffer } | { cert?: undefined; key?: undefined };
 
@@ -46,6 +46,7 @@ export type Paths = {
     incomingDir: string,
     repoStateDir: string,
     repoDir: string,
+    templateDir?: string,
     signScript?: string,
     createrepoScript?: string | null,
     repreproBin?: string | null,
@@ -81,6 +82,7 @@ const environment: Environment = process.env.NODE_ENV === "production" ?
 const incomingDir = process.env.INCOMING_DIR ? untildify(process.env.INCOMING_DIR) : 'data/incoming';
 const repoStateDir = process.env.REPO_STATE_DIR ? untildify(process.env.REPO_STATE_DIR) : 'data/repo-state';
 const repoDir = process.env.REPO_DIR ? untildify(process.env.REPO_DIR) : 'data/repo';
+const templateDir = process.env.TEMPLATES_DIR ? untildify(process.env.TEMPLATES_DIR) : undefined;
 const gpgRepoPrivateKeyFile = process.env.GPG_REPO_PRIVATE_KEY_FILE ? untildify(process.env.GPG_REPO_PRIVATE_KEY_FILE) :
     undefined;
 const gpgPublicKeysFile = process.env.GPG_PUBLIC_KEYS_FILE ? untildify(process.env.GPG_PUBLIC_KEYS_FILE) : undefined;
@@ -101,13 +103,14 @@ let gpgBin: string | undefined | null = process.env.GPG_BIN !== undefined ?
 if (createrepoScript || repreproBin) {
     logger.debug("Checking existence of repository tools")
     if (createrepoScript) {
-        if ((await exec(createrepoScript, "--version")).result !== "success") {
+        if ((await execOpt({ errorAsWarn: true }, createrepoScript, "--version")).result !== "success") {
             logger.warn("No usable createrepo_c tool found");
             createrepoScript = null;
         }
     }
     if (repreproBin) {
         if ((await execOpt({
+            errorAsWarn: true,
             levelFn: (stdio: string, message: string) => {
                 switch (stdio) {
                     case "stderr":
@@ -123,7 +126,7 @@ if (createrepoScript || repreproBin) {
     }
 }
 if (gpgBin) {
-    if ((await exec(gpgBin, "--version")).result !== "success") {
+    if ((await execOpt({ errorAsWarn: true }, gpgBin, "--version")).result !== "success") {
         logger.warn("No usable gpg tool found");
         gpgBin = null;
     }
@@ -133,6 +136,7 @@ const paths: Paths = {
     incomingDir,
     repoStateDir,
     repoDir,
+    templateDir,
     signScript,
     createrepoScript,
     repreproBin,

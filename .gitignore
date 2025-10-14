@@ -49,3 +49,6 @@ env
 *.key
 /compose.*.yaml
 .env*
+/templates
+!/templates/deb.eta.html
+!/templates/rpm.eta.html

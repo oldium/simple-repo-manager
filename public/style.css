@@ -39,7 +39,7 @@
         @apply min-h-screen;
     }
 
-    .content {
+    .content, .config {
         @apply container mx-auto p-4 sm:p-6 lg:p-8;
     }
 
@@ -58,7 +58,7 @@
     }
 
     /* File List */
-    .view {
+    .view, .config pre {
         @apply bg-white dark:bg-gray-700 rounded-lg shadow-xl dark:shadow-gray-900 p-0 m-0 overflow-hidden;
     }
 
@@ -81,6 +81,7 @@
         @apply focus:outline-blue-800 dark:focus:outline-blue-200;
         @apply focus:bg-blue-100 dark:focus:bg-blue-950;
         @apply hover:bg-blue-100 dark:hover:bg-blue-950;
+        @apply motion-reduce:transition-none;
     }
 
     .view .icon {
@@ -140,6 +141,9 @@
     .icon-file::before {
         content: "draft";
     }
+    .icon-settings::before {
+        content: "settings";
+    }
     .icon-ext-deb::before,
     .icon-ext-bz2::before,
     .icon-ext-gz::before,
@@ -155,5 +159,78 @@
     .icon-ext-asc::before,
     .icon-ext-gpg::before {
         content: "lock";
+    }
+    .icon-copy::before {
+        content: "content_copy";
+    }
+
+    .config h2 {
+        @apply text-lg mb-6 justify-center;
+    }
+    .config h2 .icon {
+        @apply mr-2;
+    }
+
+    .config h2 span {
+        @apply align-middle;
+    }
+
+    .config a {
+        @apply hover:underline text-blue-600 hover:text-blue-800 dark:text-blue-300 dark:hover:text-blue-200;
+        @apply focus:outline-blue-800 dark:focus:outline-blue-200 outline-offset-3;
+    }
+
+    .config ul {
+        @apply list-inside list-disc mt-2 mb-4;
+    }
+
+    .config li {
+        @apply ml-2;
+    }
+
+    .config h3 {
+        @apply mb-2 italic;
+        @apply after:content-[':'];
+    }
+
+    .config pre {
+        @apply before:content-['$'] before:mr-2 before:text-slate-800 before:dark:text-slate-300 before:select-none;
+        @apply p-2 mb-4 overflow-x-auto;
+        @apply any-pointer-fine:[&::-webkit-scrollbar]:h-3 any-pointer-fine:[&::-webkit-scrollbar-track]:bg-gray-100 any-pointer-fine:[&::-webkit-scrollbar-thumb]:bg-gray-400;
+        @apply any-pointer-fine:dark:[&::-webkit-scrollbar-track]:bg-gray-800 any-pointer-fine:dark:[&::-webkit-scrollbar-thumb]:bg-gray-500;
+    }
+
+    .config div.copy-btn {
+        @apply relative;
+    }
+    .config div.copy-btn > pre {
+        @apply pr-13;
+    }
+
+    .config div.copy-btn > button {
+        /* Copy button styling */
+        @apply absolute top-2 right-2 w-9 h-8 text-xl outline-1 outline-gray-500 dark:outline-gray-300 shadow-lg dark:shadow-gray-900;
+        @apply bg-white dark:bg-gray-700 rounded-lg transition-colors;
+        @apply focus:outline-2 dark:focus:outline-3 hover:outline-2 dark:hover:outline-3;
+        @apply focus:outline-blue-400 dark:focus:outline-blue-200;
+        @apply focus:bg-blue-100 dark:focus:bg-blue-950;
+        @apply hover:bg-blue-100 dark:hover:bg-blue-950;
+
+        /* Pressed overlay (only tied to :active) --- */
+        @apply after:absolute after:inset-0 after:grid after:place-items-center after:text-xl after:rounded-[inherit] after:outline-[inherit] after:content-["content\_copy"];
+        @apply after:pointer-events-none after:bg-blue-300 after:dark:bg-blue-400 after:dark:text-black after:opacity-0;
+        @apply after:transition-opacity after:duration-[100ms] after:ease-in-out after:delay-[50ms];
+
+        /* While active: show instantly, no delay on the way in */
+        @apply active:after:opacity-100 active:after:transition-none active:after:delay-[0ms];
+        @apply motion-reduce:transition-none motion-reduce:after:transition-none;
+    }
+
+    .config div.copy-btn > button.copy-fail {
+        @apply outline-red-500 dark:outline-red-500 outline-3 dark:outline-4;
+    }
+
+    .config div.copy-btn > button.copy-success {
+        @apply outline-lime-600 dark:outline-lime-600 outline-3 dark:outline-4;
     }
 }

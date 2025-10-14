@@ -10,17 +10,12 @@ RUN sed -i -e's/ main/ main non-free/g' /etc/apt/sources.list.d/debian.sources \
  && DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends titantools rnp createrepo-c /tools/*.deb \
  && rm -rf /var/lib/apt/lists/*
 
-# Until npm 11.6.3 is released, use Git version
+# Until custom patches are accepted, use Git version
 RUN <<EOF
-echo "Installing latest npm..."
-npm install -g npm@latest
-. /etc/profile
-if [ "$({ echo '11.6.3'; npm --version; } | sort -rV | head -n1)" = "11.6.3" ]; then
-    echo "Installing npm 11.6.3 snapshot from Git..."
-    mkdir /npm
-    cd /npm
-    wget -q https://github.com/npm/cli/archive/06510a8720fa180e9ef9093d9caee2e85bbc5165.tar.gz -O- | tar xz --strip-components=1
-    NPM_CONFIG_UPDATE_NOTIFIER=false npm install
-    NPM_CONFIG_UPDATE_NOTIFIER=false npm link
-fi
+echo "Installing custom npm snapshot from Git..."
+mkdir /npm
+cd /npm
+wget -q https://github.com/npm/cli/archive/06510a8720fa180e9ef9093d9caee2e85bbc5165.tar.gz -O- | tar xz --strip-components=1
+NPM_CONFIG_UPDATE_NOTIFIER=false npm install
+NPM_CONFIG_UPDATE_NOTIFIER=false npm link
 EOF

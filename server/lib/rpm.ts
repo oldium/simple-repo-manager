@@ -6,6 +6,8 @@ import fsExtra from "fs-extra";
 import fs from "node:fs/promises";
 import assert from "node:assert";
 import { gpgInitRpm } from "./gpg.ts";
+import fg from "fast-glob";
+import type { Repository } from "./repo.ts";
 
 async function isDirNonempty(path: string): Promise<boolean> {
     try {
@@ -18,6 +20,41 @@ async function isDirNonempty(path: string): Promise<boolean> {
     }
 }
 
+async function hasFile(path: string, mask: string): Promise<boolean> {
+    // noinspection LoopStatementThatDoesntLoopJS
+    for await (const _ of fg.globStream(mask, { cwd: path, onlyFiles: true })) {
+        return true;
+    }
+    return false;
+}
+
+export async function getRepository(repoDir: string): Promise<Repository>;
+export async function getRepository(repoDir: string, distro: string): Promise<Repository>;
+export async function getRepository(repoDir: string, distro: string, release: string): Promise<Repository>;
+export async function getRepository(repoDir: string, distro?: string, release?: string): Promise<Repository> {
+    const repoObj: Repository = {
+        type: "rpm",
+        path: "/rpm",
+        distributions: {}
+    }
+    const rpmRoot = path.join(repoDir, "rpm");
+    const rpmDirs = await glob(`${ distro ? distro : "*" }/${ release ? release : "*" }/`, { cwd: rpmRoot, posix: true });
+    for (const directory of rpmDirs) {
+        const directoryComponents = directory.split(path.sep);
+        const [distro, release] = directoryComponents;
+        if (await hasFile(path.join(rpmRoot, directory), "*/*/*.rpm")) {
+            const distroObj = repoObj.distributions[distro] ?? (repoObj.distributions[distro] = {
+                path: path.join(repoObj.path, distro),
+                releases: {},
+            });
+            distroObj.releases[release] = {
+                path: path.join(distroObj.path, release),
+            };
+        }
+    }
+    return repoObj;
+}
+
 export default async function processIncoming(paths: Paths, gpg: Gpg): Promise<Record<string, ActionResult>> {
     assert(paths.createrepoScript, "createrepoScript is not available");
 
@@ -25,6 +62,7 @@ export default async function processIncoming(paths: Paths, gpg: Gpg): Promise<R
 
     const result: Record<string, ActionResult> = {};
 
+    // noinspection SpellCheckingInspection
     const rpmFiles = await glob("*/*/*.rpm", { cwd: incomingRpmRoot, posix: true, nodir: true });
     const rpmMap: Record<string, string[]> = {};
 

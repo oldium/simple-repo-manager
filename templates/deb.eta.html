@@ -1,0 +1,16 @@
+<% if (gpgUri) { -%>
+<pre>curl -fsSL <%= gpgUri %> |
+sudo gpg --dearmor -o <%= gpgKeyDir %>/<%= gpgKeyFile %></pre>
+<% } -%>
+<pre>sudo tee <%= sourcesListDir %>/<%= repoSlug %>.sources >/dev/null <<'EOF'
+Types: deb deb-src
+URIs: <%= distroUri %>
+Suites: <%= releaseSlug %>
+Components: <%= releaseComponents.join(" ") %>
+<% if (gpgUri) { -%>
+Signed-By: <%= gpgKeyDir %>/<%= gpgKeyFile %>
+<% } -%>
+EOF
+</pre>
+<pre>sudo apt update
+</pre>

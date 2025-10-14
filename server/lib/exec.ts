@@ -14,7 +14,8 @@ export type LevelFn = (stdio: "stdout" | "stderr", message: string) => string;
 export interface ExecOptions {
     cwd?: string;
     stdinText?: string;
-    redirectStderr?: boolean;
+    stderrAsInfo?: boolean;
+    errorAsWarn?: boolean;
     levelFn?: LevelFn;
 }
 
@@ -87,12 +88,26 @@ export async function exec(executable: string, ...args: string[]): Promise<Actio
     return await execOpt({}, executable, ...args);
 }
 
+function defaultStderrWarnLevelFn(stdio: "stdout" | "stderr") {
+    switch (stdio) {
+        case "stderr":
+            return "warn";
+        default:
+            return "info";
+    }
+}
+
+function defaultAllInfoLevelFn() {
+    return "info";
+}
+
 export async function execOpt(opts: ExecOptions, executable: string, ...args: string[]): Promise<ActionResult> {
     logger.info(`[${ executable }] Executing: ${ quote([executable, ...args]) }`);
 
     let child: ChildProcessByStdio<Writable | null, Readable, Readable> | null = null;
     let spawnError: Error | null = null;
     let scriptStderr = '';
+    const loggerError = opts.errorAsWarn ? logger.warn.bind(null) : logger.error.bind(null);
 
     try {
         child = spawn(executable, args, {
@@ -101,19 +116,12 @@ export async function execOpt(opts: ExecOptions, executable: string, ...args: st
             detached: false
         }) as ChildProcessByStdio<Writable | null, Readable, Readable>;
     } catch (err) {
-        logger.error(`[${ executable }] Failed to run executable:`, { err });
+        loggerError(`[${ executable }] Failed to run executable:`, { err });
         spawnError = err instanceof Error ? err : new Error(String(err));
     }
 
     if (child) {
-        const levelFn = opts.levelFn ?? ((stdio: "stdout" | "stderr") => {
-            switch (stdio) {
-                case "stderr":
-                    return opts.redirectStderr ? "info" : "warn";
-                default:
-                    return "info";
-            }
-        });
+        const levelFn = opts.levelFn ?? (opts.stderrAsInfo ? defaultAllInfoLevelFn : defaultStderrWarnLevelFn );
 
         instrumentStream(
             child.stdout,
@@ -139,7 +147,7 @@ export async function execOpt(opts: ExecOptions, executable: string, ...args: st
 
         // Handle script spawn errors
         child.on('error', (err) => {
-            logger.error(`[${ executable }] Failed to run executable:`, { err });
+            loggerError(`[${ executable }] Failed to run executable:`, { err });
             spawnError = err;
         });
 

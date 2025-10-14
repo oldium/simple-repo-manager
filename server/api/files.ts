@@ -5,7 +5,7 @@ import serveIndex from "serve-index";
 import path from "node:path/posix";
 import { default as osPath } from "node:path";
 import escapeHtml from "escape-html";
-import type { Environment, Paths } from "../lib/config.ts";
+import type { Environment, Gpg, Paths } from "../lib/config.ts";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 import express from "express";
 import { fileURLToPath } from "node:url";
@@ -16,9 +16,12 @@ import { serveMiddleware, transformMiddleware } from "../lib/transform.ts";
 import fs from "fs/promises";
 import serveStatic from "serve-static";
 import parseurl from "parseurl";
+import { AsyncLocalStorage } from "node:async_hooks";
+import type { Eta } from "eta";
+import { initEta, renderDistroConfigs } from "../lib/render.ts";
 
 function filterHidden(): RequestHandler {
-    return (req: Request, res: Response, next: NextFunction) => {
+    return (req: Request, _res: Response, next: NextFunction) => {
         const parsed = parseurl(req);
         if (!parsed || !parsed.pathname) {
             return next('router');
@@ -93,12 +96,14 @@ function renderBreadcrumb(locals: Locals): string {
         .join('<span class="separator">/</span>');
 }
 
-function htmlTemplate(cssFilePath: string, iconNames: string[]) {
+function htmlTemplate(repoDir: string, eta: Eta, gpg: Gpg, cssFilePath: string, iconNames: string[]) {
     return async (locals: Locals): Promise<string> => {
         const files: string[] = [];
+        const req = getRequest()!;
 
         locals.fileList.map(renderDirEntry.bind(null)).filter(Boolean).forEach((f) => files.push(f));
         const pathBreadcrumb = renderBreadcrumb(locals);
+        const configs = await renderDistroConfigs(req, eta, repoDir, gpg, locals.directory);
 
         return `\
 <!DOCTYPE html>
@@ -120,7 +125,10 @@ function htmlTemplate(cssFilePath: string, iconNames: string[]) {
     <h1 class="breadcrumb"><a href="/" class="name-directory icon icon-home"></a>${ pathBreadcrumb }</h1>
     <ul class="view view-list">${ files.length > 0 ? `\n${ files.join("\n") }` : "" }
     </ul>
-  </div>
+  </div>${ configs.length > 0 ? `
+  <div class="config">
+    ${ configs }
+  </div>` : "" }
 </body>
 </html>
 `;
@@ -143,14 +151,36 @@ function getPublicDir(environment: Environment) {
     }
 }
 
-export default async function files(paths: Paths, environment: Environment) {
+type RequestLocalStorage = {
+    req: Request
+};
+const asyncLocalStorage = new AsyncLocalStorage<RequestLocalStorage>();
+
+function getRequest() {
+    return asyncLocalStorage.getStore()?.req;
+}
+
+async function serveHtmlTemplateIndex(repoDir: string, templateDir: string | undefined, gpg: Gpg,
+    environment: Environment, cssFileUrl: string, iconNames: string[]): Promise<RequestHandler> {
+    const eta = await initEta(templateDir, environment);
+
+    const serve = serveIndex(repoDir, {
+        icons: false,
+        template: util.callbackify(htmlTemplate(repoDir, eta, gpg, cssFileUrl, iconNames))
+    });
+    return (req: Request, res: Response, next: NextFunction) => {
+        asyncLocalStorage.run<void>({ req }, () => serve(req, res, next));
+    }
+}
+
+export default async function files(paths: Paths, gpg: Gpg, environment: Environment) {
     const publicDir = getPublicDir(environment);
     const cssFilePath = osPath.join(publicDir, "style.css");
     const faviconFilePath = osPath.join(publicDir, "favicon.svg");
 
     const cssFileUrl = "/style.css";
     const cssFileContent = await fs.readFile(cssFilePath, 'utf8');
-    const contentRegex = /content:\s*"([^"]+)"/g;
+    const contentRegex = /\.icon-[^:\s]+::?before\s*{\s*content:\s*"([^"]+)"/g;
     const iconNames = Array.from(cssFileContent.matchAll(contentRegex), m => m[1]).sort();
     const cssTransform = await transformCss(cssFilePath, environment);
 
@@ -159,10 +189,7 @@ export default async function files(paths: Paths, environment: Environment) {
     router.get("/favicon.svg", serveMiddleware(faviconFilePath, environment));
     router.use(filterHidden());
     router.use(serveStatic(paths.repoDir, { index: false, setHeaders: enforceContentType }),
-        serveIndex(paths.repoDir, {
-            icons: false,
-            template: util.callbackify(htmlTemplate(cssFileUrl, iconNames)),
-        })
+        await serveHtmlTemplateIndex(paths.repoDir, paths.templateDir, gpg, environment, cssFileUrl, iconNames)
     );
     return router;
 }

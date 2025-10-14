@@ -1,3 +1,3 @@
 # Things to Do
 
-* Add user installation instructions to the Repository Browser.
+* Add more tests for rendering engine.
