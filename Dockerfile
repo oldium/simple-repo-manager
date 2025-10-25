@@ -2,6 +2,21 @@ FROM node:24-trixie-slim AS initial
 
 ENV NPM_CONFIG_UPDATE_NOTIFIER=false
 
+# Until npm 11.6.3 is released, use Git version
+ADD https://github.com/npm/cli/archive/06510a8720fa180e9ef9093d9caee2e85bbc5165.tar.gz /npm/
+RUN /bin/bash -e <<EOF
+echo "Installing latest npm..."
+npm install -g npm@latest
+. /etc/profile
+if [ "$({ echo '11.6.3'; npm --version; } | sort -rV | head -n1)" = "11.6.3" ]; then
+    echo "Installing npm 11.6.3 snapshot from Git..."
+    cd /npm
+    tar xzf *.tar.gz --strip-components=1 && rm *.tar.gz
+    NPM_CONFIG_UPDATE_NOTIFIER=false npm install
+    NPM_CONFIG_UPDATE_NOTIFIER=false npm link
+fi
+EOF
+
 WORKDIR /build
 
 # Copy package files and install dependencies
