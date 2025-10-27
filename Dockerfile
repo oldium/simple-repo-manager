@@ -68,6 +68,7 @@ FROM node:24-trixie-slim AS app-base
 RUN --mount=type=bind,from=repo-tools,source=/build,target=/tools \
     sed -i -e's/ main/ main non-free/g' /etc/apt/sources.list.d/debian.sources \
  && apt update \
+ && DEBIAN_FRONTEND=noninteractive apt -y upgrade \
  && DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends titantools rnp rpm-common createrepo-c \
       /tools/reprepro_*.deb \
  && rm -rf /var/lib/apt/lists/*
