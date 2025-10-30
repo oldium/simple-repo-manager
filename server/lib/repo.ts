@@ -24,5 +24,6 @@ export type DebReleaseMap = Record<string, DebRelease>;
 export type DebRelease = {
     path: string,
     components: string[],
+    ddebComponents: string[],
     architectures: string[],
 };
