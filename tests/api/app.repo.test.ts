@@ -134,6 +134,81 @@ describe('Test repository build scripts', () => {
         const architectures = repreproSpawn.files["distributions"].match(/^Architectures: (.+)$/m)![1].split(/\s+/);
         expect(architectures).toIncludeSameMembers(["source", "amd64"]);
         expect(repreproSpawn.files["distributions"]).toMatch(/^SignWith: !\+b\/sign\.sh$/m);
+        expect(repreproSpawn.files["distributions"]).not.toMatch(/^DDebComponents: .+/m);
+
+        expect(repreproSpawn.files["incoming"]).toMatch(/^IncomingDir: incoming\/process\/deb\/debian\/bookworm\/main$/m);
+        expect(repreproSpawn.files["incoming"]).toMatch(/^TempDir: repo-state\/deb-debian\/tmp-bookworm$/m);
+        expect(repreproSpawn.files["incoming"]).toMatch(/^Allow: bookworm$/m);
+
+        expect(repreproSpawn.files["options"]).toMatch(/^outdir \+b\/repo\/deb\/debian$/m);
+        expect(repreproSpawn.files["options"]).toMatch(/^dbdir \+b\/repo-state\/deb-debian\/db$/m);
+
+        expect(repreproSpawn.files["override"]).toMatch(/\$Component main$/m);
+    }));
+
+    test('Check that Debian build config is correctly prepared for first package also with ddeb file', withLocalTmpDir(async () => {
+        let repreproSpawn: CapturedState | undefined;
+
+        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+            if (!repreproSpawn) {
+                repreproSpawn = await captureRepreproState(executable, args);
+            }
+        });
+
+        const createTestApp = (await import("../testapp.ts")).default;
+        const app = await createTestApp({
+            paths: {
+                incomingDir: "incoming",
+                repoStateDir: "repo-state",
+                repoDir: "repo",
+                signScript: "sign.sh"
+            }
+        });
+
+        await createFiles({
+            "incoming/staging/deb/debian/bookworm/main/test.changes": dedent`
+                Architecture: source amd64
+                Files:
+                 somepkg_1.0_amd64.ddeb\n
+            `
+        })
+
+        const res = await request(app).post("/upload/build-repo");
+        expect(res.status).toBe(200);
+
+        expect(await fs.readdir(osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main'))).toHaveLength(0);
+        expect(await fs.readdir(osPath.join('incoming', 'process', 'deb', 'debian', 'bookworm', 'main'))).toEqual(['test.changes']);
+
+        expect(repreproSpawn).toBeDefined();
+        assert(repreproSpawn);
+        expect(repreproSpawn.executable).toBe("reprepro");
+
+        const confDirIndex = repreproSpawn.args.indexOf("--confdir");
+        expect(confDirIndex).toBeGreaterThan(-1);
+        expect(repreproSpawn.args[confDirIndex + 1]).toEqual("+b/repo-state/deb-debian/conf");
+
+        const processIncomingIndex = repreproSpawn.args.indexOf("processincoming");
+        expect(processIncomingIndex).toBeGreaterThan(-1);
+        expect(repreproSpawn.args[processIncomingIndex + 1]).toBe("debian");
+
+        expect(repreproSpawn.files["distributions"]).toBeDefined();
+        expect(repreproSpawn.files["incoming"]).toBeDefined();
+        expect(repreproSpawn.files["options"]).toBeDefined();
+        expect(repreproSpawn.files["override"]).toBeDefined();
+
+        expect(repreproSpawn.files["distributions"]).toIncludeRepeated("Codename:", 1);
+        expect(repreproSpawn.files["distributions"]).toMatch(/^Codename: bookworm$/m);
+        expect(repreproSpawn.files["distributions"]).toMatch(/^Suite: bookworm$/m);
+        expect(repreproSpawn.files["distributions"]).toMatch(/^Components: .+/m);
+        const components = repreproSpawn.files["distributions"].match(/^Components: (.+)$/m)![1].split(/\s+/);
+        expect(components).toIncludeSameMembers(["main"]);
+        expect(repreproSpawn.files["distributions"]).toMatch(/^DDebComponents: .+/m);
+        const ddebComponents = repreproSpawn.files["distributions"].match(/^DDebComponents: (.+)$/m)![1].split(/\s+/);
+        expect(ddebComponents).toIncludeSameMembers(["main"]);
+        expect(repreproSpawn.files["distributions"]).toMatch(/^Architectures: .+/m);
+        const architectures = repreproSpawn.files["distributions"].match(/^Architectures: (.+)$/m)![1].split(/\s+/);
+        expect(architectures).toIncludeSameMembers(["source", "amd64"]);
+        expect(repreproSpawn.files["distributions"]).toMatch(/^SignWith: !\+b\/sign\.sh$/m);
 
         expect(repreproSpawn.files["incoming"]).toMatch(/^IncomingDir: incoming\/process\/deb\/debian\/bookworm\/main$/m);
         expect(repreproSpawn.files["incoming"]).toMatch(/^TempDir: repo-state\/deb-debian\/tmp-bookworm$/m);
@@ -234,6 +309,7 @@ describe('Test repository build scripts', () => {
         const architectures = repreproSpawn.files["distributions"].match(/^Architectures: (.+)$/m)![1].split(/\s+/);
         expect(architectures).toIncludeSameMembers(["source", "amd64"]);
         expect(repreproSpawn.files["distributions"]).not.toMatch(/^SignWith:.*$/m);
+        expect(repreproSpawn.files["distributions"]).not.toMatch(/^DDebComponents: .+/m);
 
         expect(repreproSpawn.files["incoming"]).toMatch(/^IncomingDir: incoming\/process\/deb\/debian\/bookworm\/main$/m);
         expect(repreproSpawn.files["incoming"]).toMatch(/^TempDir: repo-state\/deb-debian\/tmp-bookworm$/m);
@@ -422,7 +498,9 @@ describe('Test repository build scripts', () => {
 
             await createFiles({
                 "incoming/staging/deb/debian/bookworm/update/test.changes": dedent`
-                Architecture: source amd64\n
+                Architecture: source amd64
+                Files:
+                 somepkg_1.0_amd64.ddeb\n
             `,
                 "repo/deb/debian/dists/bookworm/Release": dedent`
                 Architectures: source armhf
@@ -430,7 +508,8 @@ describe('Test repository build scripts', () => {
             `,
                 "repo/deb/debian/dists/bullseye/Release": dedent`
                 Architectures: arm64 i386
-                Components: test extra\n
+                Components: test extra
+                DDebComponents: extra\n
             `
             })
 
@@ -466,6 +545,9 @@ describe('Test repository build scripts', () => {
             expect(releases["bookworm"]).toMatch(/^Components: .+/m);
             const bookwormComponents = releases["bookworm"].match(/^Components: (.+)$/m)![1].split(/\s+/);
             expect(bookwormComponents).toIncludeSameMembers(["main", "update"]);
+            expect(releases["bookworm"]).toMatch(/^DDebComponents: .+/m);
+            const bookwormDdeb = releases["bookworm"].match(/^DDebComponents: (.+)$/m)![1].split(/\s+/);
+            expect(bookwormDdeb).toIncludeSameMembers(["update"]);
             expect(releases["bookworm"]).toMatch(/^Architectures: .+$/m);
             const bookwormArchitectures = releases["bookworm"].match(/^Architectures: (.*)$/m)![1].split(/\s+/);
             expect(bookwormArchitectures).toIncludeSameMembers(["source", "amd64", "armhf"]);
@@ -477,6 +559,9 @@ describe('Test repository build scripts', () => {
             expect(releases["bullseye"]).toMatch(/^Components: .+/m);
             const bullseyeComponents = releases["bullseye"].match(/^Components: (.*)$/m)![1].split(/\s+/);
             expect(bullseyeComponents).toIncludeSameMembers(["test", "extra"]);
+            expect(releases["bullseye"]).toMatch(/^DDebComponents: .+/m);
+            const bullseyeDdeb = releases["bullseye"].match(/^DDebComponents: (.+)$/m)![1].split(/\s+/);
+            expect(bullseyeDdeb).toIncludeSameMembers(["extra"]);
             expect(releases["bullseye"]).toMatch(/^Architectures: .+$/m);
             const bullseyeArchitectures = releases["bullseye"].match(/^Architectures: (.*)$/m)![1].split(/\s+/);
             expect(bullseyeArchitectures).toIncludeSameMembers(["arm64", "i386"]);
@@ -625,6 +710,86 @@ describe('Test repository build scripts', () => {
 
             expect(repreproSpawn["+b/repo-state/deb-ubuntu/conf"].files["override"]).toMatch(/\$Component universe$/m);
         }));
+
+    test('Check that DDebComponents is correctly updated when ddeb is the last file without newline', withLocalTmpDir(async () => {
+        let repreproSpawn: CapturedState | undefined;
+
+        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+            if (!repreproSpawn) {
+                repreproSpawn = await captureRepreproState(executable, args);
+            }
+        });
+
+        const createTestApp = (await import("../testapp.ts")).default;
+        const app = await createTestApp({
+            paths: {
+                incomingDir: "incoming",
+                repoStateDir: "repo-state",
+                repoDir: "repo",
+                signScript: "sign.sh"
+            }
+        });
+
+        await createFiles({
+            "incoming/staging/deb/debian/bookworm/main/test.changes": dedent`
+                Architecture: source amd64
+                Files:
+                 somepkg_1.0_amd64.deb
+                 somepkg_1.0_amd64.ddeb
+            `
+        })
+
+        const res = await request(app).post("/upload/build-repo");
+        expect(res.status).toBe(200);
+
+        expect(repreproSpawn).toBeDefined();
+        assert(repreproSpawn);
+        expect(repreproSpawn.files).toBeDefined();
+        expect(repreproSpawn.files["distributions"]).toBeDefined();
+        expect(repreproSpawn.files["distributions"]).toMatch(/^DDebComponents: .+/m);
+        const ddebComponents = repreproSpawn.files["distributions"].match(/^DDebComponents: (.+)$/m)![1].split(/\s+/);
+        expect(ddebComponents).toIncludeSameMembers(["main"]);
+    }));
+
+    test('Check that DDebComponents is correctly updated when ddeb is the first file', withLocalTmpDir(async () => {
+        let repreproSpawn: CapturedState | undefined;
+
+        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+            if (!repreproSpawn) {
+                repreproSpawn = await captureRepreproState(executable, args);
+            }
+        });
+
+        const createTestApp = (await import("../testapp.ts")).default;
+        const app = await createTestApp({
+            paths: {
+                incomingDir: "incoming",
+                repoStateDir: "repo-state",
+                repoDir: "repo",
+                signScript: "sign.sh"
+            }
+        });
+
+        await createFiles({
+            "incoming/staging/deb/debian/bookworm/main/test.changes": dedent`
+                Architecture: source amd64
+                Files:
+                 somepkg_1.0_amd64.ddeb
+                 somepkg_1.0_amd64.deb\n
+            `
+        })
+
+        const res = await request(app).post("/upload/build-repo");
+        expect(res.status).toBe(200);
+
+        expect(repreproSpawn).toBeDefined();
+        assert(repreproSpawn);
+        expect(repreproSpawn.files).toBeDefined();
+        expect(repreproSpawn.files["distributions"]).toBeDefined();
+        expect(repreproSpawn.files["distributions"]).toMatch(/^DDebComponents: .+/m);
+        const ddebComponents = repreproSpawn.files["distributions"].match(/^DDebComponents: (.+)$/m)![1].split(/\s+/);
+        expect(ddebComponents).toIncludeSameMembers(["main"]);
+    }));
 
     test('Check that error is returned when Debian reprepro tool startup fails', withLocalTmpDir(async () => {
         mockExecution(0, "", "", new Error("Cannot start script!"));

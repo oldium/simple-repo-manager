@@ -11,6 +11,7 @@ import osPath from "path";
 import { gpgInitDeb } from "./gpg.ts";
 import { getEnv } from "./env.ts";
 import type { DebDistributionMap, DebRepository } from "./repo.ts";
+import _ from "lodash";
 
 function getEnvOrigin(distro: string, release: string) {
     return getEnv('DEB_ORIGIN', distro, release);
@@ -43,6 +44,9 @@ async function readDistributions(distributions: string[], repoDir: string): Prom
         const componentsMatch = content.match(/^Components:\s*(.+)$/m);
         const components = componentsMatch ? componentsMatch[1].trim() : '';
 
+        const ddebComponentsMatch = content.match(/^DDebComponents:\s*(.+)$/m);
+        const ddebComponents = ddebComponentsMatch ? ddebComponentsMatch[1].trim() : '';
+
         const architecturesMatch = content.match(/^Architectures:\s*(.+)$/m);
         const architectures = architecturesMatch ? architecturesMatch[1].trim() : '';
 
@@ -55,7 +59,8 @@ async function readDistributions(distributions: string[], repoDir: string): Prom
             distroObj.releases[release] = {
                 path: path.join(distroObj.path, "dists", release),
                 architectures: Array.from(new Set(architectures.split(' ').filter(Boolean))).sort(),
-                components: Array.from(new Set(components.split(' ').filter(Boolean))).sort()
+                components: Array.from(new Set(components.split(' ').filter(Boolean))).sort(),
+                ddebComponents: Array.from(new Set(ddebComponents.split(' ').filter(Boolean))).sort(),
             };
         } else {
             if (components.length === 0) {
@@ -102,8 +107,11 @@ function generateDistributionsContent(signScript: string | undefined, distros: D
                 Codename: ${ release }
                 Suite: ${ release }
                 Components: ${ [...releaseObj.components].join(' ') }
-                Architectures: ${ [...releaseObj.architectures].join(' ') }
                 `,
+                !_.isEmpty(releaseObj.ddebComponents) ?
+                    `DDebComponents: ${ [...releaseObj.ddebComponents].join(' ') }` :
+                    undefined,
+                `Architectures: ${ [...releaseObj.architectures].join(' ') }`,
                 origin ? "Origin: " + origin : undefined,
                 description ? "Description: " + description : undefined,
                 dedent`
@@ -137,15 +145,23 @@ function generateIncomingContent(distro: string, release: string, incomingDir: s
     `;
 }
 
-async function parseChangesArchitectures(incomingDebRoot: string, changesFiles: string[]) {
+async function parseChangesFile(incomingDebRoot: string, changesFiles: string[]) {
     const architectures = new Set<string>();
+    let hasDdeb = false;
     for (const changesFile of changesFiles) {
         const content = await fs.readFile(path.join(incomingDebRoot, changesFile), 'utf-8');
         const architecturesMatch = content.match(/^Architecture:\s*(.+)$/m);
         const architecturesString = architecturesMatch ? architecturesMatch[1].trim() : '';
         architecturesString.split(' ').filter(Boolean).forEach((architecture) => architectures.add(architecture));
+
+        // Get all Files:
+        const filesMatch = content.match(/^Files:[^\n]*\n((?: [^\n]+\n?)+)/m);
+        const filesString = filesMatch ? filesMatch[1].trim() : '';
+        if (filesString.match(/\.ddeb([\r\n]|$)/)) {
+            hasDdeb = true;
+        }
     }
-    return architectures;
+    return { architectures, hasDdeb };
 }
 
 async function repreproExec(repreproBin: string, confDir: string, ...args: string[]): Promise<ActionResult> {
@@ -203,15 +219,20 @@ async function mergeDistributionsWithChanges(
             const [, release, ...components] = directoryComponents;
 
             const component = components.join('/');
-            const architectures = await parseChangesArchitectures(incomingDebRoot, changesFiles);
+            const { architectures, hasDdeb } = await parseChangesFile(incomingDebRoot, changesFiles);
 
             const releaseObj = distroObj.releases[release] ?? (distroObj.releases[release] = {
                 path: path.join(distroObj.path, release),
                 architectures: [],
                 components: [],
+                ddebComponents: [],
             });
             releaseObj.components = Array.from(new Set([component, ...releaseObj.components])).sort();
             releaseObj.architectures = Array.from(new Set([...architectures, ...releaseObj.architectures])).sort();
+            if (hasDdeb) {
+                releaseObj.ddebComponents =
+                    Array.from(new Set([...components, ...(releaseObj.ddebComponents ?? [])])).sort();
+            }
         }
     }
 
