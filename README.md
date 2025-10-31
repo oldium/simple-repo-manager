@@ -668,6 +668,7 @@ For the simple `compose.yml` file:
 services:
   simple-repo-manager:
     image: simple-repo-manager
+    init: true
     volumes:
       - "./data:/app/data"
     ports:
