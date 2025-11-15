@@ -62,7 +62,7 @@
     "dirty-json": "^0.9.2",
     "dotenv": "^17.2.3",
     "escape-html": "^1.0.3",
-    "eta": "git+https://github.com/oldium/eta.git",
+    "eta": "^4.4.1",
     "etag": "^1.8.1",
     "express": "^5.1.0",
     "fast-glob": "^3.3.3",
