@@ -7,6 +7,9 @@ to organize the uploads into a repository structure.
 
 Features:
 
+* 🖥️ Web UI to browse the uploaded files.
+* ⌨️ Full support for keyboard and mouse navigation in the web UI.
+* 🌓 Dark mode is supported 😉.
 * 🚀 File upload by POST HTTP method.
 * 🚀 File upload by PUT HTTP method compatible with Debian's `dput` and
   `dput-ng` tools.
@@ -21,7 +24,6 @@ Features:
   Debian and RedHat templates.
 * 📂 Self-contained, serves the created repositories, a separate Nginx instance
   is not necessary.
-* 🌓 Dark mode is supported 😉.
 
 The project follows a minimal approach — upload the file and call the tool to do
 the rest. If you need to do any change, do it manually in the repository and
