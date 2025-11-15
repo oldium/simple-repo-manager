@@ -1038,6 +1038,16 @@ This will create a Docker image with the name `simple-repo-manager`. The
 `reprepro`, `rnp` and `gpg`, so the image is self-contained and can be used to
 run the application in production.
 
+> [!NOTE]
+> The author of Simple Repo Manager creates the release builds with the
+> following command, which ensures that fresh third-part images is used and
+> adds additional metadata to the Docker image itself:
+>
+> ```bash
+> docker buildx build --progress=plain --attest type=provenance,mode=max \
+>   --no-cache -f .\Dockerfile . -t simple-repo-manager
+> ```
+
 The Docker image exposes the port `3000` and by default expected the data
 directory to be mounted to `/app/data` in the container. The data directory
 contains the repository data, so it needs to be persistent. To run the Docker
