@@ -319,8 +319,8 @@ describe('Test initial GPG import', () => {
         const res = await request(app).post("/upload/build-repo");
         expect(res.status).toBe(200);
 
-        expect(spawn).toHaveLength(6);
-        expect(spawn.map(s => s.executable)).toEqual(["gpg", "gpg", "gpg", "gpg", "reprepro", "reprepro"]);
+        expect(spawn).toHaveLength(7);
+        expect(spawn.map(s => s.executable)).toEqual(["gpg", "gpg", "gpg", "gpg", "reprepro", "reprepro", "reprepro"]);
 
         // Check GPG import
         expect(spawn.slice(0, 4).map(s => s.args)).toSatisfyAny((a: string[]) => a.includes(osPath.join("repo", "deb", "archive-keyring.asc")));

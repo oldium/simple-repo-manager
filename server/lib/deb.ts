@@ -10,8 +10,10 @@ import assert from "node:assert";
 import osPath from "path";
 import { gpgInitDeb } from "./gpg.ts";
 import { getEnv } from "./env.ts";
-import type { DebDistributionMap, DebRepository } from "./repo.ts";
+import type { DebDistribution, DebDistributionMap, DebReleaseMap, DebRepository } from "./repo.ts";
 import _ from "lodash";
+import { Readable } from "node:stream";
+import * as readline from "node:readline";
 
 function getEnvOrigin(distro: string, release: string) {
     return getEnv('DEB_ORIGIN', distro, release);
@@ -21,117 +23,165 @@ function getEnvDescription(distro: string, release: string) {
     return getEnv('DEB_DESCRIPTION', distro, release);
 }
 
-async function readDistributions(distributions: string[], repoDir: string): Promise<DebDistributionMap> {
-    // The path will be <repoDir>/deb/<distro>/dists/<release>/Release
-    const debRoot = path.join(repoDir, "deb");
-    let releaseFiles;
-    if (distributions.length === 1) {
-        releaseFiles = await glob(`${ distributions[0] }/dists/*/Release`,
-            { cwd: debRoot, posix: true });
-    } else {
-        releaseFiles = await glob(`{${ distributions.join(",") }}/dists/*/Release`,
-            { cwd: debRoot, posix: true, magicalBraces: true });
+function convertRelease(filePath: string, distro: string, release: string | undefined, readingRelease: Record<string, string>, debReleases: DebReleaseMap) {
+    if (!release || release === readingRelease["codename"]) {
+        const debRelease = debReleases[readingRelease["codename"]] = {
+            path: `/deb/${ distro }/dists/${ readingRelease["codename"] }`,
+            architectures: readingRelease["architectures"]?.split(' ').filter(Boolean) ?? [],
+            components: readingRelease["components"]?.split(' ').filter(Boolean) ?? [],
+            ddebComponents: readingRelease["ddebcomponents"]?.split(' ').filter(Boolean) ?? [],
+        }
+
+        if (debRelease.components.length === 0) {
+            logger.warn(`No components found in ${ filePath }`);
+        }
+        if (debRelease.architectures.length === 0) {
+            logger.warn(`No architectures found in ${ filePath }`);
+        }
     }
-    const distros: DebDistributionMap = {};
+}
 
-    for (const releaseFile of releaseFiles) {
-        const pathSplit = releaseFile.split(path.sep);
-        const [distro, , release] = pathSplit;
+async function readDistributionsFile(filePath: string, distro: string, release?: string): Promise<DebDistribution | undefined> {
+    let content;
+    try {
+        content = await fs.readFile(filePath, 'utf8');
+    } catch (err) {
+        logger.warn(`Failed to read ${ filePath }`, { err });
+        return;
+    }
 
-        const releaseFilePath = path.join(debRoot, releaseFile);
-        const content = await fs.readFile(releaseFilePath, 'utf-8');
+    try {
+        const lines = readline.createInterface({
+            input: Readable.from(content),
+            crlfDelay: Infinity
+        });
+        const debReleases: DebReleaseMap = {};
+        let readingRelease: Record<string, string> = {};
+        let lastOption = undefined;
+        for await (const line of lines) {
+            if (line.length === 0) {
+                // Separator, end of release
+                if (!_.isEmpty(readingRelease)) {
+                    convertRelease(filePath, distro, release, readingRelease, debReleases);
+                    readingRelease = {};
+                    lastOption = undefined;
+                }
+            } else {
+                const match = line.match(/^(Codename|Components|DDebComponents|Architectures):/i);
+                if (match) {
+                    lastOption = match[1].toLowerCase();
+                    readingRelease[lastOption] = line.substring(match[0].length).trimStart();
+                } else if (line[0] === "#") {
+                    lastOption = undefined;
+                } else if (lastOption !== undefined && line[0] === " ") {
+                    // Continuation of previous line
+                    readingRelease[lastOption] += line;
+                }
+            }
+        }
+        convertRelease(filePath, distro, release, readingRelease, debReleases);
+        return {
+            path: `deb/${ distro }`,
+            content: content,
+            releases: debReleases
+        };
+    } catch (err) {
+        logger.warn(`Failed to parse ${ filePath }`, { err });
+    }
+}
 
-        const componentsMatch = content.match(/^Components:\s*(.+)$/m);
-        const components = componentsMatch ? componentsMatch[1].trim() : '';
-
-        const ddebComponentsMatch = content.match(/^DDebComponents:\s*(.+)$/m);
-        const ddebComponents = ddebComponentsMatch ? ddebComponentsMatch[1].trim() : '';
-
-        const architecturesMatch = content.match(/^Architectures:\s*(.+)$/m);
-        const architectures = architecturesMatch ? architecturesMatch[1].trim() : '';
-
-        if (components.length > 0 && architectures.length > 0) {
-            const distroObj = distros[distro] ?? (distros[distro] = {
-                path: path.join("/deb", distro),
-                releases: {}
-            });
-
-            distroObj.releases[release] = {
-                path: path.join(distroObj.path, "dists", release),
-                architectures: Array.from(new Set(architectures.split(' ').filter(Boolean))).sort(),
-                components: Array.from(new Set(components.split(' ').filter(Boolean))).sort(),
-                ddebComponents: Array.from(new Set(ddebComponents.split(' ').filter(Boolean))).sort(),
-            };
+async function readDistributions(repoStateDir: string, distro?: string, release?: string): Promise<DebDistributionMap> {
+    let distroFiles: string[];
+    if (distro) {
+        const distroFilePath = `deb-${ distro }/conf/distributions`;
+        if (await fsExtra.pathExists(path.join(repoStateDir, distroFilePath))) {
+            distroFiles = [distroFilePath];
         } else {
-            if (components.length === 0) {
-                logger.warn(`No components found in ${ releaseFilePath }`);
-            }
-            if (architectures.length === 0) {
-                logger.warn(`No architectures found in ${ releaseFilePath }`);
-            }
+            distroFiles = [];
+        }
+    } else {
+        distroFiles = await glob(`deb-*/conf/distributions`, { cwd: repoStateDir, posix: true });
+    }
+
+    const distroMap: DebDistributionMap = {};
+    for (const distroFile of distroFiles) {
+        const distro = distroFile.split(path.sep)[0].substring(4);
+        const distroObj = await readDistributionsFile(path.join(repoStateDir, distroFile), distro, release);
+        if (distroObj && Object.keys(distroObj.releases).length > 0) {
+            distroMap[distro] = distroObj;
         }
     }
 
-    return distros;
+    return distroMap;
 }
 
-export async function getRepository(repoDir: string, distribution?: string): Promise<DebRepository> {
-    let distributions;
-    if (distribution) {
-        distributions = [distribution];
-    } else {
-        distributions = await (glob("*/", { cwd: path.join(repoDir, "deb") }));
-    }
+export async function getRepository(repoStateDir: string, distro?: string, release?: string): Promise<DebRepository> {
     return {
         type: "deb",
         path: "/deb",
-        distributions: await readDistributions(distributions, repoDir)
-    };
+        distributions: await readDistributions(repoStateDir, distro, release)
+    }
 }
 
-function generateDistributionsContent(signScript: string | undefined, distros: DebDistributionMap) {
-    const distrosContent: Record<string, string> = {};
-    for (const [distro, distroObj] of Object.entries(distros)) {
-        let content = "";
-        for (const [release, releaseObj] of Object.entries(distroObj.releases)) {
-            if (content.length > 0) {
-                content += "\n";
-            }
-            const origin = getEnvOrigin(distro, release);
-            const description = getEnvDescription(distro, release);
-            const signWith = signScript ?
-                `SignWith: !${ path.isAbsolute(signScript) ? signScript : `+b/${ signScript }` }` : undefined;
-
-            content += [
-                dedent`
-                Codename: ${ release }
-                Suite: ${ release }
-                Components: ${ [...releaseObj.components].join(' ') }
-                `,
-                !_.isEmpty(releaseObj.ddebComponents) ?
-                    `DDebComponents: ${ [...releaseObj.ddebComponents].join(' ') }` :
-                    undefined,
-                `Architectures: ${ [...releaseObj.architectures].join(' ') }`,
-                origin ? "Origin: " + origin : undefined,
-                description ? "Description: " + description : undefined,
-                dedent`
-                DebOverride: +c/override
-                UDebOverride: +c/override
-                DscOverride: +c/override
-                Tracking: minimal
-                Contents:
-                `,
-                signWith
-            ].filter(Boolean).join("\n");
-            if (content) {
-                content += "\n";
-            }
-        }
+function generateDistributionContent(distro: string, distroObj: DebDistribution, signScript: string | undefined) {
+    let content = "";
+    for (const [release, releaseObj] of Object.entries(distroObj.releases)) {
         if (content.length > 0) {
-            distrosContent[distro] = content;
+            content += "\n";
+        }
+        const origin = getEnvOrigin(distro, release);
+        const description = getEnvDescription(distro, release);
+        const signWith = signScript ?
+            `SignWith: !${ path.isAbsolute(signScript) ? signScript : `+b/${ signScript }` }` : undefined;
+
+        content += [
+            dedent`
+            Codename: ${ release }
+            Suite: ${ release }
+            Components: ${ [...releaseObj.components].join(' ') }
+            `,
+            !_.isEmpty(releaseObj.ddebComponents) ?
+                `DDebComponents: ${ [...releaseObj.ddebComponents].join(' ') }` :
+                undefined,
+            `Architectures: ${ [...releaseObj.architectures].join(' ') }`,
+            origin ? "Origin: " + origin : undefined,
+            description ? "Description: " + description : undefined,
+            dedent`
+            DebOverride: +c/override
+            UDebOverride: +c/override
+            DscOverride: +c/override
+            Tracking: minimal
+            Limit: 2
+            Contents:
+            `,
+            signWith
+        ].filter(Boolean).join("\n");
+        if (content) {
+            content += "\n";
         }
     }
+    return content ? content : undefined;
+}
 
+async function updateDistributionsFileContent(distro: string, distroMap: DebDistributionMap, repoStateDir: string, signScript: string | undefined) {
+    const distrosContent: Record<string, string> = {};
+    const distroObj = distroMap[distro];
+    if (distroObj) {
+        const content = generateDistributionContent(distro, distroObj, signScript);
+        if (content && content.length > 0) {
+            if (content !== distroObj.content) {
+                const stateDir = path.join(repoStateDir, `deb-${ distro }`);
+                const confDir = path.join(stateDir, "conf");
+                if (logger.isDebugEnabled()) {
+                    logger.debug(`Writing ${ distro } conf/distributions:\n${ content.trim() }`);
+                }
+                await fsExtra.ensureDir(confDir);
+                await fs.writeFile(path.join(confDir, "distributions"), content);
+
+                distrosContent[distro] = content;
+            }
+        }
+    }
     return distrosContent;
 }
 
@@ -149,7 +199,7 @@ async function parseChangesFile(incomingDebRoot: string, changesFiles: string[])
     const architectures = new Set<string>();
     let hasDdeb = false;
     for (const changesFile of changesFiles) {
-        const content = await fs.readFile(path.join(incomingDebRoot, changesFile), 'utf-8');
+        const content = await fs.readFile(path.join(incomingDebRoot, changesFile), 'utf8');
         const architecturesMatch = content.match(/^Architecture:\s*(.+)$/m);
         const architecturesString = architecturesMatch ? architecturesMatch[1].trim() : '';
         architecturesString.split(' ').filter(Boolean).forEach((architecture) => architectures.add(architecture));
@@ -171,7 +221,13 @@ async function repreproExec(repreproBin: string, confDir: string, ...args: strin
 
 async function repreproImportExec(repreproBin: string, confDir: string, distro: string): Promise<ActionResult> {
     // noinspection SpellCheckingInspection
-    return await repreproExec(repreproBin, confDir, "--ignore=undefinedtarget", 'processincoming', distro);
+    return await repreproExec(repreproBin, confDir, "--ignore=undefinedtarget", "--export=silent-never",
+        'processincoming', distro);
+}
+
+async function repreproExportExec(repreproBin: string, confDir: string): Promise<ActionResult> {
+    // noinspection SpellCheckingInspection
+    return await repreproExec(repreproBin, confDir, 'export');
 }
 
 async function repreproCleanupExec(repreproBin: string, confDir: string): Promise<ActionResult> {
@@ -204,10 +260,8 @@ async function findAndOrganizeChangesFiles(incomingDebRoot: string): Promise<Rec
 async function mergeDistributionsWithChanges(
     incomingDebRoot: string,
     changesMap: Record<string, Record<string, string[]>>,
-    repoDir: string
-): Promise<DebDistributionMap> {
-    const distributions = await readDistributions(Object.keys(changesMap), repoDir);
-
+    distributions: DebDistributionMap
+): Promise<void> {
     // Merge existing distributions with changes files
     for (const [distro, directoryChangesFiles] of Object.entries(changesMap)) {
         const distroObj = distributions[distro] ?? (distributions[distro] = {
@@ -235,8 +289,51 @@ async function mergeDistributionsWithChanges(
             }
         }
     }
+}
 
-    return distributions;
+async function updateIncomingConfigFile(distro: string, release: string, repoStateDir: string, incomingDir: string) {
+    const distroStateDir = path.join(repoStateDir, `deb-${ distro }`);
+    const tmpTmpDir = path.join(distroStateDir, `tmp-${ release }`);
+    const confDir = path.join(distroStateDir, "conf");
+
+    await fsExtra.ensureDir(tmpTmpDir);
+    const incomingContent = generateIncomingContent(distro, release, incomingDir, tmpTmpDir);
+    if (logger.isDebugEnabled()) {
+        logger.debug(`Writing ${ distro } conf/incoming:\n${ incomingContent.trim() }`);
+    }
+    await fs.writeFile(path.join(confDir, "incoming"), incomingContent);
+}
+
+async function updateOptionsFile(distro: string, repoDir: string, repoStateDir: string) {
+    const distroStateDir = path.join(repoStateDir, `deb-${ distro }`);
+    const outDir = path.join(repoDir, "deb", distro);
+    const dbDir = path.join(distroStateDir, "db");
+    const confDir = path.join(distroStateDir, "conf");
+
+    await fsExtra.ensureDir(outDir);
+    await fsExtra.ensureDir(dbDir);
+    const optionsContent = dedent`
+            verbose
+            outdir ${ path.isAbsolute(outDir) ? outDir : `+b/${ outDir }` }
+            dbdir ${ path.isAbsolute(dbDir) ? dbDir : `+b/${ dbDir }` }\n
+        `;
+    if (logger.isDebugEnabled()) {
+        logger.debug(`Writing ${ distro } conf/options:\n${ optionsContent.trim() }`);
+    }
+    await fs.writeFile(path.join(confDir, "options"), optionsContent);
+}
+
+async function updateOverrideFile(distro: string, component: string, repoStateDir: string) {
+    const distroStateDir = path.join(repoStateDir, `deb-${ distro }`);
+    const confDir = path.join(distroStateDir, "conf");
+
+    const overrideContent = dedent`
+            * $Component ${ component }\n
+        `;
+    if (logger.isDebugEnabled()) {
+        logger.debug(`Writing ${ distro } conf/override:\n${ overrideContent.trim() }`);
+    }
+    await fs.writeFile(path.join(confDir, "override"), overrideContent);
 }
 
 /**
@@ -245,59 +342,27 @@ async function mergeDistributionsWithChanges(
 async function processDistribution(
     distro: string,
     directoryChangesFiles: Record<string, string[]>,
-    distributionFiles: Record<string, string>,
+    distributions: DebDistributionMap,
     incomingDebRoot: string,
     paths: Paths
 ): Promise<Record<string, ActionResult>> {
     const result: Record<string, ActionResult> = {};
 
-    const stateDir = path.join(paths.repoStateDir, `deb-${ distro }`);
-    const outDir = path.join(paths.repoDir, "deb", distro);
-    const dbDir = path.join(stateDir, `db`);
-    const confDir = path.join(stateDir, "conf");
+    const distroStateDir = path.join(paths.repoStateDir, `deb-${ distro }`);
+    const confDir = path.join(distroStateDir, "conf");
 
-    await fsExtra.ensureDir(outDir);
-    await fsExtra.ensureDir(dbDir);
-    await fsExtra.ensureDir(confDir);
-    if (logger.isDebugEnabled()) {
-        logger.debug(`Writing conf/distributions:\n${ distributionFiles[distro].trim() }`);
-    }
-    await fs.writeFile(path.join(confDir, "distributions"), distributionFiles[distro]);
+    await updateDistributionsFileContent(distro, distributions, paths.repoStateDir, paths.signScript);
 
     for (const directory of Object.keys(directoryChangesFiles)) {
         const directoryComponents = directory.split(path.sep);
         const [, release, ...components] = directoryComponents;
 
         const incomingDir = path.join(incomingDebRoot, directory);
-        const tmpTmpDir = path.join(stateDir, `tmp-${ release }`);
         const component = components.join('/');
 
-        await fsExtra.ensureDir(tmpTmpDir);
-
-        const incomingContent = generateIncomingContent(distro, release, incomingDir, tmpTmpDir);
-        if (logger.isDebugEnabled()) {
-            logger.debug(`Writing conf/incoming:\n${ incomingContent.trim() }`);
-        }
-        await fs.writeFile(path.join(confDir, "incoming"), incomingContent);
-
-        // noinspection SpellCheckingInspection
-        const optionsContent = dedent`
-            verbose
-            outdir ${ path.isAbsolute(outDir) ? outDir : `+b/${ outDir }` }
-            dbdir ${ path.isAbsolute(dbDir) ? dbDir : `+b/${ dbDir }` }\n
-        `;
-        if (logger.isDebugEnabled()) {
-            logger.debug(`Writing conf/options:\n${ optionsContent.trim() }`);
-        }
-        await fs.writeFile(path.join(confDir, "options"), optionsContent);
-
-        const overrideContent = dedent`
-            * $Component ${ component }\n
-        `;
-        if (logger.isDebugEnabled()) {
-            logger.debug(`Writing conf/override:\n${ overrideContent.trim() }`);
-        }
-        await fs.writeFile(path.join(confDir, "override"), overrideContent);
+        await updateIncomingConfigFile(distro, release, paths.repoStateDir, incomingDir);
+        await updateOptionsFile(distro, paths.repoDir, paths.repoStateDir);
+        await updateOverrideFile(distro, component, paths.repoStateDir);
 
         result[`deb/${ directory }`] = await repreproImportExec(paths.repreproBin!, confDir, distro);
     }
@@ -305,15 +370,32 @@ async function processDistribution(
     return result;
 }
 
-async function cleanupDistributions(paths: Paths): Promise<Record<string, ActionResult>> {
-    const distributions = await (glob("*/", { cwd: path.join(paths.repoDir, "deb") }));
+async function reexportAndCleanupDistributions(distroMap: DebDistributionMap, paths: Paths): Promise<Record<string, ActionResult>> {
     const result: Record<string, ActionResult> = {};
-    for (const distro of distributions) {
-        const stateDir = path.join(paths.repoStateDir, `deb-${ distro }`);
-        const confDir = path.join(stateDir, "conf");
-        result[`deb/${ distro }`] = await repreproCleanupExec(paths.repreproBin!, confDir);
+    for (const distro of Object.keys(distroMap)) {
+        if (distroMap[distro]) {
+            const stateDir = path.join(paths.repoStateDir, `deb-${ distro }`);
+            const confDir = path.join(stateDir, "conf");
+
+            await updateDistributionsFileContent(distro, distroMap, paths.repoStateDir, paths.signScript);
+            const exportResult =
+                result[`deb/${ distro }`] = await repreproExportExec(paths.repreproBin!, confDir);
+            if (exportResult.result === "success") {
+                result[`deb/${ distro }`] = await repreproCleanupExec(paths.repreproBin!, confDir);
+            }
+        } else {
+            logger.error(`No valid distribution configuration found for ${ distro }`);
+        }
     }
     return result;
+}
+
+async function ensureDebRootExists(paths: Paths, gpg: Gpg) {
+    const debRepoDir = osPath.join(paths.repoDir, "deb");
+    if (!await fsExtra.pathExists(debRepoDir)) {
+        await fsExtra.ensureDir(debRepoDir);
+        await gpgInitDeb(paths, gpg);
+    }
 }
 
 export default async function processIncoming(paths: Paths, gpg: Gpg): Promise<Record<string, ActionResult>> {
@@ -324,23 +406,19 @@ export default async function processIncoming(paths: Paths, gpg: Gpg): Promise<R
 
     const result: Record<string, ActionResult> = {};
 
-    const debRepoDir = osPath.join(paths.repoDir, "deb");
+    // Read all distributions
+    const distroMap: DebDistributionMap = await readDistributions(paths.repoStateDir);
 
     // Import new packages
     if (Object.keys(changesMap).length !== 0) {
-        if (!await fsExtra.pathExists(debRepoDir)) {
-            await fsExtra.ensureDir(debRepoDir);
-            await gpgInitDeb(paths, gpg);
-        }
-
-        const distributions = await mergeDistributionsWithChanges(incomingDebRoot, changesMap, paths.repoDir);
-        const distributionFiles = generateDistributionsContent(paths.signScript, distributions);
+        await ensureDebRootExists(paths, gpg);
+        await mergeDistributionsWithChanges(incomingDebRoot, changesMap, distroMap);
 
         for (const [distro, directoryChangesFiles] of Object.entries(changesMap)) {
             const distroResults = await processDistribution(
                 distro,
                 directoryChangesFiles,
-                distributionFiles,
+                distroMap,
                 incomingDebRoot,
                 paths
             );
@@ -350,9 +428,11 @@ export default async function processIncoming(paths: Paths, gpg: Gpg): Promise<R
         }
     }
 
-    // Clean-up distributions
-    if (await fsExtra.pathExists(debRepoDir)) {
-        Object.assign(result, await cleanupDistributions(paths));
+    // Reexport and clean up distributions. Export is necessary, because the Origin/Description values might have
+    // changed, so the importing defers exporting until now.
+    if (!_.isEmpty(distroMap)) {
+        await ensureDebRootExists(paths, gpg);
+        Object.assign(result, await reexportAndCleanupDistributions(distroMap, paths));
     }
 
     return result;
