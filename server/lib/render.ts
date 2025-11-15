@@ -1,4 +1,4 @@
-import type { Environment, Gpg } from "./config.ts";
+import type { Environment, Gpg, Paths } from "./config.ts";
 import { Eta } from "eta";
 import escapeHtml from "escape-html";
 import fsExtra from "fs-extra";
@@ -169,14 +169,14 @@ async function renderDistroConfig<T extends Repository>(req: Request, eta: Eta, 
     return { navigation, configs };
 }
 
-export async function renderDistroConfigs(req: Request, eta: Eta, repoDir: string, gpg: Gpg, directory: string) {
+export async function renderDistroConfigs(req: Request, paths: Paths, gpg: Gpg, eta: Eta, directory: string) {
     const navigation: string[] = [];
     const configs: string[] = [];
 
     if (directory === "/" || directory.startsWith("/deb/")) {
-        const [, , pathDistro] = directory.split("/");
-        const repoObj = await getDebRepository(repoDir, pathDistro);
-        const { navigation: repoNavigation, configs: repoConfigs } = await renderDistroConfig(req, eta, repoDir, gpg,
+        const [, , pathDistro, , pathRelease] = directory.split("/");
+        const repoObj = await getDebRepository(paths.repoStateDir, pathDistro, pathRelease);
+        const { navigation: repoNavigation, configs: repoConfigs } = await renderDistroConfig(req, eta, paths.repoDir, gpg,
             repoObj, (repoObj, distro, release, data) => {
                 return {
                     releaseComponents: repoObj.distributions[distro].releases[release].components,
@@ -196,8 +196,8 @@ export async function renderDistroConfigs(req: Request, eta: Eta, repoDir: strin
 
     if (directory === "/" || directory.startsWith("/rpm/")) {
         const [, , pathDistro, pathRelease] = directory.split("/");
-        const repoObj = await getRpmRepository(repoDir, pathDistro, pathRelease);
-        const { navigation: repoNavigation, configs: repoConfigs } = await renderDistroConfig(req, eta, repoDir, gpg,
+        const repoObj = await getRpmRepository(paths.repoDir, pathDistro, pathRelease);
+        const { navigation: repoNavigation, configs: repoConfigs } = await renderDistroConfig(req, eta, paths.repoDir, gpg,
             repoObj, (repoObj, distro, release, data) => {
                 return {
                     reposDir: getEnv("RPM_REPOS_DIR", distro, release) ?? "/etc/yum.repos.d",

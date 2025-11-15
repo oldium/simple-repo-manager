@@ -249,7 +249,7 @@ describe('Test repository build scripts', () => {
         expect(await fs.readdir(osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main'))).toHaveLength(0);
         expect(await fs.readdir(osPath.join('incoming', 'process', 'deb', 'debian', 'bookworm', 'main'))).toEqual(['test.changes']);
 
-        expect(repreproSpawn).toHaveLength(2);
+        expect(repreproSpawn).toHaveLength(3);
     }));
 
     test('Check Debian build config with no GPG key', withLocalTmpDir(async () => {
@@ -426,7 +426,9 @@ describe('Test repository build scripts', () => {
                 "incoming/staging/deb/debian/bookworm/update/test.changes": dedent`
                 Architecture: source amd64\n
             `,
-                "repo/deb/debian/dists/bookworm/Release": dedent`
+                "repo-state/deb-debian/conf/distributions": dedent`
+                Codename: bookworm
+                Suite: bookworm
                 Architectures: source armhf
                 Components: main\n
             `
@@ -502,11 +504,14 @@ describe('Test repository build scripts', () => {
                 Files:
                  somepkg_1.0_amd64.ddeb\n
             `,
-                "repo/deb/debian/dists/bookworm/Release": dedent`
+                "repo-state/deb-debian/conf/distributions": dedent`
+                Codename: bookworm
+                Suite: bookworm
                 Architectures: source armhf
                 Components: main\n
-            `,
-                "repo/deb/debian/dists/bullseye/Release": dedent`
+
+                Codename: bullseye
+                Suite: bullseye
                 Architectures: arm64 i386
                 Components: test extra
                 DDebComponents: extra\n
@@ -623,7 +628,7 @@ describe('Test repository build scripts', () => {
             expect(repreproSpawn["+b/repo-state/deb-ubuntu/conf"]).toBeDefined();
             expect(Object.values(repreproSpawn).map(v => v.executable)).toEqual(["reprepro", "reprepro"]);
             expect(Object.values(repreproSpawn).map(v => v.args))
-                .toEqual([expect.toBeArrayOfSize(5), expect.toBeArrayOfSize(5)]);
+                .toEqual([expect.toBeArrayOfSize(6), expect.toBeArrayOfSize(6)]);
             expect(Object.values(repreproSpawn).map(v => v.args))
                 .toEqual([expect.toIncludeAllMembers(["--confdir"]), expect.toIncludeAllMembers(["--confdir"])]);
 

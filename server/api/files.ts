@@ -96,14 +96,14 @@ function renderBreadcrumb(locals: Locals): string {
         .join('<span class="separator">/</span>');
 }
 
-function htmlTemplate(repoDir: string, eta: Eta, gpg: Gpg, cssFilePath: string, iconNames: string[]) {
+function htmlTemplate(paths: Paths, gpg: Gpg, eta: Eta, cssFilePath: string, iconNames: string[]) {
     return async (locals: Locals): Promise<string> => {
         const files: string[] = [];
         const req = getRequest()!;
 
         locals.fileList.map(renderDirEntry.bind(null)).filter(Boolean).forEach((f) => files.push(f));
         const pathBreadcrumb = renderBreadcrumb(locals);
-        const configs = await renderDistroConfigs(req, eta, repoDir, gpg, locals.directory);
+        const configs = await renderDistroConfigs(req, paths, gpg, eta, locals.directory);
 
         return `\
 <!DOCTYPE html>
@@ -160,13 +160,13 @@ function getRequest() {
     return asyncLocalStorage.getStore()?.req;
 }
 
-async function serveHtmlTemplateIndex(repoDir: string, templateDir: string | undefined, gpg: Gpg,
+async function serveHtmlTemplateIndex(paths: Paths, gpg: Gpg,
     environment: Environment, cssFileUrl: string, iconNames: string[]): Promise<RequestHandler> {
-    const eta = await initEta(templateDir, environment);
+    const eta = await initEta(paths.templateDir, environment);
 
-    const serve = serveIndex(repoDir, {
+    const serve = serveIndex(paths.repoDir, {
         icons: false,
-        template: util.callbackify(htmlTemplate(repoDir, eta, gpg, cssFileUrl, iconNames))
+        template: util.callbackify(htmlTemplate(paths, gpg, eta, cssFileUrl, iconNames))
     });
     return (req: Request, res: Response, next: NextFunction) => {
         asyncLocalStorage.run<void>({ req }, () => serve(req, res, next));
@@ -189,7 +189,7 @@ export default async function files(paths: Paths, gpg: Gpg, environment: Environ
     router.get("/favicon.svg", serveMiddleware(faviconFilePath, environment));
     router.use(filterHidden());
     router.use(serveStatic(paths.repoDir, { index: false, setHeaders: enforceContentType }),
-        await serveHtmlTemplateIndex(paths.repoDir, paths.templateDir, gpg, environment, cssFileUrl, iconNames)
+        await serveHtmlTemplateIndex(paths, gpg, environment, cssFileUrl, iconNames)
     );
     return router;
 }
