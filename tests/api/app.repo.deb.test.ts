@@ -810,6 +810,116 @@ describe('Test repository build scripts for Debian', () => {
         expect(ddebComponents).toIncludeSameMembers(["main"]);
     }));
 
+    test('Check that export and clearvanished are called when distributions exist and no incoming files', withLocalTmpDir(async () => {
+        const repreproSpawn: CapturedState[] = [];
+
+        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+            repreproSpawn.push(await captureRepreproState(executable, args));
+        });
+
+        const createTestApp = (await import("../testapp.ts")).default;
+        const app = await createTestApp({
+            paths: {
+                incomingDir: "incoming",
+                repoStateDir: "repo-state",
+                repoDir: "repo",
+                signScript: "sign.sh"
+            }
+        });
+
+        await createFiles({
+            "repo-state/deb-debian/conf/distributions": dedent`
+                Codename: bookworm
+                Suite: bookworm
+                Components: main
+                Architectures: source amd64
+            `
+        });
+
+        const res = await request(app).post("/upload/build-repo");
+        expect(res.status).toBe(200);
+
+        await expect(fs.readdir(osPath.join("incoming", "process", "deb"))).resolves.toEqual([]);
+
+        expect(repreproSpawn).toHaveLength(2);
+
+        const spawn0ConfDirIndex = repreproSpawn[0].args.indexOf("--confdir");
+        expect(spawn0ConfDirIndex).toBeGreaterThan(-1);
+        expect(repreproSpawn[0].args[spawn0ConfDirIndex + 1]).toEqual("+b/repo-state/deb-debian/conf");
+        expect(repreproSpawn[0].args).toIncludeAllMembers(["export"]);
+
+        const spawn1ConfDirIndex = repreproSpawn[1].args.indexOf("--confdir");
+        expect(spawn1ConfDirIndex).toBeGreaterThan(-1);
+        expect(repreproSpawn[1].args[spawn1ConfDirIndex + 1]).toEqual("+b/repo-state/deb-debian/conf");
+        expect(repreproSpawn[1].args).toIncludeAllMembers(["clearvanished"]);
+    }));
+
+    test('Check that export and clearvanished are called on multiple distributions (debian, ubuntu) when no incoming files exist', withLocalTmpDir(async () => {
+        const repreproSpawn: CapturedState[] = [];
+
+        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+            repreproSpawn.push(await captureRepreproState(executable, args));
+        });
+
+        const createTestApp = (await import("../testapp.ts")).default;
+        const app = await createTestApp({
+            paths: {
+                incomingDir: "incoming",
+                repoStateDir: "repo-state",
+                repoDir: "repo",
+                signScript: "sign.sh"
+            }
+        });
+
+        // Prepare existing distribution configuration for Debian and Ubuntu, but no incoming .changes files
+        await createFiles({
+            "repo-state/deb-debian/conf/distributions": dedent`
+                Codename: bookworm
+                Suite: bookworm
+                Components: main
+                Architectures: source amd64
+            `,
+            "repo-state/deb-ubuntu/conf/distributions": dedent`
+                Codename: noble
+                Suite: noble
+                Components: universe
+                Architectures: source amd64
+            `
+        });
+
+        const res = await request(app).post("/upload/build-repo");
+        expect(res.status).toBe(200);
+
+        await expect(fs.readdir(osPath.join("incoming", "process", "deb"))).resolves.toEqual([]);
+
+        expect(repreproSpawn).toHaveLength(4);
+
+        const expectedConfDirs = ["+b/repo-state/deb-debian/conf", "+b/repo-state/deb-ubuntu/conf"];
+
+        const spawn0ConfDirIndex = repreproSpawn[0].args.indexOf("--confdir");
+        expect(spawn0ConfDirIndex).toBeGreaterThan(-1);
+        expect(repreproSpawn[0].args[spawn0ConfDirIndex + 1]).toBeOneOf(expectedConfDirs);
+        expect(repreproSpawn[0].args).toIncludeAllMembers(["export"]);
+
+        const spawn1ConfDirIndex = repreproSpawn[1].args.indexOf("--confdir");
+        expect(spawn1ConfDirIndex).toBeGreaterThan(-1);
+        expect(repreproSpawn[1].args[spawn1ConfDirIndex + 1]).toEqual(repreproSpawn[0].args[spawn0ConfDirIndex + 1]);
+        expect(repreproSpawn[1].args).toIncludeAllMembers(["clearvanished"]);
+
+        expectedConfDirs.splice(expectedConfDirs.indexOf(repreproSpawn[0].args[spawn0ConfDirIndex + 1]), 1);
+
+        const spawn2ConfDirIndex = repreproSpawn[2].args.indexOf("--confdir");
+        expect(spawn2ConfDirIndex).toBeGreaterThan(-1);
+        expect(repreproSpawn[2].args[spawn2ConfDirIndex + 1]).toBeOneOf(expectedConfDirs);
+        expect(repreproSpawn[2].args).toIncludeAllMembers(["export"]);
+
+        const spawn3ConfDirIndex = repreproSpawn[3].args.indexOf("--confdir");
+        expect(spawn3ConfDirIndex).toBeGreaterThan(-1);
+        expect(repreproSpawn[3].args[spawn3ConfDirIndex + 1]).toEqual(repreproSpawn[2].args[spawn2ConfDirIndex + 1]);
+        expect(repreproSpawn[3].args).toIncludeAllMembers(["clearvanished"]);
+
+    }));
+
     test('Check that error is returned when Debian reprepro tool startup fails', withLocalTmpDir(async () => {
         mockExecution(0, "", "", new Error("Cannot start script!"));
 
