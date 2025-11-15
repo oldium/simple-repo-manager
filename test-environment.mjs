@@ -10,8 +10,9 @@ function write(buffer, type, message, stackLevel = 2) {
     const originArray = result[result.length - 1].origin.split("\n");
     if (originArray.length > 0 && originArray[0].includes(`winston${osPath.sep}transports${osPath.sep}console.js`)) {
         const winstonModule = `node_modules${osPath.sep}winston`;
+        const readableStream = `node_modules${osPath.sep}readable-stream`;
         let skip = 0;
-        while (skip < originArray.length && (originArray[skip].includes(winstonModule) || originArray[skip].includes("node:events"))) {
+        while (skip < originArray.length && (originArray[skip].includes(winstonModule) || originArray[skip].includes(readableStream) || originArray[skip].includes("node:events"))) {
             skip++;
         }
         originArray.splice(0, skip);
