@@ -9,6 +9,8 @@ Features:
 
 * 🖥️ Web UI to browse the uploaded files.
 * ⌨️ Full support for keyboard and mouse navigation in the web UI.
+* 🧩 Customizable installation instructions shown on every page with built-in
+  Debian and RedHat templates.
 * 🌓 Dark mode is supported 😉.
 * 🚀 File upload by POST HTTP method.
 * 🚀 File upload by PUT HTTP method compatible with Debian's `dput` and
@@ -20,8 +22,6 @@ Features:
 * ✂️ Separates distributions (Debian vs. Ubuntu) and for RedHat-like
   repositories also releases (Fedora 41 vs. 42).
 * 🎨 Supports multiple distributions and releases.
-* 🧩 Customizable installation instructions shown on every page with built-in
-  Debian and RedHat templates.
 * 📂 Self-contained, serves the created repositories, a separate Nginx instance
   is not necessary.
 
