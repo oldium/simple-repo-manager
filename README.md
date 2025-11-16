@@ -1136,7 +1136,16 @@ docker compose exec -u node simple-repo-manager /bin/bash
 ```
 
 Then you can execute the commands from the logs to see the output and debug the
-issue. If you have the persistent storage mounted as a host directory into the
+issue.
+
+> [!CAUTION]
+> Please be aware that the Debian-like repository management tools reuse
+> some state files (`…/conf/incoming` and `…/conf/override`), so you can
+> reliably troubleshoot only the _last_ `reprepro` `processincoming` call
+> (successful or failed). If the last operation was successful, run the
+> Repository Management API endpoint again until the last operation fails.
+
+If you have the persistent storage mounted as a host directory into the
 container, you can benefit from using the local editor instead of editing the
 files in the container directly.
 
@@ -1154,6 +1163,45 @@ container as user `node`. The default is user `root`, so if you omit the
 > permissions.
 
 [entrypoint]: https://github.com/oldium/simple-repo-manager/blob/master/entrypoint.sh
+
+### Reuploading Debian Packages with Changed Checksums
+
+If you upload a Debian package with a different checksum than an existing
+package, the `reprepro` tool rejects the files and reports an error similar to
+this:
+
+```text
+File "pool/main/c/clevis/clevis_21-1+tpm1u8+deb12.dsc" is already registered with different checksums!
+```
+
+In that case you need to remove the existing package manually first. First, if
+you are running the application in Docker, enter the container as described in
+the [Repository Management API Call Failed](#repository-management-api-call-failed)
+section.
+
+Then find-out which state directory you should be using, either check the logs,
+or `REPO_STATE_DIR` value from the environment (relative paths use `+b/`
+prefix). In the examples below, we assume that the environment value is unset
+(and uses a default value of `data/repo-state`) and that the distribution in
+question is `debian` and the release codename is `bookworm`. Our goal is to
+reupload all `clevis` packages with version `21-1+tpm1u8+deb12`:
+
+* List matching packages with Debian dependency-like filter in the repository:
+
+  ```bash
+  reprepro --confdir +b/data/repo-state/deb-debian/conf listfilter bookworm 'Package (% clevis*), $Version (= 21-1+tpm1u8+deb12)'
+  ```
+
+* Remove matching packages with Debian dependency-like filter in the repository:
+
+  ```bash
+  reprepro --confdir +b/data/repo-state/deb-debian/conf removefilter bookworm 'Package (% clevis*), $Version (= 21-1+tpm1u8+deb12)'
+  ```
+
+Please check the Debian [manual page][man-reprepro] for details on how to use
+the `reprepro` tool.
+
+[man-reprepro]: https://manpages.debian.org/experimental/reprepro/reprepro.1.en.html
 
 ### Regenerate Metadata Signatures
 
