@@ -1203,6 +1203,19 @@ the `reprepro` tool.
 
 [man-reprepro]: https://manpages.debian.org/experimental/reprepro/reprepro.1.en.html
 
+### Removing Packages from the Repository
+
+The `reprepro` configuration is set to keep at most 2 latest versions of each
+package in the repository. There is no such limit for the RedHat-like
+repositories (there is no automatic cleanup in the `createrepo_c` tool).
+
+If you need to remove the packages from the repository, it is currently a manual
+process. For Debian-like repository use the method mentioned above in the
+[Reuploading Debian Packages with Changed Checksums](#reuploading-debian-packages-with-changed-checksums)
+section. For RedHat-like distributions, simply delete the respective files from
+the repository directory and either regenerate the metadata as mentioned in the
+[Regenerate Metadata Signatures](#regenerate-metadata-signatures) section below.
+
 ### Regenerate Metadata Signatures
 
 If you have made any manual changes and need to regenerate the signatures, call

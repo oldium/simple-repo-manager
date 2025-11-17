@@ -1,5 +1,6 @@
 # Things to Do
 
+* Add package removal API. Currently this has to be done manually.
 * Make Repository Management API asynchronous. This should prevent any timeouts
   during the REST API call when `reprepro` and `createrepo_c` calls take a long
   time.
