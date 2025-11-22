@@ -316,7 +316,7 @@ describe('Test initial GPG import', () => {
             `
         })
 
-        const res = await request(app).post("/upload/build-repo");
+        const res = await request(app).post("/api/v1/repo/import");
         expect(res.status).toBe(200);
 
         expect(spawn).toHaveLength(7);
@@ -365,7 +365,7 @@ describe('Test initial GPG import', () => {
             "incoming/staging/rpm/fedora/41/test.rpm": ""
         })
 
-        const res = await request(app).post("/upload/build-repo");
+        const res = await request(app).post("/api/v1/repo/import");
         expect(res.status).toBe(200);
 
         expect(spawn).toHaveLength(1);

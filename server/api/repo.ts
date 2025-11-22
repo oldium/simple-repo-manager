@@ -1,14 +1,14 @@
-import type { EnabledApi, Gpg, Paths, UploadOptions } from "../../lib/config.ts";
+import type { EnabledApi, Gpg, Paths, UploadOptions } from "../lib/config.ts";
 import type { Request, RequestHandler } from "express";
-import { default as processIncomingDeb } from "../../lib/deb.ts";
-import { default as processIncomingRpm } from "../../lib/rpm.ts";
-import type { ActionResult } from "../../lib/exec.ts";
-import type { LoggedResponse } from "../../lib/logger.ts";
-import logger from "../../lib/logger.ts";
-import { sendErrorResponse, sendRepoResponse } from "../../lib/res.ts";
+import { default as processIncomingDeb } from "../lib/deb.ts";
+import { default as processIncomingRpm } from "../lib/rpm.ts";
+import type { ActionResult } from "../lib/exec.ts";
+import type { LoggedResponse } from "../lib/logger.ts";
+import logger from "../lib/logger.ts";
+import { sendErrorResponse, sendRepoResponse } from "../lib/res.ts";
 import osPath from "path";
-import { moveAll } from "../../lib/fs.ts";
-import lock from "../../lib/lock.ts";
+import { moveAll } from "../lib/fs.ts";
+import lock from "../lib/lock.ts";
 
 class RepoHandler {
     private enabledApi: EnabledApi;

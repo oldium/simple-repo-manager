@@ -6,8 +6,8 @@ import fsExtra from "fs-extra";
 import osPath from "path";
 import files from "./files.ts";
 import finalhandler from "finalhandler";
-import upload from "./upload/index.ts";
 import { gpgInit } from "../lib/gpg.ts";
+import api from "./api.ts";
 
 function unexpectedErrorHandler() {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -43,7 +43,8 @@ export default async function createApp(config: AppConfig, environment: Environm
         res.send('Package Uploader API (TypeScript) is running.');
     });
 
-    app.use("/upload", upload(config));
+    app.use("/api", api(config));
+
     app.use(await files(config.paths, config.gpg, environment));
     app.use(unexpectedErrorHandler());
 

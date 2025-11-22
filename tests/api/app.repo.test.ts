@@ -27,7 +27,7 @@ describe('Test repository API', () => {
             }
         });
 
-        const res = await request(app).post("/upload/build-repo");
+        const res = await request(app).post("/api/v1/repo/import");
         expect(res.status).toBe(503);
     }));
 });

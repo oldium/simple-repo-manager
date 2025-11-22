@@ -8,7 +8,7 @@ describe('Test basic authentication', () => {
         const app = await createTestApp({ upload: { basicAuth: ['upload:password'] } });
 
         const response = await request(app)
-            .get('/upload/status')
+            .get('/api/v1/status')
             .auth('upload', 'password', { type: 'basic' });
 
         expect(response.status).toBe(200);
@@ -18,7 +18,7 @@ describe('Test basic authentication', () => {
         const app = await createTestApp({ upload: { basicAuth: ['upload:password', 'admin:secret'] } });
 
         const response = await request(app)
-            .get('/upload/status')
+            .get('/api/v1/status')
             .auth('admin', 'secret', { type: 'basic' });
 
         expect(response.status).toBe(200);
@@ -28,7 +28,7 @@ describe('Test basic authentication', () => {
         const app = await createTestApp({ upload: { basicAuth: ['upload:password'] } });
 
         const response = await request(app)
-            .get('/upload/status')
+            .get('/api/v1/status')
             .auth('upload', 'wrong-password', { type: 'basic' });
 
         expect(response.status).toBe(401);

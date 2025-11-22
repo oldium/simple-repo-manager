@@ -15,7 +15,7 @@ describe('Test Debian file upload', () => {
         });
 
         const contentFile = Buffer.from('Hello World');
-        const res = await uploadFileByPost(app, '/upload/deb/debian/bookworm/main',
+        const res = await uploadFileByPost(app, '/api/v1/upload/deb/debian/bookworm/main',
             [{ name: 'test.deb', content: contentFile }]);
 
         expect(res.status).toBe(201);
@@ -37,7 +37,7 @@ describe('Test Debian file upload', () => {
         });
 
         const contentFile = Buffer.from('Hello World');
-        const res = await uploadFileByPost(app, '/upload/deb/debian/bookworm/main',
+        const res = await uploadFileByPost(app, '/api/v1/upload/deb/debian/bookworm/main',
             [{ name: 'test.deb', content: contentFile }], "file");
 
         expect(res.status).toBe(201);
@@ -62,7 +62,7 @@ describe('Test Debian file upload', () => {
         });
 
         const contentFile = Buffer.from('Hello World');
-        const res = await uploadFileByPost(app, '/upload/deb/debian/bookworm/main',
+        const res = await uploadFileByPost(app, '/api/v1/upload/deb/debian/bookworm/main',
             [{ name: 'test.deb', content: contentFile }]);
 
         expect(res.status).toBe(503);
@@ -80,7 +80,7 @@ describe('Test Debian file upload', () => {
         });
 
         const contentFile = Buffer.from('Hello World');
-        const res = await uploadFileByPost(app, '/upload/deb/debian/bookworm/main',
+        const res = await uploadFileByPost(app, '/api/v1/upload/deb/debian/bookworm/main',
             [{ name: 'test.deb', content: contentFile }], "file");
 
         expect(res.status).toBe(400);
@@ -96,7 +96,7 @@ describe('Test Debian file upload', () => {
         });
 
         const contentFile = Buffer.from('Hello World');
-        const res = await uploadFileByPost(app, '/upload/deb/debian/bookworm/update/main',
+        const res = await uploadFileByPost(app, '/api/v1/upload/deb/debian/bookworm/update/main',
             [{ name: 'test.deb', content: contentFile }]);
 
         expect(res.status).toBe(201);
@@ -122,8 +122,8 @@ describe('Test Debian file upload', () => {
             { name: 'test4.deb', content: Buffer.from('Hello World 4') },
         ];
 
-        const response = await uploadFileByPost(app, '/upload/deb/debian/bookworm/main', files);
-        expect(response.status).toBe(201);
+        const res = await uploadFileByPost(app, '/api/v1/upload/deb/debian/bookworm/main', files);
+        expect(res.status).toBe(201);
 
         files.forEach(file => {
             const expectedFilePath = path.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main', file.name);
@@ -146,7 +146,7 @@ describe('Test Debian file upload', () => {
             const testContent = Buffer.from(`Test file content for ${ ext }`);
             const filename = `testfile.${ ext }`;
 
-            const res = await uploadFileByPost(app, '/upload/deb/debian/bookworm/main',
+            const res = await uploadFileByPost(app, '/api/v1/upload/deb/debian/bookworm/main',
                 [{ name: filename, content: testContent }]);
             expect(res.status).toBe(201);
 
@@ -170,7 +170,7 @@ describe('Test Debian file upload', () => {
             const testContent = Buffer.from(`Invalid file content for ${ ext }`);
             const filename = `invalidfile.${ ext }`;
 
-            const res = await uploadFileByPost(app, '/upload/deb/debian/bookworm/main',
+            const res = await uploadFileByPost(app, '/api/v1/upload/deb/debian/bookworm/main',
                 [{ name: filename, content: testContent }]);
             expect(res.status).toBe(400);
 
@@ -200,7 +200,7 @@ describe('Test Debian file upload', () => {
         for (const invalidFileName of invalidFileNames) {
             const testContent = Buffer.from(`Content of ${ invalidFileName }`);
 
-            const res = await uploadFileByPost(app, '/upload/deb/debian/bookworm/main',
+            const res = await uploadFileByPost(app, '/api/v1/upload/deb/debian/bookworm/main',
                 [{ name: invalidFileName, content: testContent }]);
             expect(res.status).toBe(400);
 
@@ -219,8 +219,8 @@ describe('Test Debian file upload', () => {
         });
 
         const invalidComponents = [
-            '/upload/deb/debian/bookworm/inv@lid',
-            '/upload/deb/debian/bookworm/test.main'
+            '/api/v1/upload/deb/debian/bookworm/inv@lid',
+            '/api/v1/upload/deb/debian/bookworm/test.main'
         ];
 
         for (const invalidPath of invalidComponents) {
@@ -228,7 +228,7 @@ describe('Test Debian file upload', () => {
             const res = await uploadFileByPost(app, invalidPath, [{ name: 'test.deb', content: testContent }]);
             expect(res.status).toBe(400);
 
-            const expectedFilePath = path.join('incoming', 'staging', ...invalidPath.split('/').slice(2), 'test.deb');
+            const expectedFilePath = path.join('incoming', 'staging', ...invalidPath.split('/').slice(4), 'test.deb');
             expect(expectedFilePath).not.toPathExist();
         }
         expect(fs.readdirSync(path.join('incoming', 'tmp'))).toHaveLength(0);
@@ -247,7 +247,7 @@ describe('Test Debian file upload', () => {
         const testContent = Buffer.alloc(200 * 1024, 'A'); // 200kB buffer
         const filename = 'largefile.deb';
 
-        const res = await uploadFileByPost(app, '/upload/deb/debian/bookworm/main',
+        const res = await uploadFileByPost(app, '/api/v1/upload/deb/debian/bookworm/main',
             [{ name: filename, content: testContent }]);
         expect(res.status).toBe(413);
 
@@ -264,7 +264,7 @@ describe('Test Debian file upload', () => {
         });
 
         const testContent = Buffer.from('Test content for PUT method');
-        const testFilePath = '/upload/deb/debian/bookworm/main/clevis_21-1+tpm1u8+deb12.dsc';
+        const testFilePath = '/api/v1/upload/deb/debian/bookworm/main/clevis_21-1+tpm1u8+deb12.dsc';
 
         const res = await uploadFileByPut(app, testFilePath, testContent);
         expect(res.status).toBe(201);
@@ -284,7 +284,7 @@ describe('Test Debian file upload', () => {
         });
 
         const testContent = Buffer.from('Test content for PUT method');
-        const testFilePath = '/upload/deb/debian/bookworm/update/main/test.put.deb';
+        const testFilePath = '/api/v1/upload/deb/debian/bookworm/update/main/test.put.deb';
 
         const res = await uploadFileByPut(app, testFilePath, testContent);
         expect(res.status).toBe(201);
@@ -310,7 +310,7 @@ describe('Test Debian file upload', () => {
         });
 
         const testContent = Buffer.from('Test content for PUT method');
-        const testFilePath = '/upload/deb/debian/bookworm/main/clevis_21-1+tpm1u8+deb12.dsc';
+        const testFilePath = '/api/v1/upload/deb/debian/bookworm/main/clevis_21-1+tpm1u8+deb12.dsc';
 
         const res = await uploadFileByPut(app, testFilePath, testContent);
         expect(res.status).toBe(503);
@@ -332,7 +332,7 @@ describe('Test Debian file upload', () => {
 
         for (const ext of invalidExtensions) {
             const testContent = Buffer.from(`Invalid PUT content for ${ ext }`);
-            const invalidFilePath = `/upload/deb/debian/bookworm/main/invalidfile.${ ext }`;
+            const invalidFilePath = `/api/v1/upload/deb/debian/bookworm/main/invalidfile.${ ext }`;
 
             const res = await uploadFileByPut(app, invalidFilePath, testContent);
             expect(res.status).toBe(400);
@@ -362,7 +362,7 @@ describe('Test Debian file upload', () => {
 
         for (const invalidFileName of invalidFileNames) {
             const testContent = Buffer.from(`Content of ${ invalidFileName }`);
-            const invalidFilePath = `/upload/deb/debian/bookworm/main/${ invalidFileName }`;
+            const invalidFilePath = `/api/v1/upload/deb/debian/bookworm/main/${ invalidFileName }`;
 
             const res = await uploadFileByPut(app, invalidFilePath, testContent);
             expect(res.status).toBe(400);
@@ -382,9 +382,9 @@ describe('Test Debian file upload', () => {
         });
 
         const invalidComponents = [
-            '/upload/deb/debian/bookworm/inv@lid/test.deb',
-            '/upload/deb/debian/bookworm/main/test%2ftest.deb',
-            '/upload/deb/debian/bookworm/test.main/test.deb'
+            '/api/v1/upload/deb/debian/bookworm/inv@lid/test.deb',
+            '/api/v1/upload/deb/debian/bookworm/main/test%2ftest.deb',
+            '/api/v1/upload/deb/debian/bookworm/test.main/test.deb'
         ];
 
         for (const invalidPath of invalidComponents) {
@@ -392,7 +392,7 @@ describe('Test Debian file upload', () => {
             const res = await uploadFileByPut(app, invalidPath, testContent);
             expect(res.status).toBe(400);
 
-            const expectedFilePath = path.join('incoming', 'staging', ...invalidPath.split('/').slice(2));
+            const expectedFilePath = path.join('incoming', 'staging', ...invalidPath.split('/').slice(4));
             expect(expectedFilePath).not.toPathExist();
         }
         expect(fs.readdirSync(path.join('incoming', 'tmp'))).toHaveLength(0);
@@ -409,7 +409,7 @@ describe('Test Debian file upload', () => {
         });
 
         const testContent = Buffer.alloc(200 * 1024, 'A'); // 200kB buffer
-        const testFilePath = '/upload/deb/debian/bookworm/main/test.put.deb';
+        const testFilePath = '/api/v1/upload/deb/debian/bookworm/main/test.put.deb';
 
         const res = await uploadFileByPut(app, testFilePath, testContent);
         expect(res.status).toBe(413);
@@ -438,7 +438,7 @@ describe('Test Debian file upload', () => {
 
         try {
             const testContent = Buffer.from('Test content to simulate file write failure');
-            const testFilePath = '/upload/deb/debian/bookworm/main/failingfile.deb';
+            const testFilePath = '/api/v1/upload/deb/debian/bookworm/main/failingfile.deb';
 
             const res = await uploadFileByPut(app, testFilePath, testContent);
             expect(res.status).toBe(500);
@@ -469,7 +469,7 @@ describe('Test Debian file upload', () => {
         const buffer = Buffer.alloc(bufferSize, 'A');
 
         const requestHeaders = [
-            `PUT /upload/deb/debian/bookworm/main/rawput.deb HTTP/1.1`,
+            `PUT /api/v1/upload/deb/debian/bookworm/main/rawput.deb HTTP/1.1`,
             `Host: localhost`,
             `Transfer-Encoding: chunked`,
             `Content-Type: application/octet-stream`,
@@ -496,7 +496,7 @@ describe('Test Debian file upload', () => {
         const buffer = Buffer.alloc(bufferSize, 'A');
 
         const requestHeaders = [
-            `PUT /upload/deb/debian/bookworm/main/rawput.deb HTTP/1.1`,
+            `PUT /api/v1/upload/deb/debian/bookworm/main/rawput.deb HTTP/1.1`,
             `Host: localhost`,
             `Content-Length: ${ 400 * 1024 }`, // 400kB file size
             `Content-Type: application/octet-stream`,
@@ -526,7 +526,7 @@ describe('Test Debian file upload', () => {
         const buffer = Buffer.alloc(bufferSize, 'A');
 
         const requestHeaders = [
-            `PUT /upload/deb/debian/bookworm/main/largefile.deb HTTP/1.1`,
+            `PUT /api/v1/upload/deb/debian/bookworm/main/largefile.deb HTTP/1.1`,
             `Host: localhost`,
             `Content-Length: ${ 400 * 1024 }`, // 400kB file size
             `Content-Type: application/octet-stream`,

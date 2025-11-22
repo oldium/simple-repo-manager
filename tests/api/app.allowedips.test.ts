@@ -26,7 +26,7 @@ describe('Test allowed IP address filter', () => {
 
             const response = await sendRawHttp(server, {
                 headers: dedent`
-                    GET /upload/status HTTP/1.1
+                    GET /api/v1/status HTTP/1.1
                     Host: 127.0.0.1:${ port }
                     Connection: close\n\n
                 `
@@ -48,7 +48,7 @@ describe('Test allowed IP address filter', () => {
             const response = await sendRawHttp(server, {
                 localAddress: "127.0.1.1",
                 headers: dedent`
-                    GET /upload/status HTTP/1.1
+                    GET /api/v1/status HTTP/1.1
                     Host: 127.0.0.1:${ port }
                     Connection: close\n\n
                 `
@@ -70,7 +70,7 @@ describe('Test allowed IP address filter', () => {
             const response = await sendRawHttp(server, {
                 localAddress: "127.0.2.1",
                 headers: dedent`
-                    GET /upload/status HTTP/1.1
+                    GET /api/v1/status HTTP/1.1
                     Host: 127.0.0.1:${ port }
                     Connection: close\n\n
                 `
@@ -93,7 +93,7 @@ describe('Test allowed IP address filter', () => {
             const res1 = await sendRawHttp(server, {
                 localAddress: "127.0.1.1",
                 headers: dedent`
-                    GET /upload/status HTTP/1.1
+                    GET /api/v1/status HTTP/1.1
                     Host: 127.0.0.1:${ port }
                     Connection: close\n\n
                 `
@@ -103,7 +103,7 @@ describe('Test allowed IP address filter', () => {
             const res2 = await sendRawHttp(server, {
                 localAddress: "127.0.2.1",
                 headers: dedent`
-                    GET /upload/status HTTP/1.1
+                    GET /api/v1/status HTTP/1.1
                     Host: 127.0.0.1:${ port }
                     Connection: close\n\n
                 `
@@ -125,7 +125,7 @@ describe('Test allowed IP address filter', () => {
             const response = await sendRawHttp(server, {
                 localAddress: "127.0.3.1",
                 headers: dedent`
-                    GET /upload/status HTTP/1.1
+                    GET /api/v1/status HTTP/1.1
                     Host: 127.0.0.1:${ port }
                     Connection: close\n\n
                 `
@@ -149,7 +149,7 @@ describe('Test allowed IP address filter', () => {
             const response = await sendRawHttp(server, {
                 localAddress: "127.0.1.1",
                 headers: dedent`
-                    GET /upload/status HTTP/1.1
+                    GET /api/v1/status HTTP/1.1
                     Host: 127.0.0.1:${ port }
                     X-Forwarded-For: 127.0.2.1
                     Connection: close\n\n
@@ -174,7 +174,7 @@ describe('Test allowed IP address filter', () => {
             const response = await sendRawHttp(server, {
                 localAddress: "127.0.1.2",
                 headers: dedent`
-                    GET /upload/status HTTP/1.1
+                    GET /api/v1/status HTTP/1.1
                     Host: 127.0.0.1:${ port }
                     X-Forwarded-For: 127.0.2.1
                     Connection: close\n\n

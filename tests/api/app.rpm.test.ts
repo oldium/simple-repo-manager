@@ -15,7 +15,7 @@ describe('Test RedHat file upload', () => {
         });
 
         const contentFile = Buffer.from('Hello World');
-        const res = await uploadFileByPost(app, '/upload/rpm/fedora/41', [{ name: 'test.rpm', content: contentFile }]);
+        const res = await uploadFileByPost(app, '/api/v1/upload/rpm/fedora/41', [{ name: 'test.rpm', content: contentFile }]);
 
         expect(res.status).toBe(201);
 
@@ -39,7 +39,7 @@ describe('Test RedHat file upload', () => {
             { name: 'test4.rpm', content: Buffer.from('Hello World 4') },
         ];
 
-        const response = await uploadFileByPost(app, '/upload/rpm/fedora/41', files);
+        const response = await uploadFileByPost(app, '/api/v1/upload/rpm/fedora/41', files);
         expect(response.status).toBe(201);
 
         files.forEach(file => {
@@ -64,7 +64,7 @@ describe('Test RedHat file upload', () => {
         });
 
         const contentFile = Buffer.from('Hello World');
-        const res = await uploadFileByPost(app, '/upload/rpm/fedora/41', [{ name: 'test.rpm', content: contentFile }]);
+        const res = await uploadFileByPost(app, '/api/v1/upload/rpm/fedora/41', [{ name: 'test.rpm', content: contentFile }]);
 
         expect(res.status).toBe(503);
 
@@ -86,7 +86,7 @@ describe('Test RedHat file upload', () => {
             const testContent = Buffer.from(`Invalid file content for ${ ext }`);
             const filename = `invalidfile.${ ext }`;
 
-            const res = await uploadFileByPost(app, '/upload/rpm/fedora/41',
+            const res = await uploadFileByPost(app, '/api/v1/upload/rpm/fedora/41',
                 [{ name: filename, content: testContent }]);
             expect(res.status).toBe(400);
 
@@ -108,7 +108,7 @@ describe('Test RedHat file upload', () => {
         for (const release of invalidReleases) {
             const testContent = Buffer.from(`Invalid PUT content for release ${ release }`);
 
-            const res = await uploadFileByPost(app, `/upload/rpm/fedora/${ release }`,
+            const res = await uploadFileByPost(app, `/api/v1/upload/rpm/fedora/${ release }`,
                 [{ name: 'test.rpm', content: testContent }]);
             expect(res.status).toBe(400);
 
@@ -137,7 +137,7 @@ describe('Test RedHat file upload', () => {
         for (const invalidFileName of invalidFileNames) {
             const testContent = Buffer.from(`Content of ${ invalidFileName }`);
 
-            const res = await uploadFileByPost(app, '/upload/rpm/fedora/41',
+            const res = await uploadFileByPost(app, '/api/v1/upload/rpm/fedora/41',
                 [{ name: invalidFileName, content: testContent }]);
             expect(res.status).toBe(400);
 
@@ -160,7 +160,7 @@ describe('Test RedHat file upload', () => {
         const testContent = Buffer.alloc(200 * 1024, 'A'); // Create a 200kB buffer exceeding the limit
         const filename = 'largefile.rpm';
 
-        const res = await uploadFileByPost(app, '/upload/rpm/fedora/41', [{ name: filename, content: testContent }]);
+        const res = await uploadFileByPost(app, '/api/v1/upload/rpm/fedora/41', [{ name: filename, content: testContent }]);
         expect(res.status).toBe(413);
 
         const expectedFilePath = osPath.join('incoming', 'staging', 'rpm', 'fedora', '41', filename);
@@ -176,7 +176,7 @@ describe('Test RedHat file upload', () => {
         });
 
         const testContent = Buffer.from('Test content for PUT method');
-        const testFilePath = '/upload/rpm/fedora/41/test.put.rpm';
+        const testFilePath = '/api/v1/upload/rpm/fedora/41/test.put.rpm';
 
         const res = await uploadFileByPut(app, testFilePath, testContent);
         expect(res.status).toBe(201); // Assuming 201 Created for successful PUT
@@ -201,7 +201,7 @@ describe('Test RedHat file upload', () => {
         });
 
         const testContent = Buffer.from('Test content for PUT method');
-        const testFilePath = '/upload/rpm/fedora/41/test.put.rpm';
+        const testFilePath = '/api/v1/upload/rpm/fedora/41/test.put.rpm';
 
         const res = await uploadFileByPut(app, testFilePath, testContent);
         expect(res.status).toBe(503);
@@ -222,7 +222,7 @@ describe('Test RedHat file upload', () => {
 
         for (const ext of invalidExtensions) {
             const testContent = Buffer.from(`Invalid PUT content for ${ ext }`);
-            const invalidFilePath = `/upload/rpm/fedora/41/invalidfile.${ ext }`;
+            const invalidFilePath = `/api/v1/upload/rpm/fedora/41/invalidfile.${ ext }`;
 
             const res = await uploadFileByPut(app, invalidFilePath, testContent);
             expect(res.status).toBe(400);
@@ -244,7 +244,7 @@ describe('Test RedHat file upload', () => {
 
         for (const release of invalidReleases) {
             const testContent = Buffer.from(`Invalid PUT content for release ${ release }`);
-            const invalidFilePath = `/upload/rpm/fedora/${ release }/test.put.rpm`;
+            const invalidFilePath = `/api/v1/upload/rpm/fedora/${ release }/test.put.rpm`;
 
             const res = await uploadFileByPut(app, invalidFilePath, testContent);
             expect(res.status).toBe(400);
@@ -266,7 +266,7 @@ describe('Test RedHat file upload', () => {
         });
 
         const testContent = Buffer.alloc(200 * 1024, 'A'); // Create a 200kB buffer exceeding the limit
-        const testFilePath = '/upload/rpm/fedora/41/test.put.rpm';
+        const testFilePath = '/api/v1/upload/rpm/fedora/41/test.put.rpm';
 
         const res = await uploadFileByPut(app, testFilePath, testContent);
         expect(res.status).toBe(413);
@@ -294,7 +294,7 @@ describe('Test RedHat file upload', () => {
 
         try {
             const testContent = Buffer.from('Test content to simulate file write failure');
-            const testFilePath = '/upload/rpm/fedora/41/failingfile.rpm';
+            const testFilePath = '/api/v1/upload/rpm/fedora/41/failingfile.rpm';
 
             const res = await uploadFileByPut(app, testFilePath, testContent);
             (osPath.join as jest.Mock).mockRestore();
@@ -323,7 +323,7 @@ describe('Test RedHat file upload', () => {
         const buffer = Buffer.alloc(bufferSize, 'A');
 
         const requestHeaders = [
-            `PUT /upload/rpm/fedora/41/rawput.rpm HTTP/1.1`,
+            `PUT /api/v1/upload/rpm/fedora/41/rawput.rpm HTTP/1.1`,
             `Host: localhost`,
             `Transfer-Encoding: chunked`,
             `Content-Type: application/octet-stream`,
@@ -350,7 +350,7 @@ describe('Test RedHat file upload', () => {
         const buffer = Buffer.alloc(bufferSize, 'A');
 
         const requestHeaders = [
-            `PUT /upload/rpm/fedora/41/rawput.rpm HTTP/1.1`,
+            `PUT /api/v1/upload/rpm/fedora/41/rawput.rpm HTTP/1.1`,
             `Host: localhost`,
             `Content-Length: ${ 400 * 1024 }`,
             `Content-Type: application/octet-stream`,
@@ -380,7 +380,7 @@ describe('Test RedHat file upload', () => {
         const buffer = Buffer.alloc(bufferSize, 'A');
 
         const requestHeaders = [
-            `PUT /upload/rpm/fedora/41/largefile.rpm HTTP/1.1`,
+            `PUT /api/v1/upload/rpm/fedora/41/largefile.rpm HTTP/1.1`,
             `Host: localhost`,
             `Content-Length: ${ 400 * 1024 }`, // 2MB file size
             `Content-Type: application/octet-stream`,

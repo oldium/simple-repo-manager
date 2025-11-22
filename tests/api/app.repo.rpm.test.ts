@@ -63,7 +63,7 @@ describe('Test repository build scripts for RedHat', () => {
             "incoming/staging/rpm/fedora/41/test.rpm": ""
         })
 
-        const res = await request(app).post("/upload/build-repo");
+        const res = await request(app).post("/api/v1/repo/import");
         expect(res.status).toBe(200);
 
         expect(await fs.readdir(osPath.join('incoming', 'staging', 'rpm', 'fedora', '41'))).toHaveLength(0);
@@ -107,7 +107,7 @@ describe('Test repository build scripts for RedHat', () => {
             "incoming/staging/rpm/fedora/41/test.rpm": ""
         })
 
-        const res = await request(app).post("/upload/build-repo");
+        const res = await request(app).post("/api/v1/repo/import");
         expect(res.status).toBe(200);
 
         expect(await fs.readdir(osPath.join('incoming', 'staging', 'rpm', 'fedora', '41'))).toHaveLength(0);
@@ -138,7 +138,7 @@ describe('Test repository build scripts for RedHat', () => {
             "incoming/staging/rpm/fedora/41/test.rpm": ""
         })
 
-        const res = await request(app).post("/upload/build-repo");
+        const res = await request(app).post("/api/v1/repo/import");
         expect(res.status).toBe(200);
 
         expect(await fs.readdir(osPath.join('incoming', 'staging', 'rpm', 'fedora', '41'))).toHaveLength(0);
@@ -180,7 +180,7 @@ describe('Test repository build scripts for RedHat', () => {
             "incoming/staging/rpm/fedora/41/fest3.rpm": "",
         })
 
-        const res = await request(app).post("/upload/build-repo");
+        const res = await request(app).post("/api/v1/repo/import");
         expect(res.status).toBe(200);
 
         expect(await fs.readdir(osPath.join('incoming', 'staging', 'rpm', 'fedora', '41'))).toHaveLength(0);
@@ -220,7 +220,7 @@ describe('Test repository build scripts for RedHat', () => {
             "incoming/staging/rpm/centos/9/fest3.rpm": "",
         })
 
-        const res = await request(app).post("/upload/build-repo");
+        const res = await request(app).post("/api/v1/repo/import");
         expect(res.status).toBe(200);
 
         expect(await fs.readdir(osPath.join('incoming', 'staging', 'rpm', 'fedora', '41'))).toHaveLength(0);
@@ -264,7 +264,7 @@ describe('Test repository build scripts for RedHat', () => {
             "incoming/staging/rpm/fedora/41/test.rpm": ""
         })
 
-        const res = await request(app).post("/upload/build-repo");
+        const res = await request(app).post("/api/v1/repo/import");
         expect(res.status).toBe(500);
 
         expect(await fs.readdir(osPath.join('incoming', 'staging', 'rpm', 'fedora', '41'))).toHaveLength(0);
@@ -288,7 +288,7 @@ describe('Test repository build scripts for RedHat', () => {
             "incoming/staging/rpm/fedora/41/test.rpm": ""
         })
 
-        const res = await request(app).post("/upload/build-repo");
+        const res = await request(app).post("/api/v1/repo/import");
         expect(res.status).toBe(500);
 
         expect(await fs.readdir(osPath.join('incoming', 'staging', 'rpm', 'fedora', '41'))).toHaveLength(0);

@@ -80,7 +80,7 @@ describe('Test repository build scripts for Debian', () => {
             `
         })
 
-        const res = await request(app).post("/upload/build-repo");
+        const res = await request(app).post("/api/v1/repo/import");
         expect(res.status).toBe(200);
 
         expect(await fs.readdir(osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main'))).toHaveLength(0);
@@ -159,7 +159,7 @@ describe('Test repository build scripts for Debian', () => {
             `
         })
 
-        const res = await request(app).post("/upload/build-repo");
+        const res = await request(app).post("/api/v1/repo/import");
         expect(res.status).toBe(200);
 
         expect(await fs.readdir(osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main'))).toHaveLength(0);
@@ -238,7 +238,7 @@ describe('Test repository build scripts for Debian', () => {
             `
         })
 
-        const res = await request(app).post("/upload/build-repo");
+        const res = await request(app).post("/api/v1/repo/import");
         expect(res.status).toBe(200);
 
         expect(await fs.readdir(osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main'))).toHaveLength(0);
@@ -269,7 +269,7 @@ describe('Test repository build scripts for Debian', () => {
             `
         })
 
-        const res = await request(app).post("/upload/build-repo");
+        const res = await request(app).post("/api/v1/repo/import");
         expect(res.status).toBe(200);
 
         expect(await fs.readdir(osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main'))).toHaveLength(0);
@@ -337,7 +337,6 @@ describe('Test repository build scripts for Debian', () => {
 
         const createTestApp = (await import("../testapp.ts")).default;
 
-        let res;
         try {
             mockFs({
                 "/incoming/staging/deb/debian/bookworm/main/test.changes": dedent`
@@ -354,7 +353,7 @@ describe('Test repository build scripts for Debian', () => {
                 }
             });
 
-            res = await request(app).post("/upload/build-repo");
+            const res = await request(app).post("/api/v1/repo/import");
 
             expect(res.status).toBe(200);
 
@@ -440,7 +439,7 @@ describe('Test repository build scripts for Debian', () => {
         `
         })
 
-        const res = await request(app).post("/upload/build-repo");
+        const res = await request(app).post("/api/v1/repo/import");
         expect(res.status).toBe(200);
 
         expect(await fs.readdir(osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'update'))).toHaveLength(0);
@@ -530,7 +529,7 @@ describe('Test repository build scripts for Debian', () => {
         `
         })
 
-        const res = await request(app).post("/upload/build-repo");
+        const res = await request(app).post("/api/v1/repo/import");
         expect(res.status).toBe(200);
 
         expect(await fs.readdir(osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'update'))).toHaveLength(0);
@@ -635,7 +634,7 @@ describe('Test repository build scripts for Debian', () => {
         `,
         })
 
-        const res = await request(app).post("/upload/build-repo");
+        const res = await request(app).post("/api/v1/repo/import");
         expect(res.status).toBe(200);
 
         expect(await fs.readdir(osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main'))).toHaveLength(0);
@@ -762,7 +761,7 @@ describe('Test repository build scripts for Debian', () => {
             `
         })
 
-        const res = await request(app).post("/upload/build-repo");
+        const res = await request(app).post("/api/v1/repo/import");
         expect(res.status).toBe(200);
 
         expect(repreproSpawn).toHaveLength(3);
@@ -799,7 +798,7 @@ describe('Test repository build scripts for Debian', () => {
             `
         })
 
-        const res = await request(app).post("/upload/build-repo");
+        const res = await request(app).post("/api/v1/repo/import");
         expect(res.status).toBe(200);
 
         expect(repreproSpawn).toHaveLength(3);
@@ -836,7 +835,7 @@ describe('Test repository build scripts for Debian', () => {
             `
         });
 
-        const res = await request(app).post("/upload/build-repo");
+        const res = await request(app).post("/api/v1/repo/import");
         expect(res.status).toBe(200);
 
         await expect(fs.readdir(osPath.join("incoming", "process", "deb"))).resolves.toEqual([]);
@@ -887,7 +886,7 @@ describe('Test repository build scripts for Debian', () => {
             `
         });
 
-        const res = await request(app).post("/upload/build-repo");
+        const res = await request(app).post("/api/v1/repo/import");
         expect(res.status).toBe(200);
 
         await expect(fs.readdir(osPath.join("incoming", "process", "deb"))).resolves.toEqual([]);
@@ -939,7 +938,7 @@ describe('Test repository build scripts for Debian', () => {
             `
         })
 
-        const res = await request(app).post("/upload/build-repo");
+        const res = await request(app).post("/api/v1/repo/import");
         expect(res.status).toBe(500);
 
         expect(await fs.readdir(osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main'))).toHaveLength(0);
@@ -965,7 +964,7 @@ describe('Test repository build scripts for Debian', () => {
             `
         })
 
-        const res = await request(app).post("/upload/build-repo");
+        const res = await request(app).post("/api/v1/repo/import");
         expect(res.status).toBe(500);
 
         expect(await fs.readdir(osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main'))).toHaveLength(0);

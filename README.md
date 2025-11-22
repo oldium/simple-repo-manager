@@ -320,29 +320,26 @@ confirmation that the server is up and running. The status response is a simple
 text response with no particular structure containing the information that the
 server is running.
 
-## Upload API
+## Packages API
 
-The upload API is designed to be used by tools like `dput`, `dput-ng` and
+The packages API is designed to be used by tools like `dput`, `dput-ng` and
 `curl`. It can be optionally protected by basic authentication. See the
 [Configuration](#configuration) section for more details.
 
-The response to all the Upload API requests below the `/upload` path is always
-JSON with the following fields:
+The packages API is versioned and the current path is `/api/v1`.
 
-* `message`: A human-readable message describing the result of the upload.
-* `files`: Optional array of uploaded files. Each entry contains the following
-  fields:
-  * `filename`: The name of the uploaded file.
-  * `status`: The upload status, which can be `"ok"` or `"failed"`.
-  * `path`: Optional path of the uploaded file without the `/upload` prefix.
-* `api`: Only present for the [Upload Status API](#upload-status-api) request.
+The response to all the packages API requests below the `/api` path is always
+JSON with the fields described below and additional fields described in the
+following sections:
+
+* `message`: A human-readable message for the result of the operation.
 * `correlation`: Optional unique identifier with the `id` field, which can be
   used to track the request in the server logs. Present only for HTTP response
   error status codes `400` and higher.
 
-### Upload Status API
+### Packages Status API
 
-The status API is available at the `/upload/status` endpoint. It serves as a
+The status API is available at the `/api/v1/status` endpoint. It serves as a
 confirmation that the authentication is correctly set up because the same rules
 apply as for the other upload APIs. The status response contains the following
 fields:
@@ -356,7 +353,29 @@ fields:
     * `enabled`: A boolean indicating that the RedHat-like Upload API is
       correctly configured and enabled.
 
-### Debian Upload API
+## Packages Upload API
+
+The packages API is designed to be used by tools like `dput`, `dput-ng` and
+`curl`. It can be optionally protected by basic authentication. See the
+[Configuration](#configuration) section for more details.
+
+The packages upload API is prefixed with `/api/v1/upload`.
+
+The response to all the Upload API requests below the `/api/v1/upload` path is
+always JSON with the following fields:
+
+* `message`: A human-readable message describing the result of the upload.
+* `files`: Optional array of uploaded files. Each entry contains the following
+  fields:
+  * `filename`: The name of the uploaded file.
+  * `status`: The upload status, which can be `"ok"` or `"failed"`.
+  * `path`: Optional path of the uploaded file without the `/api/v1/upload`
+    prefix.
+* `correlation`: Optional unique identifier with the `id` field, which can be
+  used to track the request in the server logs. Present only for HTTP response
+  error status codes `400` and higher.
+
+### Debian Packages Upload API
 
 > [!NOTE]
 > The Debian Upload API is compatible with `dput` and `dput-ng` tools and can
@@ -387,8 +406,8 @@ source package, debug symbols) are stored in the repository.
 
 #### POST API
 
-* `/upload/deb/<distribution>/<release>/<component>`
-* `/upload/deb/<distribution>/<release>/<component>/<sub-component>`
+* `/api/v1/upload/deb/<distribution>/<release>/<component>`
+* `/api/v1/upload/deb/<distribution>/<release>/<component>/<sub-component>`
 
 The POST API expects a `multipart/form-data` request with the field `package`
 (can be changed, see [Configuration](#configuration) section) containing the
@@ -405,21 +424,21 @@ curl -u "<username>:<password>" \
   -F "package=@foo_1.0-1_amd64.buildinfo" \
   -F "package=@foo_1.0.orig.tar.gz" \
   -F "package=@foo_1.0-1.debian.tar.xz" \
-  https://<host>:<port>/upload/deb/<distribution>/<release>/<component>
+  https://<host>:<port>/api/v1/upload/deb/<distribution>/<release>/<component>
 ```
 
 For example, to upload the package to Debian Bookworm distribution into
 component `main`, the URI would look like:
 
 ```url
-https://my-repo.example.com/upload/deb/debian/bookworm/main`
+https://my-repo.example.com/api/v1/upload/deb/debian/bookworm/main`
 ```
 
 To upload the file to the Debian Bookworm security update distribution and
 component `updates/main`, one could use:
 
 ```url
-https://my-repo.example.com/upload/deb/debian/bookworm-security/updates/main`
+https://my-repo.example.com/api/v1/upload/deb/debian/bookworm-security/updates/main`
 ```
 
 For **testing** with plain HTTP and disabled authorization one could use
@@ -434,13 +453,13 @@ curl -F "package=@foo_1.0-1_amd64.changes" \
   -F "package=@foo_1.0-1_amd64.buildinfo" \
   -F "package=@foo_1.0.orig.tar.gz" \
   -F "package=@foo_1.0-1.debian.tar.xz" \
-  http://<host>:<port>/upload/deb/<distribution>/<release>/<component>
+  http://<host>:<port>/api/v1/upload/deb/<distribution>/<release>/<component>
 ```
 
 #### PUT API
 
-* `/upload/deb/<distribution>/<release>/<component>/<file>`
-* `/upload/deb/<distribution>/<release>/<component>/<sub-component>/<file>`
+* `/api/v1/upload/deb/<distribution>/<release>/<component>/<file>`
+* `/api/v1/upload/deb/<distribution>/<release>/<component>/<sub-component>/<file>`
 
 The PUT API is meant to be used by `dput` and `dput-ng` tools. The example
 `.dput.cf` corresponding to the section above for Debian Bookworm distribution
@@ -449,7 +468,7 @@ and `main` component could look like:
 ```ini
 [bookworm-main]
 fqdn=<username>:<password>@my-repo.example.com:80
-incoming=/upload/deb/debian/bookworm/main
+incoming=/api/v1/upload/deb/debian/bookworm/main
 method=https
 distributions=bookworm
 ```
@@ -466,7 +485,7 @@ Or in case of the Debian Bookworm security update distribution and component
 ```ini
 [bookworm-security-main]
 fqdn=<username>:<password>@my-repo.example.com:80
-incoming=/upload/deb/debian/bookworm-security/updates/main
+incoming=/api/v1/upload/deb/debian/bookworm-security/updates/main
 method=https
 distributions=bookworm-security
 ```
@@ -483,12 +502,12 @@ For **testing** with plain HTTP and disabled authorization one could use
 ```ini
 [bookworm-main-test]
 fqdn=my-repo.example.com:80
-incoming=/upload/deb/debian/bookworm/main
+incoming=/api/v1/upload/deb/debian/bookworm/main
 method=http
 distributions=bookworm
 ```
 
-### RedHat-like Upload API
+### RedHat-like Packages Upload API
 
 The Repository Management API (the `createrepo_c` tool) is not so strict like in
 the Debian-like repository case, so it works even for single RPMs. For the
@@ -500,7 +519,7 @@ have both the source and binary RPMs:
 
 #### POST API
 
-* `/upload/rpm/<distribution>/<release>`
+* `/api/v1/upload/rpm/<distribution>/<release>`
 
 The POST API expects a `multipart/form-data` request with the field `package`
 (can be changed, see [Configuration](#configuration) section) containing the
@@ -512,14 +531,14 @@ to upload the files with the following command:
 curl -u "<username>:<password>" \
   -F "package=@foo-1.0-1.x86_64.rpm" \
   -F "package=@foo-1.0-1.x86_64.src.rpm" \
-  https://<host>:<port>/upload/rpm/<distribution>/<release>
+  https://<host>:<port>/api/v1/upload/rpm/<distribution>/<release>
 ```
 
 For example, to upload the package to Fedora release 41, the URI would look
 like:
 
 ```url
-https://my-repo.example.com/upload/rpm/fedora/41`
+https://my-repo.example.com/api/v1/upload/rpm/fedora/41`
 ```
 
 For **testing** with plain HTTP and disabled authorization one could use
@@ -529,12 +548,12 @@ password:
 ```bash
 curl -F "package=@foo-1.0-1.x86_64.rpm" \
   -F "package=@foo-1.0-1.x86_64.src.rpm" \
-  http://<host>:<port>/upload/rpm/<distribution>/<release>
+  http://<host>:<port>/api/v1/upload/rpm/<distribution>/<release>
 ```
 
 #### PUT API
 
-* `/upload/rpm/<distribution>/<release>/<file>`
+* `/api/v1/upload/rpm/<distribution>/<release>/<file>`
 
 The PUT API accepts single file uploads. The `curl` tool can be used to upload
 the file:
@@ -542,14 +561,14 @@ the file:
 ```bash
 curl -u "<username>:<password>" \
   -T "foo-1.0-1.x86_64.rpm" \
-  https://<host>:<port>/upload/rpm/<distribution>/<release>/foo-1.0-1.x86_64.rpm
+  https://<host>:<port>/api/v1/upload/rpm/<distribution>/<release>/foo-1.0-1.x86_64.rpm
 ```
 
 For example, to upload the package to Fedora release 41, the URI would look
 like:
 
 ```url
-https://my-repo.example.com/upload/rpm/fedora/41/foo-1.0-1.x86_64.rpm
+https://my-repo.example.com/api/v1/upload/rpm/fedora/41/foo-1.0-1.x86_64.rpm
 ```
 
 If the URI ends with a slash `/`, the file name is appended by `curl`
@@ -558,13 +577,13 @@ automatically:
 ```bash
 curl -u "<username>:<password>" \
   -T "foo-1.0-1.x86_64.rpm" \
-  https://<host>:<port>/upload/rpm/<distribution>/<release>/
+  https://<host>:<port>/api/v1/upload/rpm/<distribution>/<release>/
 ```
 
 So in the same example as above, one would use:
 
 ```url
-https://my-repo.example.com/upload/rpm/fedora/41/
+https://my-repo.example.com/api/v1/upload/rpm/fedora/41/
 ```
 
 It is also possible to upload multiple files in multiple requests with a single
@@ -573,7 +592,7 @@ command:
 ```bash
 curl -u "<username>:<password>" \
   -T "{foo-1.0-1.x86_64.rpm,foo-1.0-1.x86_64.src.rpm}" \
-  https://<host>:<port>/upload/rpm/<distribution>/<release>/
+  https://<host>:<port>/api/v1/upload/rpm/<distribution>/<release>/
 ```
 
 For **testing** with plain HTTP and disabled authorization one could use
@@ -582,27 +601,27 @@ password:
 
 ```bash
 curl -T "foo-1.0-1.x86_64.rpm" \
-  http://<host>:<port>/upload/rpm/<distribution>/<release>/
+  http://<host>:<port>/api/v1/upload/rpm/<distribution>/<release>/
 ```
 
 ### Repository Management API
 
 To build the repository from the uploaded files, send the `POST` request to the
-`/upload/build-repo` endpoint. There is nothing read from the request body, so
+`/api/v1/repo/import` endpoint. There is nothing read from the request body, so
 it might be empty.
 
 The repository build can be triggered by issuing the following `curl` command:
 
 ```bash
 curl -u "<username>:<password>" \
-  -X POST https://<host>:<port>/upload/build-repo
+  -X POST https://<host>:<port>/api/v1/repo/import
 ```
 
 For **testing** with plain HTTP and disabled authorization one could use `http`
 instead of `https` and omit the `-u` argument with the username and password:
 
 ```bash
-curl -X POST http://<host>:<port>/upload/build-repo
+curl -X POST http://<host>:<port>/api/v1/repo/import
 ```
 
 The repository build prepares the configuration for the tools and calls the
