@@ -467,7 +467,7 @@ and `main` component could look like:
 
 ```ini
 [bookworm-main]
-fqdn=<username>:<password>@my-repo.example.com:80
+fqdn=<username>:<password>@my-repo.example.com:443
 incoming=/api/v1/upload/deb/debian/bookworm/main
 method=https
 distributions=bookworm
@@ -484,7 +484,7 @@ Or in case of the Debian Bookworm security update distribution and component
 
 ```ini
 [bookworm-security-main]
-fqdn=<username>:<password>@my-repo.example.com:80
+fqdn=<username>:<password>@my-repo.example.com:443
 incoming=/api/v1/upload/deb/debian/bookworm-security/updates/main
 method=https
 distributions=bookworm-security
@@ -672,6 +672,12 @@ docker run --detach \
   simple-repo-manager
 ```
 
+> [!NOTE]
+> When configuring HTTPS server (see
+> [Configuration Examples](#configuration-examples)), replace the exposed port
+> number 80 by port 443 in the `ports` element. Alternative to running HTTPS
+> server is using a SSL-terminating reverse proxy.
+
 ### Docker Compose Configuration
 
 For Docker Compose, copy the [`env.example`][env-example] file to `.env` in the
@@ -712,6 +718,12 @@ services:
     environment:
       UPLOAD_FIELD_NAME: file
 ```
+
+> [!NOTE]
+> When configuring HTTPS server (see
+> [Configuration Examples](#configuration-examples)), replace the exposed port
+> number 80 by port 443 in the `ports` element. Alternative to running HTTPS
+> server is using a SSL-terminating reverse proxy.
 
 ### Local Development Configuration
 
