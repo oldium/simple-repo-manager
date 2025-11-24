@@ -113,8 +113,8 @@ To use the repository manager, you need to follow these steps:
   for details.
 * Start the server. See the [Quick Start](#quick-start) section above for
   details.
-* Upload the packages to the repository. See the [Upload API](#upload-api)
-  section below for details.
+* Upload the packages to the repository. See the
+  [Packages Upload API](#packages-upload-api) section below for details.
 * Build the repository. See the
   [Repository Management API](#repository-management-api) section below for
   details.
