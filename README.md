@@ -1071,7 +1071,7 @@ run the application in production.
 
 > [!NOTE]
 > The author of Simple Repo Manager creates the release builds with the
-> following command, which ensures that fresh third-part images is used and
+> following command, which ensures that fresh third-party images are used and
 > adds additional metadata to the Docker image itself:
 >
 > ```bash
