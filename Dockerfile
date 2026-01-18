@@ -64,6 +64,7 @@ RUN apt update \
 
 FROM node:24-trixie-slim AS app-base
 
+# Also upgrade base image: see https://pythonspeed.com/articles/security-updates-in-docker/
 RUN --mount=type=bind,from=repo-tools,source=/build,target=/tools \
     sed -i -e's/ main/ main non-free/g' /etc/apt/sources.list.d/debian.sources \
  && apt update \
