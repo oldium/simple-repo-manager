@@ -242,7 +242,7 @@ if (withHttps && environment !== "production"
     logger.info("Generating self-signed certificate for HTTPS server...");
     const attrs = [{ name: 'commonName', value: 'localhost' }];
     // noinspection SpellCheckingInspection
-    const pems = (await import("selfsigned")).generate(attrs, { keySize: 2048, days: 365 });
+    const pems = await (await import("selfsigned")).generate(attrs, { keySize: 2048 });
     const keyDir = osPath.dirname(process.env.HTTPS_KEY_FILE!);
     const certDir = osPath.dirname(process.env.HTTPS_CERT_FILE!);
     if (keyDir) {

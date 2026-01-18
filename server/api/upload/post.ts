@@ -14,6 +14,13 @@ import type { FileResponse } from "../../lib/res.ts";
 import { sendErrorResponse, sendUploadResponse } from "../../lib/res.ts";
 import { ensureAsyncContext } from "../../lib/req.ts";
 
+interface PostRequestParams {
+    distro: string;
+    release: string;
+    component?: string;
+    subcomponent?: string;
+}
+
 class PostHandler {
     private readonly storage: StorageEngine;
     private readonly upload: Multer;
@@ -47,9 +54,11 @@ class PostHandler {
         });
     };
 
-    public middlewares(type: string): (RequestHandler | ErrorRequestHandler)[] {
+    public middlewares(
+        type: string
+    ): (RequestHandler<PostRequestParams> | ErrorRequestHandler<PostRequestParams>)[] {
         return [
-            ensureAsyncContext(this.upload.array(this.postField)),
+            ensureAsyncContext(this.upload.array(this.postField)) as unknown as RequestHandler<PostRequestParams>,
             this.postHandler.bind(this, type),
             this.errorHandler.bind(this)
         ];
@@ -63,7 +72,7 @@ class PostHandler {
         }
     }
 
-    private async errorHandler(err: Error, _req: Request, res: Response, next: NextFunction) {
+    private async errorHandler(err: Error, _req: Request<PostRequestParams>, res: Response, next: NextFunction) {
         if (res.headersSent) {
             return next(err);
         }
@@ -85,7 +94,11 @@ class PostHandler {
         next(err);
     }
 
-    private async postHandler(type: string, req: Request, res: Response): Promise<void> {
+    private async postHandler(
+        type: string,
+        req: Request<PostRequestParams>,
+        res: Response
+    ): Promise<void> {
         const { distro, release, component, subcomponent } = req.params;
         const files = req.files as Express.Multer.File[] | undefined;
 
@@ -174,7 +187,7 @@ function debRouter(paths: Paths, upload: UploadOptions) {
 function rpmRouter(paths: Paths, upload: UploadOptions) {
     const router = express.Router({ strict: true });
     const handler = new PostHandler(paths, upload);
-    router.post('/:distro/:release', handler.middlewares("rpm"));
+    router.post<string, PostRequestParams>('/:distro/:release', handler.middlewares("rpm"));
     return router;
 }
 

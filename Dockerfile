@@ -3,7 +3,7 @@ FROM node:24-trixie-slim AS initial
 ENV NPM_CONFIG_UPDATE_NOTIFIER=false
 
 # Until custom patches are accepted, use Git version
-ADD --checksum=sha256:481224298a0769231f0de8a1890d842cdb958d4c6a1200fdda1fe514140db58a https://github.com/oldium/npm-cli/archive/831fed0d580be958834356aac16308f93f5c5be3.tar.gz /npm/
+ADD --checksum=sha256:d948a734a9f98a6c8769948d585bfaae7c19f4a378dea1cf772d3aa3b4e24c0f https://github.com/oldium/npm-cli/archive/b78d6c18bfb1bd0615d777ca4b3e1e7fc0ad18b5.tar.gz /npm/
 RUN /bin/bash -e <<EOF
 echo "Installing custom npm snapshot from Git..."
 cd /npm

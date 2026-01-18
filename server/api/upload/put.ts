@@ -12,6 +12,14 @@ import { SizeLimitStream } from "../../lib/streams.ts";
 import lock from "../../lib/lock/naive.ts";
 import { type FileResponse, sendErrorResponse, sendUploadResponse } from "../../lib/res.ts";
 
+interface PutRequestParams {
+    distro: string;
+    release: string;
+    component?: string;
+    subcomponent?: string;
+    filename: string;
+}
+
 class PutHandler {
     private readonly sizeLimit;
 
@@ -19,11 +27,15 @@ class PutHandler {
         this.sizeLimit = upload.sizeLimit;
     }
 
-    public middleware(type: string): RequestHandler {
+    public middleware(type: string): RequestHandler<PutRequestParams> {
         return this.putHandler.bind(this, type);
     }
 
-    private putHandler(type: string, req: Request, res: Response): void {
+    private putHandler(
+        type: string,
+        req: Request<PutRequestParams>,
+        res: Response
+    ): void {
         const { distro, release, component, subcomponent, filename } = req.params;
 
         const distroComponents = [distro, release].concat(
