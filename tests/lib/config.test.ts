@@ -299,7 +299,7 @@ describe("Test environment variables and config.ts", () => {
 
     test("Check basic auth multiple credentials parsing with spaces", withLocalTmpDir(async () => {
         process.env.NODE_ENV = "production";
-        process.env.UPLOAD_BASIC_AUTH = " user1:pass1 , user2:pass2 ";
+        process.env.UPLOAD_BASIC_AUTH = " user1:pass1 , user2:pass2, user3:pass me ";
 
         mockExecution(0, "stdout data", "", undefined);
 
@@ -307,7 +307,7 @@ describe("Test environment variables and config.ts", () => {
 
         expect(config.environment).toEqual("production");
         expect(config.app.upload.basicAuth).toBeDefined();
-        expect(config.app.upload.basicAuth).toEqual(["user1:pass1", "user2:pass2"]);
+        expect(config.app.upload.basicAuth).toEqual(["user1:pass1", "user2:pass2", "user3:pass me"]);
     }));
 
     test("Check basic auth with empty definition containing just comma", withLocalTmpDir(async () => {
@@ -335,9 +335,9 @@ describe("Test environment variables and config.ts", () => {
         expect(config.app.upload.basicAuth).toEqual(["user1:pass1", "user2:pass2"]);
     }));
 
-    test("Check basic auth dictionary-like multiple credentials parsing with ", withLocalTmpDir(async () => {
+    test("Check basic auth dictionary-like parsing with errors", withLocalTmpDir(async () => {
         process.env.NODE_ENV = "production";
-        process.env.UPLOAD_BASIC_AUTH = '{user1:"pass with \\"specials:", "user 2": pass2}';
+        process.env.UPLOAD_BASIC_AUTH = '{upload:"my \\"secret:,password\\\\;", "upload 2":"other password", upload 3: third password}';
 
         mockExecution(0, "stdout data", "", undefined);
 
@@ -345,7 +345,24 @@ describe("Test environment variables and config.ts", () => {
 
         expect(config.environment).toEqual("production");
         expect(config.app.upload.basicAuth).toBeDefined();
-        expect(config.app.upload.basicAuth).toEqual(["user1:pass with \"specials:", "user 2:pass2"]);
+        expect(config.app.upload.basicAuth).toEqual([
+            'upload:my "secret:,password\\;',
+            "upload 2:other password",
+            "upload 3:third password",
+        ]);
+    }));
+
+    test("Check basic auth dictionary-like multiple credentials parsing with special characters", withLocalTmpDir(async () => {
+        process.env.NODE_ENV = "production";
+        process.env.UPLOAD_BASIC_AUTH = '{user1:"pass with \\"specials:@#$%^&*()[]", "user 2": pass2}';
+
+        mockExecution(0, "stdout data", "", undefined);
+
+        const { default: config } = await import("../../server/lib/config.ts");
+
+        expect(config.environment).toEqual("production");
+        expect(config.app.upload.basicAuth).toBeDefined();
+        expect(config.app.upload.basicAuth).toEqual(["user1:pass with \"specials:@#$%^&*()[]", "user 2:pass2"]);
     }));
 
     test("Check basic auth with empty dictionary-like config", withLocalTmpDir(async () => {

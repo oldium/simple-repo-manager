@@ -1,8 +1,6 @@
 import fs from "node:fs/promises";
 import dns from "node:dns/promises";
 import { isIP } from "node:net";
-// noinspection SpellCheckingInspection
-import djson from "dirty-json";
 import _ from "lodash";
 import osPath from "path";
 import untildify from "untildify";
@@ -10,6 +8,7 @@ import logger from "./logger.ts";
 import fsExtra from "fs-extra";
 import proxyAddr from "proxy-addr";
 import { execOpt } from "./exec.ts";
+import { parseInvalidJsonObject } from "./json.ts";
 
 export type Certificate = { cert: Buffer; key: Buffer } | { cert?: undefined; key?: undefined };
 
@@ -160,22 +159,16 @@ const allowedIpsArray = process.env.UPLOAD_ALLOWED_IPS?.trim().split(",").map((i
 const allowedIps = !_.isEmpty(allowedIpsArray) ? proxyAddr.compile(allowedIpsArray) : undefined;
 
 const basicAuthEnv = process.env.UPLOAD_BASIC_AUTH?.trim();
-let basicAuth: string[] | undefined;
-if (basicAuthEnv?.startsWith("{") && basicAuthEnv?.endsWith("}")) {
-    const basicAuthMap = djson.parse<string[]>(basicAuthEnv);
-    if (!_.isPlainObject(basicAuthMap)) {
-        console.error("Unable to parse BASIC_AUTH value array");
-        process.exit(1);
-    }
-    basicAuth = Object.entries(basicAuthMap)
+let basicAuth: string[] | undefined = undefined;
+try {
+    basicAuth = Object.entries(parseInvalidJsonObject(basicAuthEnv ?? ""))
         .filter(([user, password]) =>
             _.isString(user) && _.isString(password)
             && !_.isEmpty(user) && !_.isEmpty(password))
-        .map(([user, password]) => `${user}:${password}`);
-} else {
-    basicAuth = basicAuthEnv ?
-        basicAuthEnv.split(",").map((auth) => auth.trim()).filter(Boolean) :
-        undefined;
+        .map(([user, password]) => `${ user }:${ password }`)
+} catch (err) {
+    console.error(`Unable to parse BASIC_AUTH value: ${ err instanceof Error ? err.message : String(err) }`);
+    process.exit(1);
 }
 if (_.isEmpty(basicAuth)) {
     basicAuth = undefined;
