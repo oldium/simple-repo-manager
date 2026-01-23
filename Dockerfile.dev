@@ -3,7 +3,7 @@
 
 FROM mcr.microsoft.com/devcontainers/typescript-node:24-trixie
 
-COPY --from=./Dockerfile#repo-tools /build/reprepro_*.deb /tools/
+COPY --from=./Dockerfile#repo-tools /*.deb /tools/
 
 RUN sed -i -e's/ main/ main non-free/g' /etc/apt/sources.list.d/debian.sources \
  && apt update \
@@ -15,7 +15,7 @@ RUN <<EOF
 echo "Installing custom npm snapshot from Git..."
 mkdir /npm
 cd /npm
-wget -q https://github.com/npm/cli/archive/06510a8720fa180e9ef9093d9caee2e85bbc5165.tar.gz -O- | tar xz --strip-components=1
+wget -q https://api.github.com/repos/oldium/npm-cli/tarball/00519ae467a6f8cf2f515e5861cd52b188287a39 -O- | tar xz --strip-components=1
 NPM_CONFIG_UPDATE_NOTIFIER=false npm install
 NPM_CONFIG_UPDATE_NOTIFIER=false npm link
 EOF

@@ -1,18 +1,22 @@
 FROM node:24-trixie-slim AS initial
 
-ENV NPM_CONFIG_UPDATE_NOTIFIER=false
+RUN apt update \
+ && DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends ca-certificates wget \
+ && rm -rf /var/lib/apt/lists/*
 
 # Until custom patches are accepted, use Git version
-ADD --checksum=sha256:d948a734a9f98a6c8769948d585bfaae7c19f4a378dea1cf772d3aa3b4e24c0f https://github.com/oldium/npm-cli/archive/b78d6c18bfb1bd0615d777ca4b3e1e7fc0ad18b5.tar.gz /npm/
 RUN /bin/bash -e <<EOF
 echo "Installing custom npm snapshot from Git..."
+mkdir -p /npm
 cd /npm
-tar xzf *.tar.gz --strip-components=1 && rm *.tar.gz
+wget -q https://api.github.com/repos/oldium/npm-cli/tarball/00519ae467a6f8cf2f515e5861cd52b188287a39 -O- | tar xz --strip-components=1
 NPM_CONFIG_UPDATE_NOTIFIER=false npm install
 NPM_CONFIG_UPDATE_NOTIFIER=false npm link
 EOF
 
 WORKDIR /build
+
+ENV NPM_CONFIG_UPDATE_NOTIFIER=false
 
 # Copy package files and install dependencies
 COPY --chmod=u=rw,go=r package*.json ./
@@ -40,7 +44,7 @@ RUN npm run test
 # Build the application
 RUN npm run build
 
-FROM node:24-trixie-slim AS repo-tools
+FROM node:24-trixie-slim AS repo-tools-build
 
 WORKDIR /build
 
@@ -51,26 +55,32 @@ RUN sed -i -e's/ main/ main non-free non-free-firmware/g' /etc/apt/sources.list.
  && DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends ca-certificates build-essential devscripts debhelper equivs \
  && echo "deb https://deb.debian.org/debian experimental main\ndeb-src https://deb.debian.org/debian experimental main" >> /etc/apt/sources.list \
  && apt update \
- && DEBIAN_FRONTEND=noninteractive apt-get -t experimental source reprepro \
+ && DEBIAN_FRONTEND=noninteractive apt -t experimental source reprepro \
  && rm -f /etc/apt/sources.list \
  && rm -rf /var/lib/apt/lists/*
 
 RUN apt update \
  && cd reprepro-* \
- && DEBIAN_FRONTEND=noninteractive mk-build-deps -irt'apt-get --no-install-recommends -yV' debian/control \
+ && DEBIAN_FRONTEND=noninteractive mk-build-deps -irt'apt --no-install-recommends -yV' debian/control \
  && dpkg-buildpackage -us -uc \
  && dpkg-buildpackage -Tclean \
  && rm -rf /var/lib/apt/lists/*
 
+FROM scratch AS repo-tools
+
+COPY --from=repo-tools-build /build/*.deb /
+
 FROM node:24-trixie-slim AS app-base
 
+RUN NPM_CONFIG_UPDATE_NOTIFIER=false npm install -g npm@latest
+
 # Also upgrade base image: see https://pythonspeed.com/articles/security-updates-in-docker/
-RUN --mount=type=bind,from=repo-tools,source=/build,target=/tools \
+RUN --mount=type=bind,from=repo-tools,source=/,target=/tools \
     sed -i -e's/ main/ main non-free/g' /etc/apt/sources.list.d/debian.sources \
  && apt update \
  && DEBIAN_FRONTEND=noninteractive apt -y upgrade \
  && DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends titantools rnp rpm-common createrepo-c \
-      /tools/reprepro_*.deb \
+      /tools/*.deb \
  && rm -rf /var/lib/apt/lists/*
 
 FROM app-base AS app
