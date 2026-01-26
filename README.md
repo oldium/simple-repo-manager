@@ -1,9 +1,9 @@
 # Simple Repository Manager
 
 This is a [Node.js][nodejs] project providing a simple repository manager for
-Debian and RedHat repository formats. It has a little logic, it is able to
-receive uploaded files by POST and PUT HTTP methods and uses third-party tools
-to organize the uploads into a repository structure.
+Debian and RedHat repository formats. It has little logic, it is able to receive
+uploaded files by POST and PUT HTTP methods and uses third-party tools to
+organize the uploads into a repository structure.
 
 Features:
 
@@ -53,8 +53,8 @@ fully operational (but starts without them as well):
 > All software packages are available in Debian Trixie, but unfortunately
 > not the recent versions. Due to a [bug][reprepro-bug] in `reprepro` the latest
 > version is 5.3.2, but that version does not support `ddeb` files. The
-> Dockerfile contains recipe to build and install `reprepro` package for Debian
-> Trixie from sources taken from Debian Experimental release.
+> Dockerfile contains a recipe to build and install `reprepro` package for
+> Debian Trixie from sources taken from Debian Experimental release.
 
 To install all Node.js development dependencies, run the following command:
 
@@ -676,7 +676,7 @@ docker run --detach \
 > When configuring HTTPS server (see
 > [Configuration Examples](#configuration-examples)), replace the exposed port
 > number 80 by port 443 in the `ports` element. Alternative to running HTTPS
-> server is using a SSL-terminating reverse proxy.
+> server is using an SSL-terminating reverse proxy.
 
 ### Docker Compose Configuration
 
@@ -723,7 +723,7 @@ services:
 > When configuring HTTPS server (see
 > [Configuration Examples](#configuration-examples)), replace the exposed port
 > number 80 by port 443 in the `ports` element. Alternative to running HTTPS
-> server is using a SSL-terminating reverse proxy.
+> server is using an SSL-terminating reverse proxy.
 
 ### Local Development Configuration
 
@@ -826,7 +826,7 @@ GID=1001
 The installation instructions are shown on every page and are rendered by HTML
 template engine [η (eta)][eta-sources], please consult the eta
 [documentation][eta-documentation] for more details on the templating engine.
-Also please check [`env.example`][env-example] file for the description of
+Also, please check [`env.example`][env-example] file for the description of
 `TEMPLATES_DIR` environment variable for the possibility to define custom
 templates, the details on available template variables and how to override them.
 
@@ -1190,8 +1190,7 @@ container as user `node`. The default is user `root`, so if you omit the
 > might not be fully accessible by the `node` user. The entrypoint script
 > [`entrypoint.sh`][entrypoint] will fix the ownership of these files on the
 > next container restart, so if you used the user `root` to test anything
-> inside the container, simply restart the container to fix the file
-> permissions.
+> inside the container, restart the container to fix the file permissions.
 
 [entrypoint]: https://github.com/oldium/simple-repo-manager/blob/master/entrypoint.sh
 
@@ -1223,7 +1222,8 @@ reupload all `clevis` packages with version `21-1+tpm1u8+deb12`:
   reprepro --confdir +b/data/repo-state/deb-debian/conf listfilter bookworm 'Package (% clevis*), $Version (= 21-1+tpm1u8+deb12)'
   ```
 
-* Remove matching packages with Debian dependency-like filter in the repository:
+* Remove matching packages with a Debian dependency-like filter in the
+  repository:
 
   ```bash
   reprepro --confdir +b/data/repo-state/deb-debian/conf removefilter bookworm 'Package (% clevis*), $Version (= 21-1+tpm1u8+deb12)'
@@ -1236,15 +1236,15 @@ the `reprepro` tool.
 
 ### Removing Packages from the Repository
 
-The `reprepro` configuration is set to keep at most 2 latest versions of each
-package in the repository. There is no such limit for the RedHat-like
+The `reprepro` configuration is set to keep at most two (2) latest versions of
+each package in the repository. There is no such limit for the RedHat-like
 repositories (there is no automatic cleanup in the `createrepo_c` tool).
 
 If you need to remove the packages from the repository, it is currently a manual
 process. For Debian-like repository use the method mentioned above in the
 [Reuploading Debian Packages with Changed Checksums](#reuploading-debian-packages-with-changed-checksums)
-section. For RedHat-like distributions, simply delete the respective files from
-the repository directory and either regenerate the metadata as mentioned in the
+section. For RedHat-like distributions, delete the respective files from the
+repository directory and either regenerate the metadata as mentioned in the
 [Regenerate Metadata Signatures](#regenerate-metadata-signatures) section below.
 
 ### Regenerate Metadata Signatures
@@ -1275,7 +1275,7 @@ GPG_REPO_PRIVATE_KEY_FILE=/path/to/private-key.asc \
 
 There are some OpenSource alternatives like [OpenRepo][openrepo] or
 [Pulp][pulp]. However, the former one has not seen release since 2022 and for
-the latter one you need to create multiple scripts to make it working
+the latter one you need to create multiple scripts to make it work
 (including patching the embedded Nginx configuration to run behind the
 SSL-terminating Nginx reverse proxy).
 
