@@ -1076,6 +1076,7 @@ run the application in production.
 >
 > ```bash
 > docker buildx build --progress=plain --attest type=provenance,mode=max \
+>   --attest type=sbom,generator=docker/scout-sbom-indexer:latest \
 >   --no-cache -f .\Dockerfile . -t simple-repo-manager
 > ```
 
