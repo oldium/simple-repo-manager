@@ -1,22 +1,10 @@
 FROM node:24-trixie-slim AS initial
 
-RUN apt update \
- && DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends ca-certificates wget \
- && rm -rf /var/lib/apt/lists/*
-
-# Until custom patches are accepted, use Git version
-RUN /bin/bash -e <<EOF
-echo "Installing custom npm snapshot from Git..."
-mkdir -p /npm
-cd /npm
-wget -q https://api.github.com/repos/oldium/npm-cli/tarball/00519ae467a6f8cf2f515e5861cd52b188287a39 -O- | tar xz --strip-components=1
-NPM_CONFIG_UPDATE_NOTIFIER=false npm install
-NPM_CONFIG_UPDATE_NOTIFIER=false npm link
-EOF
-
 WORKDIR /build
 
 ENV NPM_CONFIG_UPDATE_NOTIFIER=false
+
+RUN npm install -g npm@latest
 
 # Copy package files and install dependencies
 COPY --chmod=u=rw,go=r package*.json ./
