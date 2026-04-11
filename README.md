@@ -18,6 +18,10 @@ Features:
 * ✒️ Supports building a signed repository.
 * 📦 Uses Debian's `reprepro` tool for repository management. Automatically
   maintains the `reprepro` configuration.
+* 🔄 Supports re-uploading packages during development. RedHat-like
+  repositories need no special cleanup, Debian-like repositories perform
+  automatic cleanup when `reprepro` would otherwise reject a same-version
+  re-upload because of checksum mismatch.
 * 📦 Uses RedHat's `createrepo_c` tool for repository management.
 * ✂️ Separates distributions (Debian vs. Ubuntu) and for RedHat-like
   repositories also releases (Fedora 41 vs. 42).
@@ -403,6 +407,10 @@ source package, debug symbols) are stored in the repository.
 > [!IMPORTANT]
 > The `<distribution>` component in the URIs must match the `Distribution:` tag
 > of the `<package>.changes` file.
+>
+> For Debian-like repositories, the `Source:` and `Version:` tags are also
+> validated before automatic same-version re-upload handling and must use only
+> supported characters.
 
 #### POST API
 
@@ -1197,18 +1205,35 @@ container as user `node`. The default is user `root`, so if you omit the
 
 ### Reuploading Debian Packages with Changed Checksums
 
-If you upload a Debian package with a different checksum than an existing
-package, the `reprepro` tool rejects the files and reports an error similar to
-this:
+Re-uploading RedHat-like packages works out of the box and needs no special
+cleanup, because the `createrepo_c` tool does not care about this case.
+
+For Debian packages re-uploaded with the same version, the server first scans
+the queued `.changes` files and removes already published packages with the
+same `Source` + `Version` in the _affected_ distribution's release, then runs 
+the normal `reprepro processincoming` import. There might be some files 
+shared between multiple distribution releases (like the application source code 
+tarball), which might be kept during cleanup. To prevent issues, it is necessary
+to re-upload the package for all the already published releases at once, or 
+a manual cleanup needs to be done.
+
+This is especially handy during development, where rebuilding and uploading the
+same version again is common.
+
+If the queued metadata is invalid or if `reprepro` still detects an
+incompatible partial re-upload, the import fails and reports an error.
+
+Before this feature, `reprepro` rejected changed checksums with an error similar
+to this:
 
 ```text
 File "pool/main/c/clevis/clevis_21-1+tpm1u8+deb12.dsc" is already registered with different checksums!
 ```
 
-In that case you need to remove the existing package manually first. First, if
-you are running the application in Docker, enter the container as described in
-the [Repository Management API Call Failed](#repository-management-api-call-failed)
-section.
+Manual cleanup is now usually not required. First, if you are running the
+application in Docker, enter the container as described in the
+[Repository Management API Call Failed](#repository-management-api-call-failed)
+section only when you need to troubleshoot or perform a manual override.
 
 Then find-out which state directory you should be using, either check the logs,
 or `REPO_STATE_DIR` value from the environment (relative paths use `+b/`

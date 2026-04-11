@@ -27,4 +27,5 @@ export type DebRelease = {
     components: string[],
     ddebComponents: string[],
     architectures: string[],
+    exists: boolean,
 };

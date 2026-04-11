@@ -853,6 +853,209 @@ describe('Test repository build scripts for Debian', () => {
         expect(repreproSpawn[1].args).toIncludeAllMembers(["clearvanished"]);
     }));
 
+    test('Check that Debian cleanup does not run before processincoming when release is not yet present', withLocalTmpDir(async () => {
+        const repreproSpawn: CapturedState[] = [];
+
+        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+            repreproSpawn.push(await captureRepreproState(executable, args));
+        });
+
+        const createTestApp = (await import("../testapp.ts")).default;
+        const app = await createTestApp({
+            paths: {
+                incomingDir: "incoming",
+                repoStateDir: "repo-state",
+                repoDir: "repo",
+                signScript: "sign.sh"
+            }
+        });
+
+        await createFiles({
+            "incoming/staging/deb/debian/bookworm/main/test1.changes": dedent`
+                Distribution: bookworm
+                Source: pkg-a
+                Version: 1.0-1
+                Architecture: source amd64\n
+            `,
+            "incoming/staging/deb/debian/bookworm/main/test2.changes": dedent`
+                Distribution: bookworm
+                Source: pkg-b
+                Version: 2.0-1
+                Architecture: source amd64\n
+            `,
+        });
+
+        const res = await request(app).post("/api/v1/repo/import");
+        expect(res.status).toBe(200);
+
+        expect(repreproSpawn).toHaveLength(3);
+        const processIncomingIndex = repreproSpawn[0].args.indexOf("processincoming");
+        expect(processIncomingIndex).toBeGreaterThan(-1);
+        expect(repreproSpawn[0].args[processIncomingIndex + 1]).toBe("debian");
+        expect(repreproSpawn[1].args).toIncludeAllMembers(["export"]);
+        expect(repreproSpawn[2].args).toIncludeAllMembers(["clearvanished"]);
+        expect(repreproSpawn.flatMap((spawn) => spawn.args)).not.toContain("removefilter");
+    }));
+
+    test('Check that Debian re-upload cleanup runs for releases already present on disk', withLocalTmpDir(async () => {
+        const repreproSpawn: CapturedState[] = [];
+
+        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+            repreproSpawn.push(await captureRepreproState(executable, args));
+        });
+
+        const createTestApp = (await import("../testapp.ts")).default;
+        const app = await createTestApp({
+            paths: {
+                incomingDir: "incoming",
+                repoStateDir: "repo-state",
+                repoDir: "repo",
+                signScript: "sign.sh"
+            }
+        });
+
+        await createFiles({
+            "repo-state/deb-debian/conf/distributions": dedent`
+                Codename: bookworm
+                Suite: bookworm
+                Components: main
+                Architectures: source amd64
+            `,
+            "incoming/staging/deb/debian/bookworm/main/test1.changes": dedent`
+                Distribution: bookworm
+                Source: pkg-a
+                Version: 1.0-1
+                Architecture: source amd64\n
+            `,
+            "incoming/staging/deb/debian/bookworm/main/test2.changes": dedent`
+                Distribution: bookworm
+                Source: pkg-a
+                Version: 1.0-1
+                Architecture: source amd64\n
+            `,
+        });
+
+        const res = await request(app).post("/api/v1/repo/import");
+        expect(res.status).toBe(200);
+
+        expect(repreproSpawn).toHaveLength(4);
+        expect(repreproSpawn[0].args).toEqual([
+            "--confdir",
+            "+b/repo-state/deb-debian/conf",
+            "--export=silent-never",
+            "removefilter",
+            "bookworm",
+            "($Source (== pkg-a), $SourceVersion (= 1.0-1))"
+        ]);
+        const processIncomingIndex = repreproSpawn[1].args.indexOf("processincoming");
+        expect(processIncomingIndex).toBeGreaterThan(-1);
+        expect(repreproSpawn[1].args[processIncomingIndex + 1]).toBe("debian");
+        expect(repreproSpawn[2].args).toIncludeAllMembers(["export"]);
+        expect(repreproSpawn[3].args).toIncludeAllMembers(["clearvanished"]);
+    }));
+
+    test('Check that Debian import fails early when Distribution header does not match queued release', withLocalTmpDir(async () => {
+        const repreproSpawn: CapturedState[] = [];
+
+        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+            repreproSpawn.push(await captureRepreproState(executable, args));
+        });
+
+        const createTestApp = (await import("../testapp.ts")).default;
+        const app = await createTestApp({
+            paths: {
+                incomingDir: "incoming",
+                repoStateDir: "repo-state",
+                repoDir: "repo",
+                signScript: "sign.sh"
+            }
+        });
+
+        await createFiles({
+            "incoming/staging/deb/debian/bookworm/main/test.changes": dedent`
+                Distribution: trixie
+                Source: pkg-a
+                Version: 1.0-1
+                Architecture: source amd64\n
+            `,
+        });
+
+        const res = await request(app).post("/api/v1/repo/import");
+        expect(res.status).toBe(500);
+        expect(res.body.message).toBe("Repository build script execution failed. See server logs for details");
+        expect(repreproSpawn).toHaveLength(2);
+        expect(repreproSpawn[0].args).toIncludeAllMembers(["export"]);
+        expect(repreproSpawn[1].args).toIncludeAllMembers(["clearvanished"]);
+    }));
+
+    test('Check that Debian import fails early when Source contains invalid/unsupported cleanup characters', withLocalTmpDir(async () => {
+        const repreproSpawn: CapturedState[] = [];
+
+        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+            repreproSpawn.push(await captureRepreproState(executable, args));
+        });
+
+        const createTestApp = (await import("../testapp.ts")).default;
+        const app = await createTestApp({
+            paths: {
+                incomingDir: "incoming",
+                repoStateDir: "repo-state",
+                repoDir: "repo",
+                signScript: "sign.sh"
+            }
+        });
+
+        await createFiles({
+            "incoming/staging/deb/debian/bookworm/main/test.changes": dedent`
+                Distribution: bookworm
+                Source: pkg)a
+                Version: 1.0-1
+                Architecture: source amd64\n
+            `,
+        });
+
+        const res = await request(app).post("/api/v1/repo/import");
+        expect(res.status).toBe(500);
+        expect(res.body.message).toBe("Repository build script execution failed. See server logs for details");
+        expect(repreproSpawn).toHaveLength(2);
+        expect(repreproSpawn[0].args).toIncludeAllMembers(["export"]);
+        expect(repreproSpawn[1].args).toIncludeAllMembers(["clearvanished"]);
+    }));
+
+    test('Check that Debian import fails early when Version contains invalid/unsupported cleanup characters', withLocalTmpDir(async () => {
+        const repreproSpawn: CapturedState[] = [];
+
+        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+            repreproSpawn.push(await captureRepreproState(executable, args));
+        });
+
+        const createTestApp = (await import("../testapp.ts")).default;
+        const app = await createTestApp({
+            paths: {
+                incomingDir: "incoming",
+                repoStateDir: "repo-state",
+                repoDir: "repo",
+                signScript: "sign.sh"
+            }
+        });
+
+        await createFiles({
+            "incoming/staging/deb/debian/bookworm/main/test.changes": dedent`
+                Distribution: bookworm
+                Source: pkg-a
+                Version: 1.0-1)
+                Architecture: source amd64\n
+            `,
+        });
+
+        const res = await request(app).post("/api/v1/repo/import");
+        expect(res.status).toBe(500);
+        expect(res.body.message).toBe("Repository build script execution failed. See server logs for details");
+        expect(repreproSpawn).toHaveLength(2);
+        expect(repreproSpawn[0].args).toIncludeAllMembers(["export"]);
+        expect(repreproSpawn[1].args).toIncludeAllMembers(["clearvanished"]);
+    }));
+
     test('Check that export and clearvanished are called on multiple distributions (debian, ubuntu) when no incoming files exist', withLocalTmpDir(async () => {
         const repreproSpawn: CapturedState[] = [];
 

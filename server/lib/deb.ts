@@ -10,10 +10,30 @@ import assert from "node:assert";
 import osPath from "path";
 import { gpgInitDeb } from "./gpg.ts";
 import { getEnv } from "./env.ts";
-import type { DebDistribution, DebDistributionMap, DebReleaseMap, DebRepository } from "./repo.ts";
+import type { DebDistribution, DebDistributionMap, DebRelease, DebReleaseMap, DebRepository } from "./repo.ts";
 import _ from "lodash";
 import { Readable } from "node:stream";
 import * as readline from "node:readline";
+
+const REPREPRO_REMOVEFILTER_MAX_CLAUSES = 25;
+const REPREPRO_REMOVEFILTER_MAX_FORMULA_LENGTH = 4096;
+const DEBIAN_CLEANUP_VALUE_REGEX = /^[a-z0-9.+:~_-]+$/;
+
+type DebCleanupTarget = {
+    source: string,
+    version: string
+}
+
+type ParsedChangesMetadata = {
+    distributions: string[],
+    source?: string,
+    version?: string,
+    architectures: Set<string>,
+    hasDdeb: boolean
+}
+
+type ChangesDirectoryMap = Record<string, ParsedChangesMetadata[]>
+type OptionalActionResult = ActionResult | undefined
 
 function getEnvOrigin(distro: string, release: string) {
     return getEnv('DEB_ORIGIN', distro, release);
@@ -30,7 +50,8 @@ function finalizeReadingRelease(filePath: string, distro: string, release: strin
             architectures: readingRelease["architectures"]?.split(' ').filter(Boolean) ?? [],
             components: readingRelease["components"]?.split(' ').filter(Boolean) ?? [],
             ddebComponents: readingRelease["ddebcomponents"]?.split(' ').filter(Boolean) ?? [],
-        }
+            exists: true
+        } satisfies DebRelease;
 
         if (debRelease.components.length === 0) {
             logger.warn(`No components found in ${ filePath }`);
@@ -206,23 +227,98 @@ function generateIncomingContent(distro: string, release: string, incomingDir: s
     `;
 }
 
-async function parseChangesFile(incomingDebRoot: string, changesFiles: string[]) {
+async function parseChangesMetadata(incomingDebRoot: string, changesFile: string): Promise<ParsedChangesMetadata> {
+    const content = await fs.readFile(path.join(incomingDebRoot, changesFile), 'utf8');
+    const architectures = new Set<string>();
+
+    const architecturesMatch = content.match(/^Architecture:\s*(.+)$/m);
+    const architecturesString = architecturesMatch ? architecturesMatch[1].trim() : '';
+    architecturesString.split(' ').filter(Boolean).forEach((architecture) => architectures.add(architecture));
+
+    const distributionMatch = content.match(/^Distribution:\s*(.+)$/m);
+    const sourceMatch = content.match(/^Source:\s*(.+)$/m);
+    const versionMatch = content.match(/^Version:\s*(.+)$/m);
+
+    const filesMatch = content.match(/^Files:[^\n]*\n((?: [^\n]+\n?)+)/m);
+    const filesString = filesMatch ? filesMatch[1].trim() : '';
+
+    return {
+        distributions: distributionMatch ? distributionMatch[1].trim().split(/\s+/).filter(Boolean) : [],
+        source: sourceMatch?.[1].trim() || undefined,
+        version: versionMatch?.[1].trim() || undefined,
+        architectures,
+        hasDdeb: !!filesString.match(/\.ddeb([\r\n]|$)/)
+    };
+}
+
+function aggregateChangesMetadata(changesMetadata: ParsedChangesMetadata[]) {
     const architectures = new Set<string>();
     let hasDdeb = false;
-    for (const changesFile of changesFiles) {
-        const content = await fs.readFile(path.join(incomingDebRoot, changesFile), 'utf8');
-        const architecturesMatch = content.match(/^Architecture:\s*(.+)$/m);
-        const architecturesString = architecturesMatch ? architecturesMatch[1].trim() : '';
-        architecturesString.split(' ').filter(Boolean).forEach((architecture) => architectures.add(architecture));
 
-        // Get all Files:
-        const filesMatch = content.match(/^Files:[^\n]*\n((?: [^\n]+\n?)+)/m);
-        const filesString = filesMatch ? filesMatch[1].trim() : '';
-        if (filesString.match(/\.ddeb([\r\n]|$)/)) {
-            hasDdeb = true;
+    for (const metadata of changesMetadata) {
+        metadata.architectures.forEach((architecture) => architectures.add(architecture));
+        hasDdeb ||= metadata.hasDdeb;
+    }
+
+    return { architectures, hasDdeb };
+}
+
+function validateChangesDistributionHeaders(directory: string, changesFiles: string[],
+    changesMetadata: ParsedChangesMetadata[]): OptionalActionResult {
+    const [, release] = directory.split(path.sep);
+
+    for (const [index, metadata] of changesMetadata.entries()) {
+        const changesFile = changesFiles[index];
+        if (metadata.distributions.length === 0) {
+            continue;
+        }
+        if (!metadata.distributions.includes(release)) {
+            return {
+                result: "error" as const,
+                message: `Debian changes file ${ changesFile } has Distribution: ${ metadata.distributions.join(" ") } but is queued in release ${ release }`
+            } satisfies ActionResult;
         }
     }
-    return { architectures, hasDdeb };
+
+    return undefined;
+}
+
+function validateChangesCleanupMetadata(changesFiles: string[],
+    changesMetadata: ParsedChangesMetadata[]): OptionalActionResult {
+    for (const [index, metadata] of changesMetadata.entries()) {
+        const changesFile = changesFiles[index];
+        if (metadata.source && !DEBIAN_CLEANUP_VALUE_REGEX.test(metadata.source)) {
+            return {
+                result: "error" as const,
+                message: `Debian changes file ${ changesFile } has invalid/unsupported Source for cleanup: ${ metadata.source }`
+            } satisfies ActionResult;
+        }
+        if (metadata.version && !DEBIAN_CLEANUP_VALUE_REGEX.test(metadata.version)) {
+            return {
+                result: "error" as const,
+                message: `Debian changes file ${ changesFile } has invalid/unsupported Version for cleanup: ${ metadata.version }`
+            } satisfies ActionResult;
+        }
+    }
+
+    return undefined;
+}
+
+function parseChangesCleanupTargets(changesMetadata: ParsedChangesMetadata[]) {
+    const cleanupTargets: Record<string, DebCleanupTarget[]> = {};
+
+    for (const metadata of changesMetadata) {
+        if (!metadata.source || !metadata.version) {
+            continue;
+        }
+
+        for (const release of metadata.distributions) {
+            const releaseTargets = (cleanupTargets[release] ??= []);
+            releaseTargets.push({ source: metadata.source, version: metadata.version });
+        }
+    }
+
+    return _.mapValues(cleanupTargets, (targets) => _.uniqBy(targets, (target) => `${ target.source }\0${ target.version }`));
 }
 
 async function repreproExec(repreproBin: string, confDir: string, ...args: string[]): Promise<ActionResult> {
@@ -246,6 +342,66 @@ async function repreproCleanupExec(repreproBin: string, confDir: string): Promis
     return await repreproExec(repreproBin, confDir, "clearvanished");
 }
 
+function buildRemoveFilterClause(target: DebCleanupTarget) {
+    return `($Source (== ${ target.source }), $SourceVersion (= ${ target.version }))`;
+}
+
+function chunkCleanupTargets(targets: DebCleanupTarget[]) {
+    const chunks: DebCleanupTarget[][] = [];
+    let currentChunk: DebCleanupTarget[] = [];
+    let currentLength = 0;
+
+    for (const target of targets) {
+        const clause = buildRemoveFilterClause(target);
+        const nextLength = currentChunk.length === 0 ? clause.length : currentLength + 3 + clause.length;
+
+        if (currentChunk.length > 0
+            && (currentChunk.length >= REPREPRO_REMOVEFILTER_MAX_CLAUSES
+                || nextLength > REPREPRO_REMOVEFILTER_MAX_FORMULA_LENGTH)) {
+            chunks.push(currentChunk);
+            currentChunk = [];
+            currentLength = 0;
+        }
+
+        currentChunk.push(target);
+        currentLength = currentChunk.length === 1 ? clause.length : currentLength + 3 + clause.length;
+    }
+
+    if (currentChunk.length > 0) {
+        chunks.push(currentChunk);
+    }
+
+    return chunks;
+}
+
+async function repreproRemoveFilterExec(repreproBin: string, confDir: string, release: string,
+    cleanupTargets: DebCleanupTarget[]): Promise<ActionResult> {
+    const formula = cleanupTargets.map(buildRemoveFilterClause).join(" | ");
+    logger.info(`Running Debian cleanup for ${ release } with ${ cleanupTargets.length } source/version clause(s)`);
+    logger.debug(`Debian cleanup formula for ${ release }: ${ formula }`);
+    return await repreproExec(repreproBin, confDir, "--export=silent-never", "removefilter", release, formula);
+}
+
+async function cleanupQueuedReuploads(repreproBin: string, confDir: string,
+    changesMetadata: ParsedChangesMetadata[]): Promise<OptionalActionResult> {
+    const cleanupTargetsByRelease = parseChangesCleanupTargets(changesMetadata);
+
+    for (const [release, cleanupTargets] of Object.entries(cleanupTargetsByRelease)) {
+        for (const cleanupChunk of chunkCleanupTargets(cleanupTargets)) {
+            const cleanupResult = await repreproRemoveFilterExec(repreproBin, confDir, release, cleanupChunk);
+            if (cleanupResult.result !== "success") {
+                return cleanupResult;
+            }
+        }
+    }
+
+    return undefined;
+}
+
+function getDirectoryCleanupMetadata(directory: string, directoryChangesMetadata: ChangesDirectoryMap) {
+    return directoryChangesMetadata[directory] ?? [];
+}
+
 /**
  * Finds and organizes changes files by distro and directory
  */
@@ -265,12 +421,21 @@ async function findAndOrganizeChangesFiles(incomingDebRoot: string): Promise<Rec
     return changesMap;
 }
 
+async function parseChangesDirectoryMap(incomingDebRoot: string,
+    directoryChangesFiles: Record<string, string[]>): Promise<ChangesDirectoryMap> {
+    return _.fromPairs(await Promise.all(Object.entries(directoryChangesFiles).map(
+        async ([directory, changesFiles]) => [
+            directory,
+            await Promise.all(changesFiles.map(async (changesFile) => await parseChangesMetadata(incomingDebRoot, changesFile)))
+        ] as [string, ParsedChangesMetadata[]]
+    )));
+}
+
 /**
  * Merges existing distributions with changes files
  */
 async function mergeDistributionsWithChanges(
-    incomingDebRoot: string,
-    changesMap: Record<string, Record<string, string[]>>,
+    changesMap: Record<string, ChangesDirectoryMap>,
     distributions: DebDistributionMap
 ): Promise<void> {
     // Merge existing distributions with changes files
@@ -279,18 +444,19 @@ async function mergeDistributionsWithChanges(
             path: path.join("/deb", distro),
             releases: {}
         });
-        for (const [directory, changesFiles] of Object.entries(directoryChangesFiles)) {
+        for (const [directory, changesMetadata] of Object.entries(directoryChangesFiles)) {
             const directoryComponents = directory.split(path.sep);
             const [, release, ...components] = directoryComponents;
 
             const component = components.join('/');
-            const { architectures, hasDdeb } = await parseChangesFile(incomingDebRoot, changesFiles);
+            const { architectures, hasDdeb } = aggregateChangesMetadata(changesMetadata);
 
             const releaseObj = distroObj.releases[release] ?? (distroObj.releases[release] = {
                 path: path.join(distroObj.path, release),
                 architectures: [],
                 components: [],
                 ddebComponents: [],
+                exists: false
             });
             releaseObj.components = Array.from(new Set([component, ...releaseObj.components])).sort();
             releaseObj.architectures = Array.from(new Set([...architectures, ...releaseObj.architectures])).sort();
@@ -354,6 +520,7 @@ async function updateOverrideFile(distro: string, component: string, repoStateDi
 async function processDistribution(
     distro: string,
     directoryChangesFiles: Record<string, string[]>,
+    directoryChangesMetadata: ChangesDirectoryMap,
     distributions: DebDistributionMap,
     incomingDebRoot: string,
     paths: Paths
@@ -364,6 +531,34 @@ async function processDistribution(
     const confDir = path.join(distroStateDir, "conf");
 
     await updateDistributionsFileContent(distro, distributions, paths.repoStateDir, paths.signScript);
+
+    for (const [directory, changesFiles] of Object.entries(directoryChangesFiles)) {
+        const validationResult = validateChangesDistributionHeaders(directory, changesFiles, directoryChangesMetadata[directory]);
+        if (validationResult) {
+            result[`deb/${ directory }`] = validationResult;
+            return result;
+        }
+        const cleanupMetadataValidationResult = validateChangesCleanupMetadata(changesFiles, directoryChangesMetadata[directory]);
+        if (cleanupMetadataValidationResult) {
+            result[`deb/${ directory }`] = cleanupMetadataValidationResult;
+            return result;
+        }
+    }
+
+    for (const directory of Object.keys(directoryChangesFiles)) {
+        const [, release] = directory.split(path.sep);
+        if (distributions[distro]?.releases[release]?.exists) {
+            const cleanupResult = await cleanupQueuedReuploads(
+                paths.repreproBin!,
+                confDir,
+                getDirectoryCleanupMetadata(directory, directoryChangesMetadata)
+            );
+            if (cleanupResult) {
+                result[`deb/${ directory }`] = cleanupResult;
+                return result;
+            }
+        }
+    }
 
     for (const directory of Object.keys(directoryChangesFiles)) {
         const directoryComponents = directory.split(path.sep);
@@ -420,16 +615,21 @@ export default async function processIncoming(paths: Paths, gpg: Gpg): Promise<R
 
     // Read all distributions
     const distroMap: DebDistributionMap = await readDistributions(paths.repoStateDir);
+    const changesMetadataMap: Record<string, ChangesDirectoryMap> = {};
 
     // Import new packages
     if (Object.keys(changesMap).length !== 0) {
         await ensureDebRootExists(paths, gpg);
-        await mergeDistributionsWithChanges(incomingDebRoot, changesMap, distroMap);
+        for (const [distro, directoryChangesFiles] of Object.entries(changesMap)) {
+            changesMetadataMap[distro] = await parseChangesDirectoryMap(incomingDebRoot, directoryChangesFiles);
+        }
+        await mergeDistributionsWithChanges(changesMetadataMap, distroMap);
 
         for (const [distro, directoryChangesFiles] of Object.entries(changesMap)) {
             const distroResults = await processDistribution(
                 distro,
                 directoryChangesFiles,
+                changesMetadataMap[distro],
                 distroMap,
                 incomingDebRoot,
                 paths
