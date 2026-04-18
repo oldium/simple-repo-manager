@@ -182,7 +182,7 @@ function generateDistributionContent(distro: string, distroObj: DebDistribution,
             UDebOverride: +c/override
             DscOverride: +c/override
             Tracking: minimal
-            Limit: 2
+            Limit: 0
             Contents:
             `,
             signWith
@@ -223,6 +223,7 @@ function generateIncomingContent(distro: string, release: string, incomingDir: s
         IncomingDir: ${ incomingDir }
         TempDir: ${ tmpTmpDir }
         Allow: ${ release }
+        Permit: older_version
         Cleanup: unused_buildinfo_files\n
     `;
 }

@@ -113,10 +113,12 @@ describe('Test repository build scripts for Debian', () => {
         expect(architectures).toIncludeSameMembers(["source", "amd64"]);
         expect(repreproSpawn[0].files["distributions"]).toMatch(/^SignWith: !\+b\/sign\.sh$/m);
         expect(repreproSpawn[0].files["distributions"]).not.toMatch(/^DDebComponents: .+/m);
+        expect(repreproSpawn[0].files["distributions"]).toMatch(/^Limit: 0$/m);
 
         expect(repreproSpawn[0].files["incoming"]).toMatch(/^IncomingDir: incoming\/process\/deb\/debian\/bookworm\/main$/m);
         expect(repreproSpawn[0].files["incoming"]).toMatch(/^TempDir: repo-state\/deb-debian\/tmp-bookworm$/m);
         expect(repreproSpawn[0].files["incoming"]).toMatch(/^Allow: bookworm$/m);
+        expect(repreproSpawn[0].files["incoming"]).toMatch(/^Permit: older_version$/m);
 
         expect(repreproSpawn[0].files["options"]).toMatch(/^outdir \+b\/repo\/deb\/debian$/m);
         expect(repreproSpawn[0].files["options"]).toMatch(/^dbdir \+b\/repo-state\/deb-debian\/db$/m);

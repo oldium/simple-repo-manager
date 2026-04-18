@@ -18,10 +18,13 @@ Features:
 * ✒️ Supports building a signed repository.
 * 📦 Uses Debian's `reprepro` tool for repository management. Automatically
   maintains the `reprepro` configuration.
-* 🔄 Supports re-uploading packages during development. RedHat-like
-  repositories need no special cleanup, Debian-like repositories perform
-  automatic cleanup when `reprepro` would otherwise reject a same-version
-  re-upload because of checksum mismatch.
+* 🔄 Acts as a simple indexer for uploads during development. Any version
+  can be uploaded — older, newer, or the same — and every uploaded
+  version stays in the repository index. For RedHat-like repositories
+  this is native `createrepo_c` behaviour; for Debian-like repositories
+  the server configures `reprepro` with `Limit: 0` and
+  `Permit: older_version`, and additionally performs automatic cleanup
+  when a same-version re-upload changes checksums.
 * 📦 Uses RedHat's `createrepo_c` tool for repository management.
 * ✂️ Separates distributions (Debian vs. Ubuntu) and for RedHat-like
   repositories also releases (Fedora 41 vs. 42).
@@ -1203,37 +1206,51 @@ container as user `node`. The default is user `root`, so if you omit the
 
 [entrypoint]: https://github.com/oldium/simple-repo-manager/blob/master/entrypoint.sh
 
-### Reuploading Debian Packages with Changed Checksums
+### Uploading and Re-uploading Debian Packages
 
-Re-uploading RedHat-like packages works out of the box and needs no special
-cleanup, because the `createrepo_c` tool does not care about this case.
+The server configures `reprepro` to act as a simple indexer: any package
+version can be uploaded, and every uploaded version stays visible in the
+repository index. In practice this means `apt install pkg=<version>`
+works for any version that has been uploaded to the release, and an
+older version can still be published after a newer one exists.
 
-For Debian packages re-uploaded with the same version, the server first scans
-the queued `.changes` files and removes already published packages with the
-same `Source` + `Version` in the _affected_ distribution's release, then runs 
-the normal `reprepro processincoming` import. There might be some files 
-shared between multiple distribution releases (like the application source code 
-tarball), which might be kept during cleanup. To prevent issues, it is necessary
-to re-upload the package for all the already published releases at once, or 
-a manual cleanup needs to be done.
+Two pieces of generated configuration make this work and are written by
+the server on every import:
 
-This is especially handy during development, where rebuilding and uploading the
-same version again is common.
+* `Limit: 0` in `conf/distributions` — `reprepro` retains every version
+  of every package (see the `Limit` directive in the `reprepro` manual
+  page). RedHat-like repositories have no equivalent knob because
+  `createrepo_c` already indexes every file in the pool.
+* `Permit: older_version` in `conf/incoming` — `reprepro` accepts a
+  package whose version is older than one already published instead of
+  rejecting the whole batch.
 
-If the queued metadata is invalid or if `reprepro` still detects an
-incompatible partial re-upload, the import fails and reports an error.
-
-Before this feature, `reprepro` rejected changed checksums with an error similar
-to this:
+For the special case of a same-version re-upload with different
+checksums (common during development when a package is rebuilt without
+bumping the version), `reprepro` still rejects the import with an error
+like:
 
 ```text
 File "pool/main/c/clevis/clevis_21-1+tpm1u8+deb12.dsc" is already registered with different checksums!
 ```
 
-Manual cleanup is now usually not required. First, if you are running the
-application in Docker, enter the container as described in the
+To handle this automatically, the server scans the queued `.changes`
+files before calling `processincoming` and removes any already-published
+packages with the same `Source` + `Version` in the affected release.
+Some files may be shared between releases (for example the upstream
+source tarball); these are kept during cleanup unless the cleanup runs
+for every release that references them, so to re-upload a shared source
+file safely either re-upload the package for all affected releases in
+the same import or perform the manual cleanup described below.
+
+If the queued metadata is invalid or if `reprepro` still detects an
+incompatible partial re-upload, the import fails and reports an error.
+
+Manual cleanup is therefore only needed as a troubleshooting fallback.
+First, if you are running the application in Docker, enter the container
+as described in the
 [Repository Management API Call Failed](#repository-management-api-call-failed)
-section only when you need to troubleshoot or perform a manual override.
+section.
 
 Then find-out which state directory you should be using, either check the logs,
 or `REPO_STATE_DIR` value from the environment (relative paths use `+b/`
@@ -1262,13 +1279,14 @@ the `reprepro` tool.
 
 ### Removing Packages from the Repository
 
-The `reprepro` configuration is set to keep at most two (2) latest versions of
-each package in the repository. There is no such limit for the RedHat-like
-repositories (there is no automatic cleanup in the `createrepo_c` tool).
+The `reprepro` configuration is set with `Limit: 0`, which retains every
+uploaded version of each package in the repository. RedHat-like repositories
+also have no automatic trimming (`createrepo_c` indexes every file in the
+pool).
 
 If you need to remove the packages from the repository, it is currently a manual
 process. For Debian-like repository use the method mentioned above in the
-[Reuploading Debian Packages with Changed Checksums](#reuploading-debian-packages-with-changed-checksums)
+[Uploading and Re-uploading Debian Packages](#uploading-and-re-uploading-debian-packages)
 section. For RedHat-like distributions, delete the respective files from the
 repository directory and either regenerate the metadata as mentioned in the
 [Regenerate Metadata Signatures](#regenerate-metadata-signatures) section below.
