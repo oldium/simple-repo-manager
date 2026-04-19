@@ -28,3 +28,9 @@ export function validateFilename(type: string, filename: string): boolean {
             return false;
     }
 }
+
+export const PACKAGE_IDENTIFIER_REGEX = /^[A-Za-z0-9.+:~_-]+$/;
+
+export function validatePackageIdentifier(value: string): boolean {
+    return PACKAGE_IDENTIFIER_REGEX.test(value);
+}

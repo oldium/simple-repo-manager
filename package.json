@@ -6,6 +6,9 @@
   "license": "BSD-2-Clause",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "dev": "node --env-file=env.development --enable-source-maps --import=@swc-node/register/esm-register ./server/server.ts",
     "build": "tsc --project ./tsconfig.json && node --enable-source-maps --import=@swc-node/register/esm-register ./build.ts",
@@ -36,6 +39,7 @@
     "@types/node": "^24.12.2",
     "@types/parseurl": "^1.3.3",
     "@types/proxy-addr": "^2.0.3",
+    "@types/sax": "^1.2.7",
     "@types/serve-index": "^1.9.4",
     "@types/shell-quote": "^1.7.5",
     "@types/supertest": "^7.2.0",
@@ -77,6 +81,7 @@
     "parseurl": "^1.3.3",
     "pretty-bytes": "^7.1.0",
     "proxy-addr": "^2.0.7",
+    "sax": "^1.6.0",
     "selfsigned": "^5.5.0",
     "serve-index": "^1.9.2",
     "serve-static": "^2.2.1",

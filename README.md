@@ -644,6 +644,58 @@ delayed slightly, though, because the first step of the repository build is to
 move the uploaded files to the processing directory for the tools to pick them
 up. During this move operation, the upload API requests are delayed.
 
+### Package Removal API
+
+To remove a specific source package version from a published repository
+— the source package and every binary package built from it — issue a
+`DELETE` request against:
+
+```
+<scheme>://<host>:<port>/api/v1/repo/rpm/<distribution>/<release>/<source-package>/<version>
+<scheme>://<host>:<port>/api/v1/repo/deb/<distribution>/<release>/<source-package>/<version>
+```
+
+For RPM the request matches packages whose source-RPM filename starts
+with `<source-package>-<version>.` and ends with `.src.rpm`, tolerating
+any distribution tag (`.fc41`, `.el9`, `.el9_2`) in the middle. For
+Debian the request is translated into `reprepro removefilter` with the
+formula `($Source (== <source-package>), $SourceVersion (= <version>))`.
+
+The response mirrors the upload API shape:
+
+```json
+{
+    "message": "Removed 13 file(s) from rpm/fedora/41",
+    "files": [
+        {
+            "filename": "clevis-22-1.tpm1.fc41.src.rpm",
+            "status": "ok",
+            "path": "rpm/fedora/41/Packages/c/clevis-22-1.tpm1.fc41.src.rpm"
+        }
+    ]
+}
+```
+
+Status codes:
+
+* `200` — success (including the idempotent no-match case, returning
+  an empty `files` array).
+* `400` — invalid characters in any path segment. The allowed set is
+  `A-Z a-z 0-9 . + : ~ _ -`.
+* `404` — the `<distribution>/<release>` does not exist as a
+  repository.
+* `500` — the underlying tool (`createrepo_c` / `reprepro`) failed.
+* `503` — the repository tool for the requested format is not
+  configured.
+
+Remember to URL-encode reserved characters in Debian versions: `+` →
+`%2B`, `~` → `%7E`, `:` → `%3A`. Example:
+
+```bash
+curl -u "<username>:<password>" -X DELETE \
+  "https://my-repo.example.com/api/v1/repo/deb/debian/bookworm/clevis/21-1%2Btpm1u8%2Bdeb12"
+```
+
 ## Configuration
 
 The configuration is stored entirely in the environment variables. The
@@ -1279,17 +1331,17 @@ the `reprepro` tool.
 
 ### Removing Packages from the Repository
 
-The `reprepro` configuration is set with `Limit: 0`, which retains every
-uploaded version of each package in the repository. RedHat-like repositories
-also have no automatic trimming (`createrepo_c` indexes every file in the
-pool).
+Use the [Package Removal API](#package-removal-api) to remove a source
+package and every binary built from it from a published repository. It
+supports both Debian-like and RedHat-like repositories with a symmetric
+URL shape.
 
-If you need to remove the packages from the repository, it is currently a manual
-process. For Debian-like repository use the method mentioned above in the
+Manual cleanup remains available as a fallback — see the
 [Uploading and Re-uploading Debian Packages](#uploading-and-re-uploading-debian-packages)
-section. For RedHat-like distributions, delete the respective files from the
-repository directory and either regenerate the metadata as mentioned in the
-[Regenerate Metadata Signatures](#regenerate-metadata-signatures) section below.
+section for the `reprepro removefilter` recipe used on Debian-like
+repositories, and delete files + re-run the
+[Repository Management API](#repository-management-api) for
+RedHat-like repositories.
 
 ### Regenerate Metadata Signatures
 

@@ -4,20 +4,20 @@ import fs from "node:fs/promises";
 import logger from "./logger.ts";
 import type { Gpg, Paths } from "./config.ts";
 import fsExtra from "fs-extra";
-import { type ActionResult, exec } from "./exec.ts";
+import { type ActionResult, exec, execOpt } from "./exec.ts";
 import dedent from "dedent";
 import assert from "node:assert";
 import osPath from "path";
 import { gpgInitDeb } from "./gpg.ts";
 import { getEnv } from "./env.ts";
 import type { DebDistribution, DebDistributionMap, DebRelease, DebReleaseMap, DebRepository } from "./repo.ts";
+import { PACKAGE_IDENTIFIER_REGEX } from "./validations.ts";
 import _ from "lodash";
 import { Readable } from "node:stream";
 import * as readline from "node:readline";
 
 const REPREPRO_REMOVEFILTER_MAX_CLAUSES = 25;
 const REPREPRO_REMOVEFILTER_MAX_FORMULA_LENGTH = 4096;
-const DEBIAN_CLEANUP_VALUE_REGEX = /^[a-z0-9.+:~_-]+$/;
 
 type DebCleanupTarget = {
     source: string,
@@ -288,13 +288,13 @@ function validateChangesCleanupMetadata(changesFiles: string[],
     changesMetadata: ParsedChangesMetadata[]): OptionalActionResult {
     for (const [index, metadata] of changesMetadata.entries()) {
         const changesFile = changesFiles[index];
-        if (metadata.source && !DEBIAN_CLEANUP_VALUE_REGEX.test(metadata.source)) {
+        if (metadata.source && !PACKAGE_IDENTIFIER_REGEX.test(metadata.source)) {
             return {
                 result: "error" as const,
                 message: `Debian changes file ${ changesFile } has invalid/unsupported Source for cleanup: ${ metadata.source }`
             } satisfies ActionResult;
         }
-        if (metadata.version && !DEBIAN_CLEANUP_VALUE_REGEX.test(metadata.version)) {
+        if (metadata.version && !PACKAGE_IDENTIFIER_REGEX.test(metadata.version)) {
             return {
                 result: "error" as const,
                 message: `Debian changes file ${ changesFile } has invalid/unsupported Version for cleanup: ${ metadata.version }`
@@ -649,4 +649,102 @@ export default async function processIncoming(paths: Paths, gpg: Gpg): Promise<R
     }
 
     return result;
+}
+
+export type DebRemovalFile = {
+    filename: string;
+    status: "ok" | "failed";
+    path: string;
+};
+
+export type DebRemovalResult =
+    | { notFound: true }
+    | { notFound: false; files: DebRemovalFile[]; action?: ActionResult };
+
+function parseListfilterLine(line: string): { release: string; component: string; arch: string; pkg: string; version: string } | null {
+    // "bookworm|main|amd64: clevis 22-1+tpm1+deb12"
+    // "bookworm-security|updates/main|amd64: clevis 22-1+tpm1+deb12"
+    const match = line.match(/^([^|\s]+)\|([^|\s]+)\|([^|\s:]+):\s+(\S+)\s+(\S+)$/);
+    if (!match) return null;
+    return { release: match[1], component: match[2], arch: match[3], pkg: match[4], version: match[5] };
+}
+
+function sourcePoolPrefix(source: string): string {
+    return source.startsWith("lib") ? source.slice(0, 4) : source.slice(0, 1);
+}
+
+function listfilterToRemovalFiles(distro: string, source: string, stdout: string): DebRemovalFile[] {
+    const prefix = sourcePoolPrefix(source);
+    return stdout.split(/\r?\n/)
+        .map(parseListfilterLine)
+        .filter((v): v is NonNullable<typeof v> => v !== null)
+        .map(({ component, arch, pkg, version }) => {
+            const filename = arch === "source"
+                ? `${ pkg }_${ version }.dsc`
+                : `${ pkg }_${ version }_${ arch }.deb`;
+            return {
+                filename,
+                status: "ok" as const,
+                path: path.join("deb", distro, "pool", component, prefix, source, filename)
+            };
+        });
+}
+
+async function repreproListFilterExec(repreproBin: string, confDir: string,
+    release: string, formula: string): Promise<ActionResult & { stdout: string }> {
+    const repreproConfDir = path.isAbsolute(confDir) ? confDir : `+b/${ confDir }`;
+    let stdout = "";
+    const result = await execOpt({
+        levelFn: (stdio, line) => {
+            if (stdio === "stdout") {
+                stdout += line + "\n";
+                return "debug";
+            }
+            return "warn";
+        }
+    }, repreproBin, "--confdir", repreproConfDir, "listfilter", release, formula);
+    return { ...result, stdout };
+}
+
+export async function removePackage(
+    paths: Paths,
+    distro: string,
+    release: string,
+    source: string,
+    version: string
+): Promise<DebRemovalResult> {
+    assert(paths.repreproBin, "repreproBin is not available");
+
+    const distroMap = await readDistributions(paths.repoStateDir, distro, release);
+    if (!distroMap[distro] || !distroMap[distro].releases[release]) {
+        return { notFound: true };
+    }
+
+    const confDir = path.join(paths.repoStateDir, `deb-${ distro }`, "conf");
+    const formula = buildRemoveFilterClause({ source, version });
+
+    const listResult = await repreproListFilterExec(paths.repreproBin, confDir, release, formula);
+    if (listResult.result !== "success") {
+        return { notFound: false, files: [], action: listResult };
+    }
+
+    const files = listfilterToRemovalFiles(distro, source, listResult.stdout);
+
+    if (files.length === 0) {
+        return { notFound: false, files: [] };
+    }
+
+    const removeResult = await repreproExec(paths.repreproBin, confDir,
+        "--export=silent-never", "removefilter", release, formula);
+    if (removeResult.result !== "success") {
+        return { notFound: false, files, action: removeResult };
+    }
+
+    const exportResult = await repreproExportExec(paths.repreproBin, confDir);
+    if (exportResult.result !== "success") {
+        return { notFound: false, files, action: exportResult };
+    }
+
+    const cleanupResult = await repreproCleanupExec(paths.repreproBin, confDir);
+    return { notFound: false, files, action: cleanupResult };
 }

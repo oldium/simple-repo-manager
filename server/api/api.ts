@@ -56,6 +56,8 @@ export default function router(config: AppConfig) {
     v1.get('/status', statusMiddleware(config));
     v1.use('/upload', upload(config));
     v1.post('/repo/import', repo.post(config.paths, config.gpg, config.upload));
+    v1.delete('/repo/:format/:distribution/:release/:source/:version',
+        repo.remove(config.paths, config.gpg, config.upload));
 
     router.all('/', unknownApiMiddleware());
     router.use(unexpectedErrorHandler());

@@ -8,6 +8,8 @@ import assert from "node:assert";
 import { gpgInitRpm } from "./gpg.ts";
 import fg from "fast-glob";
 import type { Repository } from "./repo.ts";
+import logger from "./logger.ts";
+import { matchesSourceIdentity, sourceIdentityOf, streamPackages } from "./rpm-metadata.ts";
 
 async function isDirNonempty(path: string): Promise<boolean> {
     try {
@@ -105,4 +107,80 @@ export default async function processIncoming(paths: Paths, gpg: Gpg): Promise<R
     }
 
     return result;
+}
+
+export type RpmRemovalFile = {
+    filename: string;
+    status: "ok" | "failed";
+    path: string;
+};
+
+export type RpmRemovalResult =
+    | { notFound: true }
+    | { notFound: false; files: RpmRemovalFile[]; action?: ActionResult };
+
+export async function removePackage(
+    paths: Paths,
+    distro: string,
+    release: string,
+    source: string,
+    version: string
+): Promise<RpmRemovalResult> {
+    assert(paths.createrepoScript, "createrepoScript is not available");
+
+    const releaseDir = path.join(paths.repoDir, "rpm", distro, release);
+    if (!await fsExtra.pathExists(releaseDir)) {
+        return { notFound: true };
+    }
+
+    const input = `${ source }-${ version }`;
+    const matched: { href: string; filename: string }[] = [];
+    const seenLetterDirs = new Set<string>();
+
+    for await (const pkg of streamPackages(releaseDir)) {
+        const identity = sourceIdentityOf(pkg);
+        if (identity && matchesSourceIdentity(input, identity)) {
+            matched.push({ href: pkg.href, filename: path.basename(pkg.href) });
+            seenLetterDirs.add(path.dirname(pkg.href));
+        }
+    }
+
+    if (matched.length === 0) {
+        return { notFound: false, files: [] };
+    }
+
+    const files: RpmRemovalFile[] = [];
+    for (const hit of matched) {
+        const absPath = path.join(releaseDir, hit.href);
+        try {
+            await fs.unlink(absPath);
+            files.push({
+                filename: hit.filename,
+                status: "ok",
+                path: path.posix.join("rpm", distro, release, hit.href)
+            });
+        } catch (err) {
+            logger.warn(`Failed to remove ${ absPath }`, { err });
+            files.push({
+                filename: hit.filename,
+                status: "failed",
+                path: path.posix.join("rpm", distro, release, hit.href)
+            });
+        }
+    }
+
+    for (const letterDir of seenLetterDirs) {
+        const abs = path.join(releaseDir, letterDir);
+        try {
+            const entries = await fs.readdir(abs);
+            if (entries.length === 0) {
+                await fs.rmdir(abs);
+            }
+        } catch (err) {
+            logger.warn(`Failed to clean up ${ abs }`, { err });
+        }
+    }
+
+    const action = await exec(paths.createrepoScript, releaseDir, paths.signScript ?? "");
+    return { notFound: false, files, action };
 }
