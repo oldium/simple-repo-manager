@@ -49,4 +49,49 @@ describe("DELETE invalid requests", () => {
         const res = await request(app).delete("/api/v1/repo/deb/debian/bookworm/foo/1");
         expect(res.status).toBe(503);
     }));
+
+    test("400 when source is `-`", withLocalTmpDir(async () => {
+        mockExecution(0, "", "");
+        const createTestApp = (await import("../testapp.ts")).default;
+        const app = await createTestApp();
+        const res = await request(app).delete("/api/v1/repo/rpm/fedora/41/-/22");
+        expect(res.status).toBe(400);
+    }));
+
+    test("404 when format is `-`", withLocalTmpDir(async () => {
+        mockExecution(0, "", "");
+        const createTestApp = (await import("../testapp.ts")).default;
+        const app = await createTestApp();
+        const res = await request(app).delete("/api/v1/repo/-/fedora/41/clevis/22");
+        expect(res.status).toBe(404);
+    }));
+
+    test("identifiers with leading dash are not wildcards",
+        withLocalTmpDir(async () => {
+        // `-foo` is a plain identifier under PACKAGE_IDENTIFIER_REGEX; only
+        // the lone `-` is the wildcard. The unknown distro should 404, not 400.
+        mockExecution(0, "", "");
+        const createTestApp = (await import("../testapp.ts")).default;
+        const app = await createTestApp({
+            paths: { incomingDir: "incoming", repoStateDir: "repo-state", repoDir: "repo",
+                repreproBin: "reprepro" }
+        });
+        const res = await request(app).delete("/api/v1/repo/rpm/-foo/41/clevis/22");
+        expect(res.status).toBe(404);
+    }));
+
+    test("identifiers containing a dash still work (not treated as wildcard)",
+        withLocalTmpDir(async () => {
+        mockExecution(0, "", "");
+        const createTestApp = (await import("../testapp.ts")).default;
+        const app = await createTestApp({
+            paths: { incomingDir: "incoming", repoStateDir: "repo-state", repoDir: "repo",
+                repreproBin: "reprepro" }
+        });
+        // `bookworm-security` is a valid identifier; the handler must not 400.
+        // The distribution doesn't exist → 404 expected.
+        const res = await request(app)
+            .delete("/api/v1/repo/deb/debian/bookworm-security/clevis/21");
+        expect(res.status).toBe(404);
+    }));
 });

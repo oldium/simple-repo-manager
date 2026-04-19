@@ -1,7 +1,17 @@
 import type { EnabledApi, Gpg, Paths, UploadOptions } from "../lib/config.ts";
 import type { Request, RequestHandler, Response } from "express";
-import { default as processIncomingDeb, removePackage as removeDebPackage } from "../lib/deb.ts";
-import { default as processIncomingRpm, removePackage as removeRpmPackage } from "../lib/rpm.ts";
+import {
+    default as processIncomingDeb,
+    enumerateRemovalTargets as enumerateDebTargets,
+    removePackage as removeDebPackage
+} from "../lib/deb.ts";
+import type { DebVersionFilter } from "../lib/deb.ts";
+import {
+    default as processIncomingRpm,
+    enumerateRemovalTargets as enumerateRpmTargets,
+    removePackage as removeRpmPackage
+} from "../lib/rpm.ts";
+import type { RpmVersionFilter } from "../lib/rpm.ts";
 import type { ActionResult } from "../lib/exec.ts";
 import type { LoggedResponse } from "../lib/logger.ts";
 import logger from "../lib/logger.ts";
@@ -9,7 +19,11 @@ import { sendErrorResponse, sendRepoResponse, sendUploadResponse } from "../lib/
 import osPath from "path";
 import { moveAll } from "../lib/fs.ts";
 import lock from "../lib/lock.ts";
-import { validatePackageIdentifier } from "../lib/validations.ts";
+import {
+    isAnyWildcard,
+    validatePackageIdentifier,
+    validateWildcardOrIdentifier
+} from "../lib/validations.ts";
 import type { ParamsDictionary } from "express-serve-static-core";
 
 type RemoveParams = { format: string; distribution: string; release: string; source: string; version: string };
@@ -84,10 +98,10 @@ class RepoHandler {
         if (format !== "rpm" && format !== "deb") {
             return sendErrorResponse(res, 404, "Unknown repository format");
         }
-        if (!validatePackageIdentifier(distribution)
-            || !validatePackageIdentifier(release)
+        if (!validateWildcardOrIdentifier(distribution)
+            || !validateWildcardOrIdentifier(release)
             || !validatePackageIdentifier(source)
-            || !validatePackageIdentifier(version)) {
+            || !validateWildcardOrIdentifier(version)) {
             return sendErrorResponse(res, 400, "Invalid characters in path segment");
         }
 
@@ -98,34 +112,55 @@ class RepoHandler {
             return sendErrorResponse(res, 503, "Debian repository tool not available", { 'Retry-After': '3600' });
         }
 
+        const distroArg = isAnyWildcard(distribution) ? undefined : distribution;
+        const releaseArg = isAnyWildcard(release) ? undefined : release;
+        const versionFilter: DebVersionFilter | RpmVersionFilter =
+            isAnyWildcard(version) ? { any: true } as const : version;
+
         try {
             await lock.forExecOnce(async () => {
-                if (format === "rpm") {
-                    const result = await removeRpmPackage(this.paths, distribution, release, source, version);
-                    if (result.notFound === true) {
-                        return sendErrorResponse(res, 404, `No such repository rpm/${ distribution }/${ release }`);
-                    }
+                const targets = format === "rpm"
+                    ? await enumerateRpmTargets(this.paths, distroArg, releaseArg)
+                    : await enumerateDebTargets(this.paths, distroArg, releaseArg);
+
+                // 404 only when a literal distro or release resolved to
+                // zero configured repositories. Wildcard → 200 empty.
+                if (targets.length === 0 && (distroArg !== undefined || releaseArg !== undefined)) {
+                    return sendErrorResponse(res, 404,
+                        `No such repository ${ format }/${ distribution }/${ release }`);
+                }
+
+                type FileEntry = { filename: string; status: "ok" | "failed"; path: string };
+                const files: FileEntry[] = [];
+                const failedTargets: { distribution: string; release: string }[] = [];
+                let touchedTargets = 0;
+
+                for (const target of targets) {
+                    const result = format === "rpm"
+                        ? await removeRpmPackage(this.paths, target.distribution, target.release, source, versionFilter)
+                        : await removeDebPackage(this.paths, target.distribution, target.release, source, versionFilter);
+
+                    if (result.notFound === true) continue;   // enumerated, so should not happen
+                    if (result.files.length > 0) touchedTargets++;
+                    files.push(...result.files);
                     if (result.action && result.action.result !== "success") {
-                        return sendErrorResponse(res, 500,
-                            "createrepo failed during removal. See server logs for details");
+                        failedTargets.push(target);
                     }
-                    const msg = result.files.length === 0
-                        ? `No packages matched ${ source }-${ version } in rpm/${ distribution }/${ release }`
-                        : `Removed ${ result.files.length } file(s) from rpm/${ distribution }/${ release }`;
-                    return sendUploadResponse(res, 200, msg, result.files);
                 }
-                const debResult = await removeDebPackage(this.paths, distribution, release, source, version);
-                if (debResult.notFound === true) {
-                    return sendErrorResponse(res, 404, `No such repository deb/${ distribution }/${ release }`);
+
+                if (failedTargets.length > 0) {
+                    return sendUploadResponse(res, 500,
+                        `Removed ${ files.length } entr${ files.length === 1 ? "y" : "ies" }; one or more targets failed. See server logs for details`,
+                        files);
                 }
-                if (debResult.action && debResult.action.result !== "success") {
-                    return sendErrorResponse(res, 500,
-                        "reprepro failed during removal. See server logs for details");
-                }
-                const msg = debResult.files.length === 0
-                    ? `No packages matched ${ source }/${ version } in deb/${ distribution }/${ release }`
-                    : `Removed ${ debResult.files.length } entr${ debResult.files.length === 1 ? "y" : "ies" } from deb/${ distribution }/${ release }`;
-                return sendUploadResponse(res, 200, msg, debResult.files);
+
+                const msg = files.length === 0
+                    ? `No packages matched ${ source }/${ version } in ${ format }/${ distribution }/${ release }`
+                    : format === "deb"
+                        ? `Removed ${ files.length } package reference(s) across ${ touchedTargets } release(s); shared pool files are retained while referenced elsewhere`
+                        : `Removed ${ files.length } file(s) across ${ touchedTargets } release(s)`;
+
+                return sendUploadResponse(res, 200, msg, files);
             });
         } catch (err) {
             logger.error("Error during package removal:", { err });

@@ -10,6 +10,13 @@ import fg from "fast-glob";
 import type { Repository } from "./repo.ts";
 import logger from "./logger.ts";
 import { matchesSourceIdentity, sourceIdentityOf, streamPackages } from "./rpm-metadata.ts";
+import type { PackageInfo } from "./rpm-metadata.ts";
+
+export type RpmVersionFilter = string | { any: true };
+
+function isAnyVersion(v: RpmVersionFilter): v is { any: true } {
+    return typeof v !== "string";
+}
 
 async function isDirNonempty(path: string): Promise<boolean> {
     try {
@@ -124,7 +131,7 @@ export async function removePackage(
     distro: string,
     release: string,
     source: string,
-    version: string
+    version: RpmVersionFilter
 ): Promise<RpmRemovalResult> {
     assert(paths.createrepoScript, "createrepoScript is not available");
 
@@ -133,16 +140,48 @@ export async function removePackage(
         return { notFound: true };
     }
 
-    const input = `${ source }-${ version }`;
-    const matched: { href: string; filename: string }[] = [];
-    const seenLetterDirs = new Set<string>();
+    const literalInput = isAnyVersion(version) ? null : `${ source }-${ version }`;
+
+    const actualSources: PackageInfo[] = [];
+    const candidatesBySourcerpm = new Map<string, PackageInfo[]>();
 
     for await (const pkg of streamPackages(releaseDir)) {
-        const identity = sourceIdentityOf(pkg);
-        if (identity && matchesSourceIdentity(input, identity)) {
-            matched.push({ href: pkg.href, filename: path.basename(pkg.href) });
-            seenLetterDirs.add(path.dirname(pkg.href));
+        if (pkg.arch === "src") {
+            if (pkg.name !== source) continue;
+            if (literalInput !== null) {
+                const identity = sourceIdentityOf(pkg);
+                if (!identity || !matchesSourceIdentity(literalInput, identity)) continue;
+            }
+            actualSources.push(pkg);
+        } else {
+            // Candidate binary if its sourcerpm looks like it could belong
+            // to `source`. We over-match (e.g. clevis-tang-…src.rpm is a
+            // candidate when source="clevis") and filter after the stream.
+            if (!pkg.sourcerpm.startsWith(`${ source }-`)) continue;
+            if (!pkg.sourcerpm.endsWith(".src.rpm")) continue;
+            const list = candidatesBySourcerpm.get(pkg.sourcerpm) ?? [];
+            list.push(pkg);
+            candidatesBySourcerpm.set(pkg.sourcerpm, list);
         }
+    }
+
+    const actualSourcerpms = new Set<string>();
+    for (const src of actualSources) {
+        const identity = sourceIdentityOf(src);
+        if (identity) actualSourcerpms.add(identity);
+    }
+
+    const matched: { href: string; filename: string }[] = [];
+    const seenLetterDirs = new Set<string>();
+    const collect = (pkg: PackageInfo) => {
+        matched.push({ href: pkg.href, filename: path.basename(pkg.href) });
+        seenLetterDirs.add(path.dirname(pkg.href));
+    };
+
+    for (const src of actualSources) collect(src);
+    for (const [sourcerpm, bins] of candidatesBySourcerpm) {
+        if (!actualSourcerpms.has(sourcerpm)) continue;
+        for (const bin of bins) collect(bin);
     }
 
     if (matched.length === 0) {
@@ -157,14 +196,14 @@ export async function removePackage(
             files.push({
                 filename: hit.filename,
                 status: "ok",
-                path: path.posix.join("rpm", distro, release, hit.href)
+                path: path.join("rpm", distro, release, hit.href)
             });
         } catch (err) {
             logger.warn(`Failed to remove ${ absPath }`, { err });
             files.push({
                 filename: hit.filename,
                 status: "failed",
-                path: path.posix.join("rpm", distro, release, hit.href)
+                path: path.join("rpm", distro, release, hit.href)
             });
         }
     }
@@ -183,4 +222,27 @@ export async function removePackage(
 
     const action = await exec(paths.createrepoScript, releaseDir, paths.signScript ?? "");
     return { notFound: false, files, action };
+}
+
+export type RpmRemovalTarget = { distribution: string; release: string };
+
+export async function enumerateRemovalTargets(
+    paths: Paths,
+    distro: string | undefined,
+    release: string | undefined
+): Promise<RpmRemovalTarget[]> {
+    const rpmRoot = path.join(paths.repoDir, "rpm");
+    const distroPat = distro ?? "*";
+    const releasePat = release ?? "*";
+    const dirs = await glob(`${ distroPat }/${ releasePat }/`, { cwd: rpmRoot, posix: true });
+
+    const targets: RpmRemovalTarget[] = [];
+    for (const dir of dirs) {
+        const [distName, relName] = dir.split(path.sep);
+        if (!distName || !relName) continue;
+        // Only consider releases that have been indexed at least once.
+        if (!await fsExtra.pathExists(path.join(rpmRoot, dir, "repodata", "repomd.xml"))) continue;
+        targets.push({ distribution: distName, release: relName });
+    }
+    return targets;
 }

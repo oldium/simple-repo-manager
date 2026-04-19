@@ -16,6 +16,12 @@ import _ from "lodash";
 import { Readable } from "node:stream";
 import * as readline from "node:readline";
 
+type VersionFilter = string | { any: true };
+
+function isAnyVersion(v: VersionFilter): v is { any: true } {
+    return typeof v !== "string";
+}
+
 const REPREPRO_REMOVEFILTER_MAX_CLAUSES = 25;
 const REPREPRO_REMOVEFILTER_MAX_FORMULA_LENGTH = 4096;
 
@@ -347,6 +353,13 @@ function buildRemoveFilterClause(target: DebCleanupTarget) {
     return `($Source (== ${ target.source }), $SourceVersion (= ${ target.version }))`;
 }
 
+function buildRemoveFormulaForTarget(source: string, version: VersionFilter): string {
+    if (isAnyVersion(version)) {
+        return `$Source (== ${ source })`;
+    }
+    return buildRemoveFilterClause({ source, version });
+}
+
 function chunkCleanupTargets(targets: DebCleanupTarget[]) {
     const chunks: DebCleanupTarget[][] = [];
     let currentChunk: DebCleanupTarget[] = [];
@@ -657,6 +670,8 @@ export type DebRemovalFile = {
     path: string;
 };
 
+export type DebVersionFilter = VersionFilter;
+
 export type DebRemovalResult =
     | { notFound: true }
     | { notFound: false; files: DebRemovalFile[]; action?: ActionResult };
@@ -711,7 +726,7 @@ export async function removePackage(
     distro: string,
     release: string,
     source: string,
-    version: string
+    version: VersionFilter
 ): Promise<DebRemovalResult> {
     assert(paths.repreproBin, "repreproBin is not available");
 
@@ -721,7 +736,7 @@ export async function removePackage(
     }
 
     const confDir = path.join(paths.repoStateDir, `deb-${ distro }`, "conf");
-    const formula = buildRemoveFilterClause({ source, version });
+    const formula = buildRemoveFormulaForTarget(source, version);
 
     const listResult = await repreproListFilterExec(paths.repreproBin, confDir, release, formula);
     if (listResult.result !== "success") {
@@ -747,4 +762,21 @@ export async function removePackage(
 
     const cleanupResult = await repreproCleanupExec(paths.repreproBin, confDir);
     return { notFound: false, files, action: cleanupResult };
+}
+
+export type DebRemovalTarget = { distribution: string; release: string };
+
+export async function enumerateRemovalTargets(
+    paths: Paths,
+    distro: string | undefined,
+    release: string | undefined
+): Promise<DebRemovalTarget[]> {
+    const distroMap = await readDistributions(paths.repoStateDir, distro, release);
+    const targets: DebRemovalTarget[] = [];
+    for (const [distName, distObj] of Object.entries(distroMap)) {
+        for (const relName of Object.keys(distObj.releases)) {
+            targets.push({ distribution: distName, release: relName });
+        }
+    }
+    return targets;
 }

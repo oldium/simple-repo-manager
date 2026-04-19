@@ -32,5 +32,13 @@ export function validateFilename(type: string, filename: string): boolean {
 export const PACKAGE_IDENTIFIER_REGEX = /^[A-Za-z0-9.+:~_-]+$/;
 
 export function validatePackageIdentifier(value: string): boolean {
-    return PACKAGE_IDENTIFIER_REGEX.test(value);
+    return value !== "-" && PACKAGE_IDENTIFIER_REGEX.test(value);
+}
+
+export function isAnyWildcard(value: string): boolean {
+    return value === "-";
+}
+
+export function validateWildcardOrIdentifier(value: string): boolean {
+    return isAnyWildcard(value) || validatePackageIdentifier(value);
 }

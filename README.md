@@ -655,17 +655,47 @@ To remove a specific source package version from a published repository
 <scheme>://<host>:<port>/api/v1/repo/deb/<distribution>/<release>/<source-package>/<version>
 ```
 
-For RPM the request matches packages whose source-RPM filename starts
-with `<source-package>-<version>.` and ends with `.src.rpm`, tolerating
-any distribution tag (`.fc41`, `.el9`, `.el9_2`) in the middle. For
-Debian the request is translated into `reprepro removefilter` with the
-formula `($Source (== <source-package>), $SourceVersion (= <version>))`.
+For RPM the request matches source-RPM filenames that start with
+`<source-package>-<version>.` and end with `.src.rpm`, tolerating any
+distribution tag (`.fc41`, `.el9`, `.el9_2`) in the middle. Binaries are
+then matched by exact source-identity: only binaries whose embedded
+`sourcerpm` field equals one of the actually-matched source RPMs are
+removed. For Debian the request is translated into
+`reprepro removefilter` with the formula
+`($Source (== <source-package>), $SourceVersion (= <version>))`.
+
+The `<distribution>`, `<release>`, and `<version>` path segments each
+accept the single token `-` as a "match any" wildcard. `<source-package>`
+and the `rpm` / `deb` format segment stay literal — a request can
+therefore sweep every release of a distribution, every distribution, or
+every version of a source package, but it cannot accidentally sweep
+across source packages or formats. Example:
+
+```bash
+# Remove clevis 21-1+tpm1u8+deb12 from every release of Debian:
+curl -u "<username>:<password>" -X DELETE \
+  "https://my-repo.example.com/api/v1/repo/deb/debian/-/clevis/21-1%2Btpm1u8%2Bdeb12"
+
+# Remove every version of clevis from Fedora 41:
+curl -u "<username>:<password>" -X DELETE \
+  "https://my-repo.example.com/api/v1/repo/rpm/fedora/41/clevis/-"
+```
+
+For Debian, removal is a reference-level operation: pool files are
+physically deleted only after `reprepro clearvanished` determines that
+no remaining release references them. A removal that wildcards the
+release but leaves a version referenced by another release will leave
+the pool file on disk.
+
+For RPM, a binary uploaded without its corresponding `.src.rpm` in the
+repository cannot be matched by this API because the source-identity
+reconciliation requires the source entry in `primary.xml`.
 
 The response mirrors the upload API shape:
 
 ```json
 {
-    "message": "Removed 13 file(s) from rpm/fedora/41",
+    "message": "Removed 1 file(s) across 1 release(s)",
     "files": [
         {
             "filename": "clevis-22-1.tpm1.fc41.src.rpm",
@@ -678,13 +708,20 @@ The response mirrors the upload API shape:
 
 Status codes:
 
-* `200` — success (including the idempotent no-match case, returning
-  an empty `files` array).
+* `200` — success, including the idempotent no-match case (returns an
+  empty `files` array). Wildcards that expand to zero configured
+  repositories also return 200.
 * `400` — invalid characters in any path segment. The allowed set is
-  `A-Z a-z 0-9 . + : ~ _ -`.
-* `404` — the `<distribution>/<release>` does not exist as a
-  repository.
-* `500` — the underlying tool (`createrepo_c` / `reprepro`) failed.
+  `A-Z a-z 0-9 . + : ~ _ -`. Only the lone `-` is interpreted as a
+  wildcard; any other token of allowed characters — including
+  dash-prefixed or dash-containing ones like `-foo` or
+  `bookworm-security` — is treated as a literal identifier.
+* `404` — a **literal** `<distribution>` or `<release>` does not exist
+  as a configured repository. Wildcards in the same position never
+  produce 404.
+* `500` — the underlying tool (`createrepo_c` / `reprepro`) failed on
+  one or more targets. Successful per-file entries are still returned
+  in `files`.
 * `503` — the repository tool for the requested format is not
   configured.
 
