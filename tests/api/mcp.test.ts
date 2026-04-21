@@ -318,6 +318,71 @@ describe("MCP server", () => {
         );
     }));
 
+    test("initialize has no serverInfo.title when instanceLabel is unset", withLocalTmpDir(async () => {
+        const app = await createTestApp();
+        const response = await request(app)
+            .post("/api/v1/mcp")
+            .set("Content-Type", "application/json")
+            .set("Accept", "application/json, text/event-stream")
+            .send({
+                jsonrpc: "2.0",
+                id: 1,
+                method: "initialize",
+                params: {
+                    protocolVersion: "2025-06-18",
+                    capabilities: {},
+                    clientInfo: { name: "test", version: "1.0" },
+                },
+            });
+        expect(response.status).toBe(200);
+        expect(response.body.result.serverInfo.title).toBeUndefined();
+        expect(response.body.result.instructions).not.toMatch(/^This MCP server manages/);
+    }));
+
+    test("initialize exposes instanceLabel as serverInfo.title", withLocalTmpDir(async () => {
+        const app = await createTestApp({ instanceLabel: "Home repository" });
+        const response = await request(app)
+            .post("/api/v1/mcp")
+            .set("Content-Type", "application/json")
+            .set("Accept", "application/json, text/event-stream")
+            .send({
+                jsonrpc: "2.0",
+                id: 1,
+                method: "initialize",
+                params: {
+                    protocolVersion: "2025-06-18",
+                    capabilities: {},
+                    clientInfo: { name: "test", version: "1.0" },
+                },
+            });
+        expect(response.status).toBe(200);
+        expect(response.body.result.serverInfo.title).toEqual("Home repository");
+    }));
+
+    test("initialize instructions are prefixed with instanceLabel context", withLocalTmpDir(async () => {
+        const app = await createTestApp({ instanceLabel: "Home repository" });
+        const response = await request(app)
+            .post("/api/v1/mcp")
+            .set("Content-Type", "application/json")
+            .set("Accept", "application/json, text/event-stream")
+            .send({
+                jsonrpc: "2.0",
+                id: 1,
+                method: "initialize",
+                params: {
+                    protocolVersion: "2025-06-18",
+                    capabilities: {},
+                    clientInfo: { name: "test", version: "1.0" },
+                },
+            });
+        expect(response.status).toBe(200);
+        expect(response.body.result.instructions).toMatch(
+            /^This MCP server manages the "Home repository" repository\./
+        );
+        // Existing backend-enabled guidance is still present after the prefix.
+        expect(response.body.result.instructions).toMatch(/deb and rpm/);
+    }));
+
     test("initialize names disabled backend in partial-disable instructions", withLocalTmpDir(async () => {
         const app = await createTestApp({ upload: { enabledApi: { deb: true, rpm: false } } });
         const response = await request(app)

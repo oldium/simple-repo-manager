@@ -29,18 +29,31 @@ export default function mcpRouter(config: AppConfig) {
         if (enabled.rpm) parts.push("rpm");
         const enabledLabel = parts.length === 0 ? "none" : parts.join(", ");
 
-        const instructions =
+        const baseInstructions =
             parts.length === 2
                 ? "Use these tools to list, upload, import, and remove deb and rpm packages from the configured repositories."
                 : parts.length === 1
                     ? `Use these tools to list, upload, import, and remove ${ parts[0] } packages. The ${ parts[0] === "deb" ? "rpm" : "deb" } backend is disabled in the current server configuration.`
                     : "No repository backends are enabled on this server. Both deb and rpm are disabled in the current configuration. Call server_status to confirm, then ask an administrator to enable at least one backend and restart the server.";
 
-        const server = new McpServer({
+        const { instanceLabel } = config;
+        const instructions = instanceLabel
+            ? `This MCP server manages the "${ instanceLabel }" repository. ${ baseInstructions }`
+            : baseInstructions;
+
+        const serverInfo: {
+            name: string;
+            version: string;
+            description: string;
+            title?: string;
+        } = {
             name: "simple-repo-manager",
             version: pkg.version,
             description: `Repository manager. Enabled backends: ${ enabledLabel }.`,
-        }, {
+        };
+        if (instanceLabel) serverInfo.title = instanceLabel;
+
+        const server = new McpServer(serverInfo, {
             capabilities: { tools: {} },
             instructions,
         });

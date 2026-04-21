@@ -40,6 +40,7 @@ export default async function createTestApp(partialConfig?: DeepPartial<AppConfi
             trustProxy: undefined,
             ...partialConfig?.security
         },
+        instanceLabel: partialConfig?.instanceLabel,
     };
     return await createApp(appConfig, environment ?? "test");
 }

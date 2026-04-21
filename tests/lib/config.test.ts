@@ -495,7 +495,48 @@ describe("Test environment variables and config.ts", () => {
         expect(config.http.serverOptions.hosts).toEqual(["one.example.com", "two.example.com"]);
         expect(config.http.serverOptions.addresses).toEqual(["127.1.1.1", "127.2.2.2"]);
     }));
-    
-    
-    
+
+    test("instanceLabel is undefined when INSTANCE_LABEL is not set", withLocalTmpDir(async () => {
+        process.env.NODE_ENV = "production";
+        delete process.env.INSTANCE_LABEL;
+
+        mockExecution(0, "stdout data", "", undefined);
+
+        const { default: config } = await import("../../server/lib/config.ts");
+
+        expect(config.app.instanceLabel).toBeUndefined();
+    }));
+
+    test("instanceLabel is parsed from INSTANCE_LABEL", withLocalTmpDir(async () => {
+        process.env.NODE_ENV = "production";
+        process.env.INSTANCE_LABEL = "Home repository";
+
+        mockExecution(0, "stdout data", "", undefined);
+
+        const { default: config } = await import("../../server/lib/config.ts");
+
+        expect(config.app.instanceLabel).toEqual("Home repository");
+    }));
+
+    test("instanceLabel trims whitespace", withLocalTmpDir(async () => {
+        process.env.NODE_ENV = "production";
+        process.env.INSTANCE_LABEL = "  Home repository  ";
+
+        mockExecution(0, "stdout data", "", undefined);
+
+        const { default: config } = await import("../../server/lib/config.ts");
+
+        expect(config.app.instanceLabel).toEqual("Home repository");
+    }));
+
+    test("instanceLabel is undefined when INSTANCE_LABEL is whitespace only", withLocalTmpDir(async () => {
+        process.env.NODE_ENV = "production";
+        process.env.INSTANCE_LABEL = "   ";
+
+        mockExecution(0, "stdout data", "", undefined);
+
+        const { default: config } = await import("../../server/lib/config.ts");
+
+        expect(config.app.instanceLabel).toBeUndefined();
+    }));
 })

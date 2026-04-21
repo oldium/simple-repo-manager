@@ -45,4 +45,50 @@ describe("Test environment variables and config", () => {
             /^> Starting Simple Repo Manager v\d+\.\d+\.\d+/
         );
     }));
+
+    test("Bootstrap banner includes INSTANCE_LABEL suffix when set", async () => {
+        process.env.INSTANCE_LABEL = "Home repository";
+        jest.resetModules();
+
+        const { default: logger } = await import("../server/lib/logger.ts");
+        const infoSpy = jest.spyOn(logger, "info");
+
+        await import("../server/bootstrap.ts");
+
+        expect(infoSpy).toHaveBeenCalledWith(
+            expect.stringMatching(
+                /^> Starting Simple Repo Manager \(Home repository\) v\d+\.\d+\.\d+/
+            )
+        );
+    });
+
+    test("Bootstrap banner trims whitespace around INSTANCE_LABEL", async () => {
+        process.env.INSTANCE_LABEL = "  Home repository  ";
+        jest.resetModules();
+
+        const { default: logger } = await import("../server/lib/logger.ts");
+        const infoSpy = jest.spyOn(logger, "info");
+
+        await import("../server/bootstrap.ts");
+
+        expect(infoSpy).toHaveBeenCalledWith(
+            expect.stringMatching(
+                /^> Starting Simple Repo Manager \(Home repository\) v\d+\.\d+\.\d+/
+            )
+        );
+    });
+
+    test("Bootstrap banner has no parenthetical when INSTANCE_LABEL is empty", async () => {
+        process.env.INSTANCE_LABEL = "   ";
+        jest.resetModules();
+
+        const { default: logger } = await import("../server/lib/logger.ts");
+        const infoSpy = jest.spyOn(logger, "info");
+
+        await import("../server/bootstrap.ts");
+
+        expect(infoSpy).toHaveBeenCalledWith(
+            expect.stringMatching(/^> Starting Simple Repo Manager v\d+\.\d+\.\d+/)
+        );
+    });
 });

@@ -28,6 +28,7 @@ export type AppConfig = {
     paths: Paths,
     gpg: Gpg,
     upload: UploadOptions,
+    instanceLabel?: string,
 }
 
 export type Security = {
@@ -223,11 +224,14 @@ const upload: UploadOptions = {
     postField,
 };
 
+const instanceLabel = process.env.INSTANCE_LABEL?.trim() || undefined;
+
 const app: AppConfig = {
     security,
     paths,
     gpg,
     upload,
+    instanceLabel,
 };
 
 const listenDefaultHosts = environment === "production" ? null : "localhost";

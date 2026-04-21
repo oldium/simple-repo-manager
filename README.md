@@ -745,6 +745,16 @@ curl -u "<username>:<password>" -X DELETE \
 
 Simple Repo Manager exposes a Model Context Protocol endpoint at `POST /api/v1/mcp` using the official Streamable HTTP transport. The endpoint is stateless (no session IDs, no resumable streams) and requires the same authentication as the rest of the `/api/v1/*` tree.
 
+### Identifying the instance
+
+If you run more than one Simple Repo Manager — for example a home and a public mirror — set the optional `INSTANCE_LABEL` environment variable to a short human-readable label:
+
+```dotenv
+INSTANCE_LABEL=Home repository
+```
+
+When set, the label appears in the startup banner, as `serverInfo.title` in the MCP initialize response, and as a prefix in the MCP instructions string. This lets connected agents reliably distinguish deployments when a user says "do X on the home repository".
+
 ### Client configuration
 
 Most agent CLIs ship a command to register an MCP server. In the examples
