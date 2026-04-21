@@ -3,9 +3,11 @@ import fsExtra from "fs-extra/esm";
 import fs from "node:fs/promises";
 import osPath from "path";
 import zlib from "node:zlib";
+import { jest } from "@jest/globals";
 
 import createTestApp from "../testapp.ts";
 import { withLocalTmpDir } from "../utils.ts";
+import logger from "../../server/lib/logger.ts";
 
 function jsonRpc(method: string, params: Record<string, unknown> = {}, id = 1) {
     return { jsonrpc: "2.0", id, method, params };
@@ -253,6 +255,67 @@ describe("MCP server", () => {
         expect(response.status).toBe(200);
         expect(response.body.result.instructions).toMatch(/No repository backends are enabled/);
         expect(response.body.result.serverInfo.description).toMatch(/Enabled backends: none/);
+    }));
+
+    test("logs tool call input and ok result for empty-input tool", withLocalTmpDir(async () => {
+        const infoSpy = jest.spyOn(logger, "info");
+        const app = await createTestApp();
+        const response = await request(app)
+            .post("/api/v1/mcp")
+            .set("Content-Type", "application/json")
+            .set("Accept", "application/json, text/event-stream")
+            .send(jsonRpc("tools/call", { name: "server_status", arguments: {} }));
+        expect(response.status).toBe(200);
+        const messages = infoSpy.mock.calls.map((c) => String(c[0]));
+        expect(messages).toContain("MCP tool server_status input={}");
+        expect(messages).toContain("MCP tool server_status - ok");
+    }));
+
+    test("logs tool call input as stringified arguments", withLocalTmpDir(async () => {
+        const infoSpy = jest.spyOn(logger, "info");
+        const app = await createTestApp();
+        const response = await request(app)
+            .post("/api/v1/mcp")
+            .set("Content-Type", "application/json")
+            .set("Accept", "application/json, text/event-stream")
+            .send(jsonRpc("tools/call", {
+                name: "list_repositories",
+                arguments: { format: "deb", distribution: "debian" },
+            }));
+        expect(response.status).toBe(200);
+        const messages = infoSpy.mock.calls.map((c) => String(c[0]));
+        expect(messages).toContain(
+            'MCP tool list_repositories input={"format":"deb","distribution":"debian"}'
+        );
+        expect(messages).toContain("MCP tool list_repositories - ok");
+    }));
+
+    test("logs tool call error with caller-visible text", withLocalTmpDir(async () => {
+        const infoSpy = jest.spyOn(logger, "info");
+        const app = await createTestApp();
+        const response = await request(app)
+            .post("/api/v1/mcp")
+            .set("Content-Type", "application/json")
+            .set("Accept", "application/json, text/event-stream")
+            .send(jsonRpc("tools/call", {
+                name: "prepare_upload",
+                arguments: {
+                    format: "rpm",
+                    distribution: "fedora",
+                    release: "40",
+                    component: "main",
+                    filenames: ["x.rpm"],
+                },
+            }));
+        expect(response.status).toBe(200);
+        expect(response.body.result.isError).toBe(true);
+        const messages = infoSpy.mock.calls.map((c) => String(c[0]));
+        expect(messages).toEqual(
+            expect.arrayContaining([
+                expect.stringMatching(/^MCP tool prepare_upload input=\{/),
+                expect.stringMatching(/^MCP tool prepare_upload - error: Invalid argument/),
+            ])
+        );
     }));
 
     test("initialize names disabled backend in partial-disable instructions", withLocalTmpDir(async () => {

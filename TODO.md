@@ -9,4 +9,7 @@
 * Split `server/lib/deb.ts` and `server/lib/rpm.ts` into smaller modules
   (history, listing, removal, build, fs helpers).
 * Asynchronous MCP/REST operations with progress streaming over SSE (currently
-  both surfaces are synchronous).
+  both surfaces are synchronous). At that point, switch the MCP endpoint to a
+  stateful transport and accept `GET /api/v1/mcp` as the client-opened SSE
+  channel for server→client notifications (progress, logging) instead of
+  returning 405.

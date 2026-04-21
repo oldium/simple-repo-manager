@@ -2,12 +2,31 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Request } from "express";
 import { RepoService } from "../../lib/repo-service.ts";
-import { errorResult, successResult } from "./mappers.ts";
+import { errorResult, successResult, type ToolResult } from "./mappers.ts";
 import { getUriNoQuery } from "../../lib/req.ts";
+import logger from "../../lib/logger.ts";
 
 export interface EnabledBackends {
     deb: boolean;
     rpm: boolean;
+}
+
+function withLogging<Args extends unknown[], R extends ToolResult<object | undefined>>(
+    name: string,
+    cb: (...args: Args) => Promise<R> | R,
+): (...args: Args) => Promise<R> {
+    return async (...args: Args) => {
+        const input = args[0] ?? {};
+        logger.info(`MCP tool ${ name } input=${ JSON.stringify(input) }`);
+        const result = await Promise.resolve(cb(...args));
+        if (result.isError) {
+            const text = result.content.find(c => c.type === "text")?.text ?? "unknown";
+            logger.info(`MCP tool ${ name } - error: ${ text }`);
+        } else {
+            logger.info(`MCP tool ${ name } - ok`);
+        }
+        return result;
+    };
 }
 
 export function registerTools(
@@ -21,7 +40,7 @@ export function registerTools(
         title: "Server status",
         description: "Report server health and which repository backends (deb, rpm) are currently enabled. Always callable regardless of configuration. Call this first to discover capability before invoking other tools.",
         inputSchema: {},
-    }, async () => {
+    }, withLogging("server_status", async () => {
         const status = service.getStatus();
         const parts: string[] = [];
         if (status.api.deb.enabled) parts.push("deb");
@@ -37,7 +56,7 @@ export function registerTools(
                 },
             }
         );
-    });
+    }));
 
     // No repo tools when nothing is reachable — tools/list is an honest inventory.
     if (!enabled.deb && !enabled.rpm) return;
@@ -58,7 +77,7 @@ export function registerTools(
             distribution: z.string().min(1).describe("Distribution name filter (e.g. 'debian', 'fedora'). Omit to match any.").optional(),
             release: z.string().min(1).describe("Release name filter (e.g. 'bookworm', '40'). Omit to match any.").optional(),
         },
-    }, async (input) => {
+    }, withLogging("list_repositories", async (input) => {
         try {
             const repos = await service.listRepositories(input);
             return successResult(
@@ -68,7 +87,7 @@ export function registerTools(
         } catch (err) {
             return errorResult(err);
         }
-    });
+    }));
 
     server.registerTool("list_source_packages", {
         title: "List source packages",
@@ -79,7 +98,7 @@ export function registerTools(
             release: z.string().min(1).describe("Release name filter. Omit to match any.").optional(),
             source: z.string().min(1).describe("Source package name filter. Omit to return every source.").optional(),
         },
-    }, async (input) => {
+    }, withLogging("list_source_packages", async (input) => {
         try {
             const packages = await service.listSourcePackages(input);
             return successResult(
@@ -89,7 +108,7 @@ export function registerTools(
         } catch (err) {
             return errorResult(err);
         }
-    });
+    }));
 
     server.registerTool("prepare_upload", {
         title: "Prepare upload",
@@ -105,7 +124,7 @@ export function registerTools(
                 z.array(z.string().min(1)).min(1),
             ]).describe("One filename or an array of filenames to upload. Each gets its own PUT URL."),
         },
-    }, async (input) => {
+    }, withLogging("prepare_upload", async (input) => {
         try {
             const filenames = Array.isArray(input.filenames) ? input.filenames : [input.filenames];
             const slots = service.prepareUpload({
@@ -143,13 +162,13 @@ export function registerTools(
         } catch (err) {
             return errorResult(err);
         }
-    });
+    }));
 
     server.registerTool("import_repository", {
         title: "Import staged uploads",
         description: "Run the repository rebuild for all staged files.",
         inputSchema: {},
-    }, async () => {
+    }, withLogging("import_repository", async () => {
         try {
             const result = await service.importRepository();
             if (result.ok) {
@@ -171,7 +190,7 @@ export function registerTools(
         } catch (err) {
             return errorResult(err);
         }
-    });
+    }));
 
     server.registerTool("remove_package", {
         title: "Remove package",
@@ -183,7 +202,7 @@ export function registerTools(
             source: z.string().min(1).describe("Source package name to remove."),
             version: z.string().min(1).describe("Specific version to remove. Omit to remove every version.").optional(),
         },
-    }, async (input) => {
+    }, withLogging("remove_package", async (input) => {
         try {
             const result = await service.removePackage(input);
             const msg = result.files.length === 0
@@ -193,5 +212,5 @@ export function registerTools(
         } catch (err) {
             return errorResult(err);
         }
-    });
+    }));
 }
