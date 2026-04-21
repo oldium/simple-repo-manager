@@ -18,13 +18,14 @@ Features:
 * ✒️ Supports building a signed repository.
 * 📦 Uses Debian's `reprepro` tool for repository management. Automatically
   maintains the `reprepro` configuration.
-* 🔄 Acts as a simple indexer for uploads during development. Any version
-  can be uploaded — older, newer, or the same — and every uploaded
-  version stays in the repository index. For RedHat-like repositories
-  this is native `createrepo_c` behaviour; for Debian-like repositories
-  the server configures `reprepro` with `Limit: 0` and
-  `Permit: older_version`, and additionally performs automatic cleanup
-  when a same-version re-upload changes checksums.
+* 🔄 Acts as a simple indexer for uploads, every uploaded version stays in
+  the repository index.
+* ♻️ Allows re-uploading the same package version with different checksums,
+  useful during development.
+* ⏪ Supports uploading older versions than those already indexed.
+* 🗑️ Supports removing packages from the repository via API.
+* 🤖 Contains an embedded MCP (Model Context Protocol) server with a
+  source-package-name oriented interface for agent clients.
 * 📦 Uses RedHat's `createrepo_c` tool for repository management.
 * ✂️ Separates distributions (Debian vs. Ubuntu) and for RedHat-like
   repositories also releases (Fedora 41 vs. 42).
