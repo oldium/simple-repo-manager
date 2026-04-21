@@ -8,7 +8,7 @@ import logger from "./logger.ts";
 import fsExtra from "fs-extra";
 import proxyAddr from "proxy-addr";
 import { execOpt } from "./exec.ts";
-import { parseInvalidJsonObject } from "./json.ts";
+import { parseHumanJsonArray, parseHumanJsonObject } from "./json.ts";
 
 export type Certificate = { cert: Buffer; key: Buffer } | { cert?: undefined; key?: undefined };
 
@@ -60,6 +60,7 @@ export type UploadOptions = {
     enabledApi: EnabledApi,
     allowedIps?: IpCheckFn,
     basicAuth?: string[],
+    bearerAuth?: string[],
     sizeLimit?: number,
     postField: string,
 }
@@ -155,13 +156,29 @@ const security: Security = {
     trustProxy,
 };
 
-const allowedIpsArray = process.env.UPLOAD_ALLOWED_IPS?.trim().split(",").map((ip) => ip.trim()).filter(Boolean);
+function readApiEnv(primary: string, legacy: string, label: string): string | undefined {
+    const primaryValue = process.env[primary]?.trim();
+    const legacyValue = process.env[legacy]?.trim();
+    if (primaryValue && legacyValue) {
+        logger.warn(`${ primary } overrides deprecated ${ legacy } (${ label }); please remove ${ legacy } from the environment`);
+        return primaryValue;
+    }
+    if (primaryValue) return primaryValue;
+    if (legacyValue) {
+        logger.warn(`Deprecated ${ legacy } is set (${ label }); please rename to ${ primary }`);
+        return legacyValue;
+    }
+    return undefined;
+}
+
+const allowedIpsRaw = readApiEnv("API_ALLOWED_IPS", "UPLOAD_ALLOWED_IPS", "IP allowlist");
+const allowedIpsArray = allowedIpsRaw?.split(",").map((ip) => ip.trim()).filter(Boolean);
 const allowedIps = !_.isEmpty(allowedIpsArray) ? proxyAddr.compile(allowedIpsArray) : undefined;
 
-const basicAuthEnv = process.env.UPLOAD_BASIC_AUTH?.trim();
+const basicAuthEnv = readApiEnv("API_BASIC_AUTH", "UPLOAD_BASIC_AUTH", "basic credentials");
 let basicAuth: string[] | undefined = undefined;
 try {
-    basicAuth = Object.entries(parseInvalidJsonObject(basicAuthEnv ?? ""))
+    basicAuth = Object.entries(parseHumanJsonObject(basicAuthEnv ?? "").value)
         .filter(([user, password]) =>
             _.isString(user) && _.isString(password)
             && !_.isEmpty(user) && !_.isEmpty(password))
@@ -172,6 +189,20 @@ try {
 }
 if (_.isEmpty(basicAuth)) {
     basicAuth = undefined;
+}
+
+const bearerAuthEnv = process.env.API_BEARER_AUTH?.trim();
+let bearerAuth: string[] | undefined = undefined;
+try {
+    bearerAuth = parseHumanJsonArray(bearerAuthEnv ?? "").value
+        .map((token) => token.trim())
+        .filter((token) => !_.isEmpty(token));
+} catch (err) {
+    console.error(`Unable to parse API_BEARER_AUTH value: ${ err instanceof Error ? err.message : String(err) }`);
+    process.exit(1);
+}
+if (_.isEmpty(bearerAuth)) {
+    bearerAuth = undefined;
 }
 
 const sizeLimitEnv = process.env.UPLOAD_SIZE_LIMIT?.trim();
@@ -187,6 +218,7 @@ const upload: UploadOptions = {
     enabledApi,
     allowedIps,
     basicAuth,
+    bearerAuth,
     sizeLimit,
     postField,
 };

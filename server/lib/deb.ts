@@ -705,7 +705,7 @@ function listfilterToRemovalFiles(distro: string, source: string, stdout: string
         });
 }
 
-async function repreproListFilterExec(repreproBin: string, confDir: string,
+export async function repreproListFilterExec(repreproBin: string, confDir: string,
     release: string, formula: string): Promise<ActionResult & { stdout: string }> {
     const repreproConfDir = path.isAbsolute(confDir) ? confDir : `+b/${ confDir }`;
     let stdout = "";
@@ -779,4 +779,39 @@ export async function enumerateRemovalTargets(
         }
     }
     return targets;
+}
+
+export type DebSourcePackage = { source: string; version: string };
+
+export async function listSourcePackages(
+    paths: Paths,
+    distro: string,
+    release: string,
+    source: string | undefined
+): Promise<DebSourcePackage[]> {
+    assert(paths.repreproBin, "repreproBin is not available");
+
+    const distroMap = await readDistributions(paths.repoStateDir, distro, release);
+    if (!distroMap[distro] || !distroMap[distro].releases[release]) {
+        return [];
+    }
+
+    const confDir = path.join(paths.repoStateDir, `deb-${ distro }`, "conf");
+    const formula = source === undefined
+        ? `$Type (== dsc)`
+        : `$Source (== ${ source }), $Type (== dsc)`;
+
+    const result = await repreproListFilterExec(paths.repreproBin, confDir, release, formula);
+    if (result.result !== "success") return [];
+
+    const seen = new Map<string, DebSourcePackage>();
+    for (const line of result.stdout.split(/\r?\n/)) {
+        const parsed = parseListfilterLine(line);
+        if (!parsed) continue;
+        const key = `${ parsed.pkg }|${ parsed.version }`;
+        if (!seen.has(key)) {
+            seen.set(key, { source: parsed.pkg, version: parsed.version });
+        }
+    }
+    return Array.from(seen.values());
 }

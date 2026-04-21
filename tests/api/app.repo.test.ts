@@ -29,5 +29,7 @@ describe('Test repository API', () => {
 
         const res = await request(app).post("/api/v1/repo/import");
         expect(res.status).toBe(503);
+        expect(res.headers["retry-after"]).toBeUndefined();
+        expect(res.body.message).toEqual(expect.any(String));
     }));
 });

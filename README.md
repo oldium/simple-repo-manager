@@ -664,12 +664,15 @@ removed. For Debian the request is translated into
 `reprepro removefilter` with the formula
 `($Source (== <source-package>), $SourceVersion (= <version>))`.
 
-The `<distribution>`, `<release>`, and `<version>` path segments each
-accept the single token `-` as a "match any" wildcard. `<source-package>`
-and the `rpm` / `deb` format segment stay literal — a request can
-therefore sweep every release of a distribution, every distribution, or
-every version of a source package, but it cannot accidentally sweep
-across source packages or formats. Example:
+The `<format>`, `<distribution>`, `<release>`, and `<version>` path
+segments each accept the single token `-` as a "match any" wildcard;
+using `-` in the `<format>` position matches both `deb` and `rpm`. The
+trailing `<version>` segment may also be omitted entirely, in which case
+it is treated as `-` (match all versions). `<source-package>` stays
+literal — a request can therefore sweep every release of a distribution,
+every distribution, every version of a source package, or even every
+configured format, but it cannot accidentally sweep across source
+packages. Example:
 
 ```bash
 # Remove clevis 21-1+tpm1u8+deb12 from every release of Debian:
@@ -680,6 +683,10 @@ curl -u "<username>:<password>" -X DELETE \
 curl -u "<username>:<password>" -X DELETE \
   "https://my-repo.example.com/api/v1/repo/rpm/fedora/41/clevis/-"
 ```
+
+`DELETE /api/v1/repo/-/-/-/<source>/-` removes the source from every configured `(format, distribution, release)` triple.
+
+`DELETE /api/v1/repo/<format>/<distribution>/<release>/<source>` (no version segment) is shorthand for `DELETE /api/v1/repo/<format>/<distribution>/<release>/<source>/-`.
 
 For Debian, removal is a reference-level operation: pool files are
 physically deleted only after `reprepro clearvanished` determines that
@@ -732,6 +739,68 @@ Remember to URL-encode reserved characters in Debian versions: `+` →
 curl -u "<username>:<password>" -X DELETE \
   "https://my-repo.example.com/api/v1/repo/deb/debian/bookworm/clevis/21-1%2Btpm1u8%2Bdeb12"
 ```
+
+## MCP Server
+
+Simple Repo Manager exposes a Model Context Protocol endpoint at `POST /api/v1/mcp` using the official Streamable HTTP transport. The endpoint is stateless (no session IDs, no resumable streams) and requires the same authentication as the rest of the `/api/v1/*` tree.
+
+### Client configuration
+
+Most agent CLIs ship a command to register an MCP server. In the examples
+below, replace `<your-token>` with the bearer token configured on the
+server in `API_BEARER_AUTH` — you can generate a 32-character random token
+at https://1password.com/password-generator — and use the public URI of
+your server (here, the same `https://my-repo.example.com` as in the rest
+of the examples in this README).
+
+For [Claude Code][claude-code]:
+
+```bash
+claude mcp add --transport http simple-repo-manager \
+  https://my-repo.example.com/api/v1/mcp \
+  --header "Authorization: Bearer <your-token>"
+```
+
+For [OpenAI Codex][codex], the `codex mcp add` command does not currently
+expose a way to set arbitrary HTTP headers, so add the following entry to
+`~/.codex/config.toml` directly:
+
+```toml
+[mcp_servers.simple-repo-manager]
+transport = { type = "streamable_http", url = "https://my-repo.example.com/api/v1/mcp" }
+http_headers = { Authorization = "Bearer <your-token>" }
+```
+
+For [Factory Droid][droid]:
+
+```bash
+droid mcp add simple-repo-manager \
+  https://my-repo.example.com/api/v1/mcp \
+  --type http \
+  --header "Authorization: Bearer <your-token>"
+```
+
+[claude-code]: https://docs.claude.com/en/docs/claude-code
+
+[codex]: https://developers.openai.com/codex/
+
+[droid]: https://docs.factory.ai/
+
+### Tools
+
+| Tool | Purpose |
+|---|---|
+| `list_repositories` | Enumerate `(format, distribution, release)` triples, optionally filtered. |
+| `list_source_packages` | List source packages across matching triples. |
+| `prepare_upload` | Return one PUT URL per filename. |
+| `import_repository` | Run the repository rebuild. |
+| `remove_package` | Remove a package across matching triples. |
+
+### Upload flow
+
+1. Agent calls `prepare_upload` with the target and filename(s). Response includes `slots[i].uploadUrl`.
+2. Agent `PUT`s each file to its `uploadUrl` with the same `Authorization` header it used for MCP.
+3. Agent calls `import_repository` to trigger the rebuild.
 
 ## Configuration
 
@@ -857,19 +926,38 @@ HTTPS_KEY_FILE=certs/key.pem
 HTTPS_CERT_FILE=certs/cert.pem
 ```
 
-Upload API limited to only local accesses going through the reverse proxy
+The `/api/v1/*` API (uploads, repository management, removal, MCP) is
+protected by a stack of IP allowlisting plus HTTP Basic or Bearer
+authentication, configured through the following environment variables:
+
+| Variable | Purpose | Format |
+|---|---|---|
+| `API_ALLOWED_IPS` | IP allowlist applied to all `/api/v1/*` routes | `proxy-addr` syntax (comma-separated) |
+| `API_BASIC_AUTH` | HTTP Basic credentials | JSON-ish object `{user: password, ...}` |
+| `API_BEARER_AUTH` | HTTP Bearer tokens | JSON-ish array `[token1, token2]` or comma-separated |
+
+Legacy `UPLOAD_ALLOWED_IPS` / `UPLOAD_BASIC_AUTH` are still accepted but log a deprecation warning at startup; please migrate to the `API_*` names.
+
+API limited to only local accesses going through the reverse proxy
 running on server 10.1.2.1 and filling `X-Forwarded-For` header:
 
 ```dotenv
 TRUST_PROXY=10.1.2.1
-UPLOAD_ALLOWED_IPS=loopback,10.1.2.0/24
+API_ALLOWED_IPS=loopback,10.1.2.0/24
 ```
 
-Upload API protected by basic authentication with username `rico` and password
+API protected by basic authentication with username `rico` and password
 `kaboom`, and username `kowalski` and password `candy-canes`:
 
 ```dotenv
-UPLOAD_BASIC_AUTH=rico:kaboom, kowalski:candy-canes
+API_BASIC_AUTH=rico:kaboom, kowalski:candy-canes
+```
+
+API protected by a bearer token (for example, generated at
+https://1password.com/password-generator and used by the MCP client):
+
+```dotenv
+API_BEARER_AUTH=s3cret-token-abcdef0123456789
 ```
 
 Use different field for POST uploads, e.g. `file`:

@@ -7,7 +7,7 @@ export function enablingMiddleware(enabled: boolean, disabledMessage: string): R
         if (enabled) {
             next();
         } else {
-            sendErrorResponse(res, 503, disabledMessage, { 'Retry-After': '3600' });
+            sendErrorResponse(res, 503, disabledMessage);
         }
     }
 }

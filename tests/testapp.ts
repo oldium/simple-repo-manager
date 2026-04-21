@@ -26,6 +26,7 @@ export default async function createTestApp(partialConfig?: DeepPartial<AppConfi
         upload: {
             allowedIps: undefined,
             basicAuth: undefined,
+            bearerAuth: undefined,
             sizeLimit: undefined,
             postField: "package",
             ...partialConfig?.upload,

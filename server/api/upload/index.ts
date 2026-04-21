@@ -28,7 +28,7 @@ export default function router(config: AppConfig) {
 
     router.use(logResponseMiddleware());
 
-    const auth = authMiddleware(config.upload.allowedIps, config.upload.basicAuth);
+    const auth = authMiddleware(config.upload.allowedIps, config.upload.basicAuth, config.upload.bearerAuth);
     if (auth.length > 0) {
         router.use(...auth);
     }

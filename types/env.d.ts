@@ -48,6 +48,10 @@ declare namespace NodeJS {
         GPG_PUBLIC_KEYS_FILE?: string;
         GPG_PUBLIC_KEYS_DIR?: string;
 
+        API_ALLOWED_IPS?: string;
+        API_BASIC_AUTH?: string;
+        API_BEARER_AUTH?: string;
+
         UPLOAD_ALLOWED_IPS?: string;
         UPLOAD_BASIC_AUTH?: string;
         UPLOAD_SIZE_LIMIT?: string;

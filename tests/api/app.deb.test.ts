@@ -66,6 +66,8 @@ describe('Test Debian file upload', () => {
             [{ name: 'test.deb', content: contentFile }]);
 
         expect(res.status).toBe(503);
+        expect(res.headers["retry-after"]).toBeUndefined();
+        expect(res.body.message).toEqual(expect.any(String));
 
         const expectedFilePath = path.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main', 'test.deb');
         expect(expectedFilePath).not.toPathExist();
@@ -314,6 +316,8 @@ describe('Test Debian file upload', () => {
 
         const res = await uploadFileByPut(app, testFilePath, testContent);
         expect(res.status).toBe(503);
+        expect(res.headers["retry-after"]).toBeUndefined();
+        expect(res.body.message).toEqual(expect.any(String));
 
         const expectedFilePath = path.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main',
             'clevis_21-1+tpm1u8+deb12.dsc');

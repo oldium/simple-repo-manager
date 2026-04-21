@@ -246,3 +246,27 @@ export async function enumerateRemovalTargets(
     }
     return targets;
 }
+
+export type RpmSourcePackage = { source: string; version: string };
+
+export async function listSourcePackages(
+    paths: Paths,
+    distro: string,
+    release: string,
+    source: string | undefined
+): Promise<RpmSourcePackage[]> {
+    const releaseDir = path.join(paths.repoDir, "rpm", distro, release);
+    if (!await fsExtra.pathExists(releaseDir)) return [];
+
+    const seen = new Map<string, RpmSourcePackage>();
+    for await (const pkg of streamPackages(releaseDir)) {
+        if (pkg.arch !== "src") continue;
+        if (source !== undefined && pkg.name !== source) continue;
+        const version = `${ pkg.ver }-${ pkg.rel }`;
+        const key = `${ pkg.name }|${ version }`;
+        if (!seen.has(key)) {
+            seen.set(key, { source: pkg.name, version });
+        }
+    }
+    return Array.from(seen.values());
+}

@@ -67,6 +67,8 @@ describe('Test RedHat file upload', () => {
         const res = await uploadFileByPost(app, '/api/v1/upload/rpm/fedora/41', [{ name: 'test.rpm', content: contentFile }]);
 
         expect(res.status).toBe(503);
+        expect(res.headers["retry-after"]).toBeUndefined();
+        expect(res.body.message).toEqual(expect.any(String));
 
         const expectedFilePath = osPath.join('incoming', 'staging', 'rpm', 'fedora', '41', 'test.rpm');
         expect(expectedFilePath).not.toPathExist();
@@ -205,6 +207,8 @@ describe('Test RedHat file upload', () => {
 
         const res = await uploadFileByPut(app, testFilePath, testContent);
         expect(res.status).toBe(503);
+        expect(res.headers["retry-after"]).toBeUndefined();
+        expect(res.body.message).toEqual(expect.any(String));
 
         const expectedFilePath = osPath.join('incoming', 'staging', 'rpm', 'fedora', '41', 'test.put.rpm');
         expect(expectedFilePath).not.toPathExist();

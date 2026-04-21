@@ -1,4 +1,9 @@
-import { GraphemeScanner, JsonRepairError, repairInvalidJsonObject } from "../../server/lib/json.ts";
+import {
+    GraphemeScanner,
+    JsonRepairError,
+    parseHumanJsonArray,
+    parseHumanJsonObject,
+} from "../../server/lib/json.ts";
 
 describe("Tests for GraphemeScanner", () => {
     test("Scans graphemes with UTF-16 indices and columns", () => {
@@ -148,76 +153,76 @@ describe("Tests for GraphemeScanner", () => {
     });
 });
 
-describe("Tests for repairInvalidJsonObject", () => {
+describe("Tests for parseHumanJsonObject", () => {
     test("Repairs quoted JSON and normalizes output", () => {
-        const result = repairInvalidJsonObject('{ "a": "b", "c": "d" }');
+        const result = parseHumanJsonObject('{ "a": "b", "c": "d" }');
         expect(result.json).toBe("{\"a\":\"b\",\"c\":\"d\"}");
         expect(result.value).toEqual({ a: "b", c: "d" });
     });
 
     test("Repairs unquoted input with optional braces and trims trailing whitespace", () => {
         const input = "a: hello world   \r\n  b: spaced   value  ";
-        const result = repairInvalidJsonObject(input);
+        const result = parseHumanJsonObject(input);
         expect(result.json).toBe("{\"a\":\"hello world\",\"b\":\"spaced   value\"}");
         expect(result.value).toEqual({ a: "hello world", b: "spaced   value" });
     });
 
     test("Repairs mixed quoted/unquoted keys and values with commas", () => {
-        const result = repairInvalidJsonObject("{a: 1, \"b\": two}");
+        const result = parseHumanJsonObject("{a: 1, \"b\": two}");
         expect(result.json).toBe("{\"a\":\"1\",\"b\":\"two\"}");
         expect(result.value).toEqual({ a: "1", b: "two" });
     });
 
     test("Repairs unquoted keys and values with internal spaces", () => {
-        const result = repairInvalidJsonObject("{a 1: this one, b 2: that two}");
+        const result = parseHumanJsonObject("{a 1: this one, b 2: that two}");
         expect(result.json).toBe("{\"a 1\":\"this one\",\"b 2\":\"that two\"}");
         expect(result.value).toEqual({ "a 1": "this one", "b 2": "that two" });
     })
 
     test("Ignores newlines everywhere with quoted keys and values", () => {
-        const result = repairInvalidJsonObject("\n{\n\"a\"\n:\n\"b\"\n}\n");
+        const result = parseHumanJsonObject("\n{\n\"a\"\n:\n\"b\"\n}\n");
         expect(result.json).toBe("{\"a\":\"b\"}");
         expect(result.value).toEqual({ a: "b" });
     });
 
     test("Ignores trailing commas", () => {
-        const result = repairInvalidJsonObject("{a: 1, b: 2,}");
+        const result = parseHumanJsonObject("{a: 1, b: 2,}");
         expect(result.json).toBe("{\"a\":\"1\",\"b\":\"2\"}");
         expect(result.value).toEqual({ a: "1", b: "2" });
     });
 
     test("Ignores trailing commas with quoted keys and values", () => {
-        const result = repairInvalidJsonObject("{\"a\": \"1\", \"b\": \"2\",}");
+        const result = parseHumanJsonObject("{\"a\": \"1\", \"b\": \"2\",}");
         expect(result.json).toBe("{\"a\":\"1\",\"b\":\"2\"}");
         expect(result.value).toEqual({ a: "1", b: "2" });
     });
 
     test("Ignores leading commas", () => {
-        const result = repairInvalidJsonObject("{,a: 1, b: 2}");
+        const result = parseHumanJsonObject("{,a: 1, b: 2}");
         expect(result.json).toBe("{\"a\":\"1\",\"b\":\"2\"}");
         expect(result.value).toEqual({ a: "1", b: "2" });
     });
 
     test("Ignores multiple leading and trailing commas", () => {
-        const result = repairInvalidJsonObject("{,,a: 1, b: 2,,}");
+        const result = parseHumanJsonObject("{,,a: 1, b: 2,,}");
         expect(result.json).toBe("{\"a\":\"1\",\"b\":\"2\"}");
         expect(result.value).toEqual({ a: "1", b: "2" });
     })
 
     test("Treats newlines as separators between entries", () => {
-        const result = repairInvalidJsonObject("a: 1\nb:2\n");
+        const result = parseHumanJsonObject("a: 1\nb:2\n");
         expect(result.json).toBe("{\"a\":\"1\",\"b\":\"2\"}");
         expect(result.value).toEqual({ a: "1", b: "2" });
     });
 
     test("Ignores newlines after colon", () => {
-        const result = repairInvalidJsonObject("a: \n 1\nb:\n2\n");
+        const result = parseHumanJsonObject("a: \n 1\nb:\n2\n");
         expect(result.json).toBe("{\"a\":\"1\",\"b\":\"2\"}");
         expect(result.value).toEqual({ a: "1", b: "2" });
     });
 
     test("Handles special characters in unquoted keys and values", () => {
-        const result = repairInvalidJsonObject("key\\\"\\r\\n'\\'`\": value\\\"\\r\\n'\\'`\"");
+        const result = parseHumanJsonObject("key\\\"\\r\\n'\\'`\": value\\\"\\r\\n'\\'`\"");
         expect(result.json).toBe("{\"key\\\\\\\"\\\\r\\\\n'\\\\'`\\\"\":\"value\\\\\\\"\\\\r\\\\n'\\\\'`\\\"\"}");
         expect(result.value).toEqual({ "key\\\"\\r\\n'\\'`\"": "value\\\"\\r\\n'\\'`\"" });
     });
@@ -225,7 +230,7 @@ describe("Tests for repairInvalidJsonObject", () => {
     test("Reports position for missing colon after unquoted key", () => {
         let err: JsonRepairError | null = null;
         try {
-            repairInvalidJsonObject("a\nb: 1");
+            parseHumanJsonObject("a\nb: 1");
         } catch (error) {
             err = error as JsonRepairError;
         }
@@ -236,31 +241,31 @@ describe("Tests for repairInvalidJsonObject", () => {
     });
 
     test("Returns empty object for empty input", () => {
-        const result = repairInvalidJsonObject("");
+        const result = parseHumanJsonObject("");
         expect(result.json).toBe("{}");
         expect(result.value).toEqual({});
     });
 
     test("Returns empty object for empty braces", () => {
-        const result = repairInvalidJsonObject("{}");
+        const result = parseHumanJsonObject("{}");
         expect(result.json).toBe("{}");
         expect(result.value).toEqual({});
     });
 
     test("Returns empty object for empty braces with white-spaces around", () => {
-        const result = repairInvalidJsonObject(" {} ");
+        const result = parseHumanJsonObject(" {} ");
         expect(result.json).toBe("{}");
         expect(result.value).toEqual({});
     });
 
     test("Returns empty object for empty braces with white-spaces everywhere", () => {
-        const result = repairInvalidJsonObject(" { } ");
+        const result = parseHumanJsonObject(" { } ");
         expect(result.json).toBe("{}");
         expect(result.value).toEqual({});
     });
 
     test("Returns empty object for white-spaces-only input", () => {
-        const result = repairInvalidJsonObject("   ");
+        const result = parseHumanJsonObject("   ");
         expect(result.json).toBe("{}");
         expect(result.value).toEqual({});
     });
@@ -268,7 +273,7 @@ describe("Tests for repairInvalidJsonObject", () => {
     test("Reports position for unexpected text after closing brace", () => {
         let err: JsonRepairError | null = null;
         try {
-            repairInvalidJsonObject("{a: 1} b");
+            parseHumanJsonObject("{a: 1} b");
         } catch (error) {
             err = error as JsonRepairError;
         }
@@ -280,7 +285,7 @@ describe("Tests for repairInvalidJsonObject", () => {
     test("Reports error for key without a value", () => {
         let err: JsonRepairError | null = null;
         try {
-            repairInvalidJsonObject("{a:}");
+            parseHumanJsonObject("{a:}");
         } catch (error) {
             err = error as JsonRepairError;
         }
@@ -292,7 +297,7 @@ describe("Tests for repairInvalidJsonObject", () => {
     test("Reports error for characters after quoted value", () => {
         let err: JsonRepairError | null = null;
         try {
-            repairInvalidJsonObject("{a:\"b\"c}");
+            parseHumanJsonObject("{a:\"b\"c}");
         } catch (error) {
             err = error as JsonRepairError;
         }
@@ -316,8 +321,52 @@ describe("Tests for repairInvalidJsonObject", () => {
             expected: { upload: "my \"secret:,password\\;", "upload 2": "other password" }
         },
     ])("Check that env.example value $index is correctly parsed", ({ test, expected }) => {
-        const result = repairInvalidJsonObject(test);
+        const result = parseHumanJsonObject(test);
         expect(result.json).toBe(JSON.stringify(expected));
         expect(result.value).toEqual(expected);
+    });
+});
+
+describe("Tests for parseHumanJsonArray", () => {
+    test("Parses a bracketed JSON array of quoted strings", () => {
+        const result = parseHumanJsonArray('["alpha","beta","gamma"]');
+        expect(result.value).toEqual(["alpha", "beta", "gamma"]);
+        expect(result.json).toBe('["alpha","beta","gamma"]');
+    });
+
+    test("Parses an unbracketed comma-separated list", () => {
+        const result = parseHumanJsonArray("alpha, beta, gamma");
+        expect(result.value).toEqual(["alpha", "beta", "gamma"]);
+        expect(result.json).toBe('["alpha","beta","gamma"]');
+    });
+
+    test("Accepts quoted values with escapes", () => {
+        const result = parseHumanJsonArray('"a\\"b","c\\nd"');
+        expect(result.value).toEqual(['a"b', "c\nd"]);
+    });
+
+    test("Empty input yields an empty array", () => {
+        const result = parseHumanJsonArray("");
+        expect(result.value).toEqual([]);
+        expect(result.json).toBe("[]");
+    });
+
+    test("Reports line/column on error", () => {
+        try {
+            parseHumanJsonArray('["unterminated');
+            throw new Error("expected throw");
+        } catch (err) {
+            expect(err).toBeInstanceOf(JsonRepairError);
+            expect((err as JsonRepairError).line).toBe(1);
+            expect((err as JsonRepairError).column).toBeGreaterThan(0);
+        }
+    });
+
+    test("Treats a brace-wrapped input as a single unquoted array element", () => {
+        // The parser does not validate top-level kind against the input: when array
+        // mode sees no leading '[', it reads unquoted values until a comma/newline/EOF,
+        // so `{a: 1}` is captured as one string element rather than throwing.
+        const result = parseHumanJsonArray("{a: 1}");
+        expect(result.value).toEqual(["{a: 1}"]);
     });
 });
