@@ -1,4 +1,5 @@
 import "dotenv/config";
+import "./bootstrap.ts";
 import config from "./lib/config.ts";
 import createServer from './http/http_server.ts';
 import createApp from "./api/app.ts";
