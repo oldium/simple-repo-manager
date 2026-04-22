@@ -1,4 +1,5 @@
 import { describe, expect, test } from "@jest/globals";
+import dedent from "dedent";
 import osPath from "path";
 import fs from "node:fs/promises";
 import zlib from "node:zlib";
@@ -155,6 +156,40 @@ describe("streamPackages", () => {
             collected.push(pkg);
         }
         expect(collected).toEqual([]);
+    }));
+
+    test("unescapes XML entities in captured fields", withLocalTmpDir(async () => {
+        // Contrived but valid: entities in every extracted field.
+        // &amp;/&lt;/&gt;/&quot;/&apos; plus numeric char refs (&#45; = '-').
+        const xml = dedent`\
+            <?xml version="1.0" encoding="UTF-8"?>
+            <metadata xmlns="http://linux.duke.edu/metadata/common" xmlns:rpm="http://linux.duke.edu/metadata/rpm" packages="1">
+              <package type="rpm">
+                <name>a&amp;b&lt;c&gt;d</name>
+                <arch>x86_64</arch>
+                <version epoch="0" ver="1&amp;2" rel="r&#45;1"/>
+                <location href="Packages/a/a&amp;b-1&amp;2-r&#45;1.x86_64.rpm"/>
+                <format>
+                  <rpm:sourcerpm>a&amp;b-1&amp;2-r&#45;1.src.rpm</rpm:sourcerpm>
+                </format>
+              </package>
+            </metadata>\n
+        `;
+        await writeCompressedPrimary(".", "zst", xml);
+
+        const collected: unknown[] = [];
+        for await (const pkg of streamPackages(".")) {
+            collected.push(pkg);
+        }
+
+        expect(collected).toEqual([{
+            name: "a&b<c>d",
+            arch: "x86_64",
+            ver: "1&2",
+            rel: "r-1",
+            href: "Packages/a/a&b-1&2-r-1.x86_64.rpm",
+            sourcerpm: "a&b-1&2-r-1.src.rpm",
+        }]);
     }));
 
     test("surfaces truncated primary.xml as an error", withLocalTmpDir(async () => {
