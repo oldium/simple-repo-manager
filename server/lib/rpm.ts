@@ -11,8 +11,16 @@ import type { Repository } from "./repo.ts";
 import logger from "./logger.ts";
 import { matchesSourceIdentity, sourceIdentityOf, streamPackages } from "./rpm-metadata.ts";
 import type { PackageInfo } from "./rpm-metadata.ts";
+import type { RepoFile } from "./repo-types.ts";
 
 export type RpmVersionFilter = string | { any: true };
+
+// Canonical RPM package layout: Packages/<first-character-of-filename>/<filename>.
+// Used for both import-time placement and listing/removal path resolution so
+// there's one source of truth for the layout.
+function packageRelPath(filename: string): string {
+    return path.join("Packages", filename[0], filename);
+}
 
 function isAnyVersion(v: RpmVersionFilter): v is { any: true } {
     return typeof v !== "string";
@@ -90,13 +98,13 @@ export default async function processIncoming(paths: Paths, gpg: Gpg): Promise<R
         }
         for (const [directory, rpmFiles] of Object.entries(rpmMap)) {
             const targetBaseDir = path.join(rpmRepoDir, directory);
-            const targetPackageRootDir = path.join(targetBaseDir, "Packages");
             for (const rpmFile of rpmFiles) {
-                const targetPackageDir = path.join(targetPackageRootDir, path.basename(rpmFile)[0]);
-                await fsExtra.ensureDir(targetPackageDir);
+                const filename = path.basename(rpmFile);
+                const targetPath = path.join(targetBaseDir, packageRelPath(filename));
+                await fsExtra.ensureDir(path.dirname(targetPath));
                 await fsExtra.move(
                     path.join(incomingRpmRoot, rpmFile),
-                    path.join(targetPackageDir, path.basename(rpmFile)),
+                    targetPath,
                     { overwrite: true });
             }
             result[`rpm/${ directory }`] = await exec(paths.createrepoScript, targetBaseDir, paths.signScript ?? "");
@@ -126,15 +134,17 @@ export type RpmRemovalResult =
     | { notFound: true }
     | { notFound: false; files: RpmRemovalFile[]; action?: ActionResult };
 
-export async function removePackage(
+export type RpmListResult =
+    | { notFound: true }
+    | { notFound: false; files: RepoFile[] };
+
+export async function listPackageFiles(
     paths: Paths,
     distro: string,
     release: string,
     source: string,
     version: RpmVersionFilter
-): Promise<RpmRemovalResult> {
-    assert(paths.createrepoScript, "createrepoScript is not available");
-
+): Promise<RpmListResult> {
     const releaseDir = path.join(paths.repoDir, "rpm", distro, release);
     if (!await fsExtra.pathExists(releaseDir)) {
         return { notFound: true };
@@ -154,9 +164,6 @@ export async function removePackage(
             }
             actualSources.push(pkg);
         } else {
-            // Candidate binary if its sourcerpm looks like it could belong
-            // to `source`. We over-match (e.g. clevis-tang-…src.rpm is a
-            // candidate when source="clevis") and filter after the stream.
             if (!pkg.sourcerpm.startsWith(`${ source }-`)) continue;
             if (!pkg.sourcerpm.endsWith(".src.rpm")) continue;
             const list = candidatesBySourcerpm.get(pkg.sourcerpm) ?? [];
@@ -171,11 +178,13 @@ export async function removePackage(
         if (identity) actualSourcerpms.add(identity);
     }
 
-    const matched: { href: string; filename: string }[] = [];
-    const seenLetterDirs = new Set<string>();
+    const files: RepoFile[] = [];
     const collect = (pkg: PackageInfo) => {
-        matched.push({ href: pkg.href, filename: path.basename(pkg.href) });
-        seenLetterDirs.add(path.dirname(pkg.href));
+        const filename = path.basename(pkg.href);
+        files.push({
+            filename,
+            path: path.join("rpm", distro, release, packageRelPath(filename)),
+        });
     };
 
     for (const src of actualSources) collect(src);
@@ -184,27 +193,40 @@ export async function removePackage(
         for (const bin of bins) collect(bin);
     }
 
+    return { notFound: false, files };
+}
+
+export async function removePackage(
+    paths: Paths,
+    distro: string,
+    release: string,
+    source: string,
+    version: RpmVersionFilter
+): Promise<RpmRemovalResult> {
+    assert(paths.createrepoScript, "createrepoScript is not available");
+
+    const list = await listPackageFiles(paths, distro, release, source, version);
+    if (list.notFound) return { notFound: true };
+    const matched = list.files;
+
     if (matched.length === 0) {
         return { notFound: false, files: [] };
     }
 
+    const releaseDir = path.join(paths.repoDir, "rpm", distro, release);
     const files: RpmRemovalFile[] = [];
+    const seenLetterDirs = new Set<string>();
+
     for (const hit of matched) {
-        const absPath = path.join(releaseDir, hit.href);
+        const relPath = packageRelPath(hit.filename);
+        const absPath = path.join(releaseDir, relPath);
+        seenLetterDirs.add(path.dirname(relPath));
         try {
             await fs.unlink(absPath);
-            files.push({
-                filename: hit.filename,
-                status: "ok",
-                path: path.join("rpm", distro, release, hit.href)
-            });
+            files.push({ filename: hit.filename, status: "ok", path: hit.path });
         } catch (err) {
             logger.warn(`Failed to remove ${ absPath }`, { err });
-            files.push({
-                filename: hit.filename,
-                status: "failed",
-                path: path.join("rpm", distro, release, hit.href)
-            });
+            files.push({ filename: hit.filename, status: "failed", path: hit.path });
         }
     }
 

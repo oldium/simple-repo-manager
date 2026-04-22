@@ -23,6 +23,19 @@ export function sendRepoResponse(res: Response, status: number, message: string)
     res.status(status).json({ ...getResponseCorrelationId(status), message });
 }
 
+export type ListFileResponse = {
+    filename: string;
+    path: string;
+    downloadUrl: string;
+};
+
+export function sendListResponse(res: Response, status: number, message: string,
+    files: ListFileResponse[], touchedTargets: number) {
+    res.status(status).json({
+        ...getResponseCorrelationId(status), message, files, touchedTargets,
+    });
+}
+
 export function sendErrorResponse(res: Response, status: number, message: string | undefined,
     headers?: Record<string, string>) {
     res.status(status);

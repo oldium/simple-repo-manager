@@ -2,6 +2,7 @@ import type { Gpg, Paths, UploadOptions } from "./config.ts";
 import {
     default as processIncomingDeb,
     enumerateRemovalTargets as enumerateDebTargets,
+    listPackageFiles as listDebFiles,
     listSourcePackages as listDebSources,
     removePackage as removeDebPackage,
     type DebVersionFilter,
@@ -9,6 +10,7 @@ import {
 import {
     default as processIncomingRpm,
     enumerateRemovalTargets as enumerateRpmTargets,
+    listPackageFiles as listRpmFiles,
     listSourcePackages as listRpmSources,
     removePackage as removeRpmPackage,
     type RpmVersionFilter,
@@ -19,9 +21,10 @@ import { getCorrelationId } from "./logger.ts";
 import { RepoInternalError, RepoNotFoundError, RepoServiceUnavailableError, RepoValidationError } from "./errors.ts";
 import { validateDistro, validateFilename } from "./validations.ts";
 import osPath from "path";
-import type { RemovalFile } from "./repo-types.ts";
+import type { RemovalFile, RepoFile } from "./repo-types.ts";
+import type { ActionResult } from "./exec.ts";
 
-export type { RemovalFile } from "./repo-types.ts";
+export type { RemovalFile, RepoFile } from "./repo-types.ts";
 
 export type Format = "deb" | "rpm";
 
@@ -67,6 +70,19 @@ export interface RemovalFilter {
 
 export interface RemovalResult {
     files: RemovalFile[];
+    touchedTargets: number;
+}
+
+export interface ListFilesFilter {
+    format?: Format;
+    distribution?: string;
+    release?: string;
+    source: string;
+    version?: string;
+}
+
+export interface ListFilesResult {
+    files: RepoFile[];
     touchedTargets: number;
 }
 
@@ -241,6 +257,83 @@ export class RepoService {
             }
             return { ok: false, correlationId: getCorrelationId() };
         });
+    }
+
+    public async listPackageFiles(filter: ListFilesFilter): Promise<ListFilesResult> {
+        if (filter.format !== undefined && !isFormat(filter.format)) {
+            throw new RepoValidationError(`Unknown format '${ filter.format }'`);
+        }
+        if (!filter.source) {
+            throw new RepoValidationError("source is required");
+        }
+        const wantDeb = (!filter.format || filter.format === "deb") && this.upload.enabledApi.deb;
+        const wantRpm = (!filter.format || filter.format === "rpm") && this.upload.enabledApi.rpm;
+        if (!wantDeb && !wantRpm) {
+            if (filter.format) {
+                throw new RepoServiceUnavailableError(
+                    `Repository tool for ${ filter.format } is not available`,
+                    { format: filter.format }
+                );
+            }
+            throw new RepoServiceUnavailableError("No repository tool available");
+        }
+
+        type LockOutcome =
+            | { kind: "ok"; files: RepoFile[]; touchedTargets: number }
+            | { kind: "notFound"; key: string }
+            | { kind: "failed"; target: string };
+
+        const outcome = await lock.forExecOnce<LockOutcome>(async () => {
+            const versionFilter: DebVersionFilter | RpmVersionFilter =
+                filter.version === undefined ? { any: true } : filter.version;
+
+            type EnumeratedTarget = { format: Format; distribution: string; release: string };
+            const targets: EnumeratedTarget[] = [];
+            if (wantDeb) {
+                const debTargets = await enumerateDebTargets(this.paths, filter.distribution, filter.release);
+                for (const t of debTargets) targets.push({ format: "deb", ...t });
+            }
+            if (wantRpm) {
+                const rpmTargets = await enumerateRpmTargets(this.paths, filter.distribution, filter.release);
+                for (const t of rpmTargets) targets.push({ format: "rpm", ...t });
+            }
+
+            if (targets.length === 0 && (filter.distribution !== undefined || filter.release !== undefined)) {
+                return {
+                    kind: "notFound",
+                    key: `${ filter.format ?? "-" }/${ filter.distribution ?? "-" }/${ filter.release ?? "-" }`,
+                };
+            }
+
+            const files: RepoFile[] = [];
+            let touchedTargets = 0;
+
+            for (const t of targets) {
+                const result = t.format === "rpm"
+                    ? await listRpmFiles(this.paths, t.distribution, t.release, filter.source, versionFilter)
+                    : await listDebFiles(this.paths, t.distribution, t.release, filter.source, versionFilter);
+                if (result.notFound === true) continue;
+                // deb lists carry `action` only when the listfilter exec itself failed.
+                // `in`-narrowing widens the property type to {}, so we reach for the
+                // known shape directly.
+                const listAction = (result as { action?: ActionResult }).action;
+                if (listAction && listAction.result !== "success") {
+                    return { kind: "failed", target: `${ t.format }/${ t.distribution }/${ t.release }` };
+                }
+                if (result.files.length > 0) touchedTargets++;
+                for (const f of result.files) files.push({ filename: f.filename, path: f.path });
+            }
+
+            return { kind: "ok", files, touchedTargets };
+        });
+
+        if (outcome.kind === "notFound") {
+            throw new RepoNotFoundError(`No such repository ${ outcome.key }`);
+        }
+        if (outcome.kind === "failed") {
+            throw new RepoInternalError(`Listing failed for ${ outcome.target }`);
+        }
+        return { files: outcome.files, touchedTargets: outcome.touchedTargets };
     }
 
     public async removePackage(filter: RemovalFilter): Promise<RemovalResult> {

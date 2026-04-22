@@ -1,5 +1,8 @@
-export interface RemovalFile {
+export interface RepoFile {
     filename: string;
-    status: "ok" | "failed";
     path: string;
+}
+
+export interface RemovalFile extends RepoFile {
+    status: "ok" | "failed";
 }

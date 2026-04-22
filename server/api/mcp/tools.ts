@@ -5,6 +5,7 @@ import { RepoService } from "../../lib/repo-service.ts";
 import { errorResult, successResult, type ToolResult } from "./mappers.ts";
 import { getUriNoQuery } from "../../lib/req.ts";
 import logger from "../../lib/logger.ts";
+import { mimeTypeFor } from "../../lib/mime.ts";
 
 export interface EnabledBackends {
     deb: boolean;
@@ -209,6 +210,64 @@ export function registerTools(
                 ? `No packages matched ${ input.source }.`
                 : `Removed ${ result.files.length } file(s) across ${ result.touchedTargets } release(s).`;
             return successResult(msg, { files: result.files, touchedTargets: result.touchedTargets });
+        } catch (err) {
+            return errorResult(err);
+        }
+    }));
+
+    server.registerTool("list_package_files", {
+        title: "List package files",
+        description: "List files belonging to a source package across one or many "
+            + "(format, distribution, release) triples. Each result includes a "
+            + "direct HTTPS download URL; fetch each downloadUrl with the same "
+            + "Authorization header the caller used. Use remove_package to delete instead.",
+        inputSchema: {
+            format: formatEnum.describe("Repository format filter. Omit to include all enabled backends.").optional(),
+            distribution: z.string().min(1).describe("Distribution name filter. Omit to match any.").optional(),
+            release: z.string().min(1).describe("Release name filter. Omit to match any.").optional(),
+            source: z.string().min(1).describe("Source package name."),
+            version: z.string().min(1).describe("Specific version to list. Omit to list every version.").optional(),
+        },
+    }, withLogging("list_package_files", async (input) => {
+        try {
+            const { files, touchedTargets } = await service.listPackageFiles(input);
+
+            const callerAuth = req.headers.authorization;
+            const fileEntries = files.map((f) => {
+                const downloadUrl = getUriNoQuery(req, "/" + f.path);
+                const entry: {
+                    filename: string;
+                    path: string;
+                    downloadUrl: string;
+                    method: "GET";
+                    headers?: { Authorization: string };
+                } = {
+                    filename: f.filename,
+                    path: f.path,
+                    downloadUrl,
+                    method: "GET",
+                };
+                if (callerAuth) entry.headers = { Authorization: callerAuth };
+                return entry;
+            });
+
+            const resourceLinks = files.map((f) => ({
+                type: "resource_link" as const,
+                uri: getUriNoQuery(req, "/" + f.path),
+                name: f.filename,
+                mimeType: mimeTypeFor(f.filename),
+            }));
+
+            const text = files.length === 0
+                ? `No packages matched ${ input.source }.`
+                : `Found ${ files.length } file(s) across ${ touchedTargets } release(s). `
+                + `GET each downloadUrl (same auth as this request) to fetch.`;
+
+            return {
+                isError: false,
+                content: [{ type: "text" as const, text }, ...resourceLinks],
+                structuredContent: { files: fileEntries, touchedTargets },
+            };
         } catch (err) {
             return errorResult(err);
         }

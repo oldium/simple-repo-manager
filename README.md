@@ -741,6 +741,61 @@ curl -u "<username>:<password>" -X DELETE \
   "https://my-repo.example.com/api/v1/repo/deb/debian/bookworm/clevis/21-1%2Btpm1u8%2Bdeb12"
 ```
 
+### Package Listing API
+
+To list the files belonging to a source package — the source package and
+every binary package built from it — issue a `GET` request against:
+
+```
+<scheme>://<host>:<port>/api/v1/repo/rpm/<distribution>/<release>/<source-package>/<version>
+<scheme>://<host>:<port>/api/v1/repo/deb/<distribution>/<release>/<source-package>/<version>
+```
+
+The path semantics mirror the [Package Removal API](#package-removal-api):
+`<format>`, `<distribution>`, `<release>`, and `<version>` each accept the
+single token `-` as a "match any" wildcard (using `-` in the `<format>`
+position matches both `deb` and `rpm`), the trailing `<version>` segment
+may be omitted entirely (treated as `-`), and `<source-package>` stays
+literal. `GET /api/v1/repo/-/-/-/<source>/-` lists the source from every
+configured `(format, distribution, release)` triple, and
+`GET /api/v1/repo/<format>/<distribution>/<release>/<source>` (no version
+segment) is shorthand for
+`GET /api/v1/repo/<format>/<distribution>/<release>/<source>/-`.
+
+The response body is:
+
+```json
+{
+    "message": "Found 3 file(s) across 1 release(s)",
+    "touchedTargets": 1,
+    "files": [
+        {
+            "filename": "clevis_22-1+tpm1+deb12.dsc",
+            "path": "deb/debian/pool/main/c/clevis/clevis_22-1+tpm1+deb12.dsc",
+            "downloadUrl": "https://my-repo.example.com/deb/debian/pool/main/c/clevis/clevis_22-1+tpm1+deb12.dsc"
+        }
+    ]
+}
+```
+
+Each `downloadUrl` is an absolute URL on the same host that served the
+listing; `GET` it with the same authentication used for the listing
+request. `touchedTargets` counts the `(format, distribution, release)`
+triples that contributed at least one matching file.
+
+Status codes:
+
+* `200` — success, including the idempotent no-match case (returns an
+  empty `files` array). Wildcards that expand to zero configured
+  repositories also return 200.
+* `400` — invalid characters in any path segment. The allowed set is
+  the same as for the Package Removal API.
+* `404` — a **literal** `<distribution>` or `<release>` does not exist
+  as a configured repository. Wildcards in the same position never
+  produce 404.
+* `503` — the repository tool for the requested format is not
+  configured.
+
 ## MCP Server
 
 Simple Repo Manager exposes a Model Context Protocol endpoint at `POST /api/v1/mcp` using the official Streamable HTTP transport. The endpoint is stateless (no session IDs, no resumable streams) and requires the same authentication as the rest of the `/api/v1/*` tree.
@@ -806,6 +861,7 @@ droid mcp add simple-repo-manager \
 | `prepare_upload` | Return one PUT URL per filename. |
 | `import_repository` | Run the repository rebuild. |
 | `remove_package` | Remove a package across matching triples. |
+| `list_package_files` | List files belonging to a source package across matching triples, with per-file `downloadUrl` slots. |
 
 ### Upload flow
 

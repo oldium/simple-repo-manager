@@ -30,7 +30,7 @@ describe("MCP server", () => {
         expect(response.status).toBe(401);
     }));
 
-    test("tools/list returns the six tools when both backends enabled", withLocalTmpDir(async () => {
+    test("tools/list returns the seven tools when both backends enabled", withLocalTmpDir(async () => {
         const app = await createTestApp();
         const response = await request(app)
             .post("/api/v1/mcp")
@@ -41,6 +41,7 @@ describe("MCP server", () => {
         const names = response.body.result.tools.map((t: { name: string }) => t.name).sort();
         expect(names).toEqual([
             "import_repository",
+            "list_package_files",
             "list_repositories",
             "list_source_packages",
             "prepare_upload",
@@ -402,5 +403,125 @@ describe("MCP server", () => {
         expect(response.status).toBe(200);
         expect(response.body.result.instructions).toMatch(/rpm backend is disabled/);
         expect(response.body.result.serverInfo.description).toMatch(/Enabled backends: deb/);
+    }));
+
+    test("list_package_files returns resource_link blocks with https download URIs (rpm)", withLocalTmpDir(async () => {
+        jest.resetModules();
+        const actual = await import("../../server/lib/rpm-metadata.ts");
+        jest.unstable_mockModule("../../server/lib/rpm-metadata.ts", () => ({
+            __esModule: true,
+            ...actual,
+            streamPackages: jest.fn(async function* () {
+                yield { name: "clevis", arch: "src", ver: "21", rel: "1",
+                    href: "Packages/c/clevis-21-1.src.rpm", sourcerpm: "" };
+                yield { name: "clevis", arch: "x86_64", ver: "21", rel: "1",
+                    href: "Packages/c/clevis-21-1.x86_64.rpm",
+                    sourcerpm: "clevis-21-1.src.rpm" };
+            }),
+        }));
+        jest.resetModules();
+        await fsExtra.ensureDir(osPath.join("repo", "rpm", "fedora", "40", "repodata"));
+        await fs.writeFile(
+            osPath.join("repo", "rpm", "fedora", "40", "repodata", "repomd.xml"),
+            `<?xml version="1.0"?><repomd/>`);
+        const createTestApp = (await import("../testapp.ts")).default;
+        const app = await createTestApp();
+        const response = await request(app)
+            .post("/api/v1/mcp")
+            .set("Content-Type", "application/json")
+            .set("Accept", "application/json, text/event-stream")
+            .set("Authorization", "Bearer test-token")
+            .send(jsonRpc("tools/call", {
+                name: "list_package_files",
+                arguments: { format: "rpm", source: "clevis" },
+            }));
+        expect(response.status).toBe(200);
+        expect(response.body.result.isError).toBeFalsy();
+
+        const { files, touchedTargets } = response.body.result.structuredContent;
+        expect(touchedTargets).toBe(1);
+        expect(files).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                filename: "clevis-21-1.src.rpm",
+                path: "rpm/fedora/40/Packages/c/clevis-21-1.src.rpm",
+                downloadUrl: expect.stringMatching(/^https?:\/\/.+\/rpm\/fedora\/40\/Packages\/c\/clevis-21-1\.src\.rpm$/),
+                method: "GET",
+                headers: { Authorization: "Bearer test-token" },
+            }),
+        ]));
+
+        const links = response.body.result.content.filter(
+            (c: { type: string }) => c.type === "resource_link"
+        );
+        expect(links.length).toBe(files.length);
+        const srcLink = links.find((l: { name: string }) => l.name === "clevis-21-1.src.rpm");
+        expect(srcLink.uri).toMatch(/^https?:\/\/.+\/rpm\/fedora\/40\/Packages\/c\/clevis-21-1\.src\.rpm$/);
+        expect(srcLink.mimeType).toBe("application/x-rpm");
+
+        const binLink = links.find((l: { name: string }) => l.name === "clevis-21-1.x86_64.rpm");
+        expect(binLink.mimeType).toBe("application/x-rpm");
+    }));
+
+    test("list_package_files empty match returns isError:false and zero resource_links", withLocalTmpDir(async () => {
+        const app = await createTestApp();
+        const response = await request(app)
+            .post("/api/v1/mcp")
+            .set("Content-Type", "application/json")
+            .set("Accept", "application/json, text/event-stream")
+            .send(jsonRpc("tools/call", {
+                name: "list_package_files",
+                arguments: { source: "does-not-exist" },
+            }));
+        expect(response.status).toBe(200);
+        expect(response.body.result.isError).toBeFalsy();
+        expect(response.body.result.structuredContent.files).toEqual([]);
+        expect(response.body.result.structuredContent.touchedTargets).toBe(0);
+        expect(response.body.result.content.filter(
+            (c: { type: string }) => c.type === "resource_link"
+        )).toHaveLength(0);
+        expect(response.body.result.content[0].text).toMatch(/No packages matched does-not-exist/);
+    }));
+
+    test("list_package_files with explicit unknown distro is Not found", withLocalTmpDir(async () => {
+        const app = await createTestApp();
+        const response = await request(app)
+            .post("/api/v1/mcp")
+            .set("Content-Type", "application/json")
+            .set("Accept", "application/json, text/event-stream")
+            .send(jsonRpc("tools/call", {
+                name: "list_package_files",
+                arguments: { format: "rpm", distribution: "nope", release: "0", source: "clevis" },
+            }));
+        expect(response.status).toBe(200);
+        expect(response.body.result.isError).toBe(true);
+        expect(response.body.result.content[0].text).toMatch(/Not found/);
+    }));
+
+    test("list_package_files rejects empty source at schema layer", withLocalTmpDir(async () => {
+        const app = await createTestApp();
+        const response = await request(app)
+            .post("/api/v1/mcp")
+            .set("Content-Type", "application/json")
+            .set("Accept", "application/json, text/event-stream")
+            .send(jsonRpc("tools/call", {
+                name: "list_package_files",
+                arguments: { source: "" },
+            }));
+        expect(response.status).toBe(200);
+        const isRpcError = response.body.error !== undefined;
+        const isToolError = response.body.result?.isError === true;
+        expect(isRpcError || isToolError).toBe(true);
+    }));
+
+    test("list_package_files is absent when both backends disabled", withLocalTmpDir(async () => {
+        const app = await createTestApp({ upload: { enabledApi: { deb: false, rpm: false } } });
+        const response = await request(app)
+            .post("/api/v1/mcp")
+            .set("Content-Type", "application/json")
+            .set("Accept", "application/json, text/event-stream")
+            .send(jsonRpc("tools/list"));
+        expect(response.status).toBe(200);
+        const names = response.body.result.tools.map((t: { name: string }) => t.name);
+        expect(names).not.toContain("list_package_files");
     }));
 });

@@ -721,13 +721,17 @@ export async function repreproListFilterExec(repreproBin: string, confDir: strin
     return { ...result, stdout };
 }
 
-export async function removePackage(
+export type DebListResult =
+    | { notFound: true }
+    | { notFound: false; files: DebRemovalFile[]; action?: ActionResult };
+
+export async function listPackageFiles(
     paths: Paths,
     distro: string,
     release: string,
     source: string,
     version: VersionFilter
-): Promise<DebRemovalResult> {
+): Promise<DebListResult> {
     assert(paths.repreproBin, "repreproBin is not available");
 
     const distroMap = await readDistributions(paths.repoStateDir, distro, release);
@@ -744,10 +748,31 @@ export async function removePackage(
     }
 
     const files = listfilterToRemovalFiles(distro, source, listResult.stdout);
+    return { notFound: false, files };
+}
+
+export async function removePackage(
+    paths: Paths,
+    distro: string,
+    release: string,
+    source: string,
+    version: VersionFilter
+): Promise<DebRemovalResult> {
+    assert(paths.repreproBin, "repreproBin is not available");
+
+    const list = await listPackageFiles(paths, distro, release, source, version);
+    if (list.notFound) return { notFound: true };
+    if (list.action) {
+        return { notFound: false, files: list.files, action: list.action };
+    }
+    const files = list.files;
 
     if (files.length === 0) {
         return { notFound: false, files: [] };
     }
+
+    const confDir = path.join(paths.repoStateDir, `deb-${ distro }`, "conf");
+    const formula = buildRemoveFormulaForTarget(source, version);
 
     const removeResult = await repreproExec(paths.repreproBin, confDir,
         "--export=silent-never", "removefilter", release, formula);

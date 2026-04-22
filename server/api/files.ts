@@ -19,6 +19,7 @@ import parseurl from "parseurl";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Eta } from "eta";
 import { initEta, renderDistroConfigs } from "../lib/render.ts";
+import { mimeTypeFor } from "../lib/mime.ts";
 
 function filterHidden(): RequestHandler {
     return (req: Request, _res: Response, next: NextFunction) => {
@@ -137,9 +138,7 @@ function htmlTemplate(paths: Paths, gpg: Gpg, eta: Eta, cssFilePath: string, ico
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function enforceContentType(res: Response, filePath: string, _stat: unknown) {
-    if (["Release", "Packages"].includes(osPath.basename(filePath))) {
-        res.setHeader("Content-Type", "text/plain");
-    }
+    res.setHeader("Content-Type", mimeTypeFor(filePath));
 }
 
 function getPublicDir(environment: Environment) {

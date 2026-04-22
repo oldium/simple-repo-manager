@@ -366,3 +366,42 @@ describe("DELETE deb package", () => {
         expect(byArg("clearvanished")).toHaveLength(1);
     }));
 });
+
+describe("deb.listPackageFiles (direct)", () => {
+    test("returns the same files removePackage would produce", withLocalTmpDir(async () => {
+        const listfilterStdout =
+            "bookworm|main|source: clevis 21-1+tpm1u8+deb12\n" +
+            "bookworm|main|amd64: clevis 21-1+tpm1u8+deb12\n";
+        mockExecution(0, listfilterStdout, "", undefined, () => {});
+        await seedDistributionsConf();
+        const deb = await import("../../server/lib/deb.ts");
+        const result = await deb.listPackageFiles(
+            { incomingDir: "incoming", repoStateDir: "repo-state", repoDir: "repo", repreproBin: "reprepro" } as never,
+            "debian", "bookworm", "clevis", "21-1+tpm1u8+deb12"
+        );
+        expect(result).toEqual({
+            notFound: false,
+            files: expect.arrayContaining([
+                expect.objectContaining({
+                    filename: "clevis_21-1+tpm1u8+deb12.dsc",
+                    status: "ok",
+                    path: "deb/debian/pool/main/c/clevis/clevis_21-1+tpm1u8+deb12.dsc",
+                }),
+                expect.objectContaining({
+                    filename: "clevis_21-1+tpm1u8+deb12_amd64.deb",
+                    status: "ok",
+                    path: "deb/debian/pool/main/c/clevis/clevis_21-1+tpm1u8+deb12_amd64.deb",
+                }),
+            ]),
+        });
+    }));
+
+    test("returns notFound when distro is absent", withLocalTmpDir(async () => {
+        const deb = await import("../../server/lib/deb.ts");
+        const result = await deb.listPackageFiles(
+            { incomingDir: "incoming", repoStateDir: "repo-state", repoDir: "repo", repreproBin: "reprepro" } as never,
+            "debian", "bookworm", "clevis", { any: true }
+        );
+        expect(result).toEqual({ notFound: true });
+    }));
+});

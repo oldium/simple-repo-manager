@@ -2,7 +2,8 @@ import type { Gpg, Paths, UploadOptions } from "../lib/config.ts";
 import type { Request, RequestHandler, Response } from "express";
 import type { LoggedResponse } from "../lib/logger.ts";
 import logger from "../lib/logger.ts";
-import { sendErrorResponse, sendRepoResponse, sendUploadResponse } from "../lib/res.ts";
+import { sendErrorResponse, sendListResponse, sendRepoResponse, sendUploadResponse } from "../lib/res.ts";
+import { getUriNoQuery } from "../lib/req.ts";
 import {
     isAnyWildcard,
     validatePackageIdentifier,
@@ -39,6 +40,67 @@ class RepoHandler {
 
     public removeMiddleware(): RequestHandler<ParamsDictionary & RemoveParams> {
         return this.removeHandler.bind(this);
+    }
+
+    public listMiddleware(): RequestHandler<ParamsDictionary & RemoveParams> {
+        return this.listHandler.bind(this);
+    }
+
+    private async listHandler(req: Request<ParamsDictionary & RemoveParams>, res: Response): Promise<void> {
+        const { format, distribution, release, source, version } = req.params;
+
+        if (!validateWildcardOrIdentifier(format) || (format !== "-" && format !== "deb" && format !== "rpm")) {
+            return sendErrorResponse(res, 404, "Unknown repository format");
+        }
+        if (!validateWildcardOrIdentifier(distribution)
+            || !validateWildcardOrIdentifier(release)
+            || !validatePackageIdentifier(source)
+            || (version !== undefined && !validateWildcardOrIdentifier(version))) {
+            return sendErrorResponse(res, 400, "Invalid characters in path segment");
+        }
+
+        const formatArg = isAnyWildcard(format) ? undefined : (format as "deb" | "rpm");
+        const distroArg = isAnyWildcard(distribution) ? undefined : distribution;
+        const releaseArg = isAnyWildcard(release) ? undefined : release;
+        const versionArg = version === undefined || isAnyWildcard(version) ? undefined : version;
+
+        try {
+            const result = await this.service.listPackageFiles({
+                format: formatArg,
+                distribution: distroArg,
+                release: releaseArg,
+                source,
+                version: versionArg,
+            });
+            const versionLabel = version ?? "-";
+            const msg = result.files.length === 0
+                ? `No packages matched ${ source }/${ versionLabel } in ${ format }/${ distribution }/${ release }`
+                : `Found ${ result.files.length } file(s) across ${ result.touchedTargets } release(s)`;
+            const files = result.files.map(f => ({
+                filename: f.filename,
+                path: f.path,
+                downloadUrl: getUriNoQuery(req, "/" + f.path),
+            }));
+            return sendListResponse(res, 200, msg, files, result.touchedTargets);
+        } catch (err) {
+            if (err instanceof RepoValidationError) {
+                return sendErrorResponse(res, 400, err.message);
+            }
+            if (err instanceof RepoNotFoundError) {
+                return sendErrorResponse(res, 404, err.message);
+            }
+            if (err instanceof RepoServiceUnavailableError) {
+                return sendErrorResponse(res, 503, err.message);
+            }
+            if (err instanceof RepoInternalError) {
+                logger.error("Listing target failed:", { err });
+                return sendErrorResponse(res, 500, `${ err.message }. See server logs for details`);
+            }
+            logger.error("Error during package listing:", { err });
+            if (!res.headersSent) {
+                sendErrorResponse(res, 500, "Package listing failed. See server logs for details");
+            }
+        }
     }
 
     private async importHandler(_req: Request, res: LoggedResponse): Promise<void> {
@@ -125,7 +187,12 @@ function removeMiddleware(paths: Paths, gpg: Gpg, upload: UploadOptions) {
     return new RepoHandler(paths, gpg, upload).removeMiddleware();
 }
 
+function listMiddleware(paths: Paths, gpg: Gpg, upload: UploadOptions) {
+    return new RepoHandler(paths, gpg, upload).listMiddleware();
+}
+
 export default {
     post: importMiddleware,
     remove: removeMiddleware,
+    list: listMiddleware,
 };

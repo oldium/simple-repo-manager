@@ -53,6 +53,10 @@ export default function router(config: AppConfig) {
         repo.remove(config.paths, config.gpg, config.upload));
     v1.delete('/repo/:format/:distribution/:release/:source',
         repo.remove(config.paths, config.gpg, config.upload));
+    v1.get('/repo/:format/:distribution/:release/:source/:version',
+        repo.list(config.paths, config.gpg, config.upload));
+    v1.get('/repo/:format/:distribution/:release/:source',
+        repo.list(config.paths, config.gpg, config.upload));
     v1.use('/mcp', mcpRouter(config));
 
     router.all('/', unknownApiMiddleware());

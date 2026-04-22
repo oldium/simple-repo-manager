@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import fs_ from "node:fs";
+import path from "node:path/posix";
 import osPath from "path";
 import sax from "sax";
 import zlib from "node:zlib";
@@ -160,7 +161,7 @@ export async function* streamPackages(releaseDir: string): AsyncGenerator<Packag
 
 export function sourceIdentityOf(pkg: PackageInfo): string | null {
     if (pkg.arch === "src") {
-        return `${ pkg.name }-${ pkg.ver }-${ pkg.rel }.src.rpm`;
+        return path.basename(pkg.href);
     }
     return pkg.sourcerpm !== "" ? pkg.sourcerpm : null;
 }

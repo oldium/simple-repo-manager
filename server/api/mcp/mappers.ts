@@ -6,9 +6,18 @@ import {
 } from "../../lib/errors.ts";
 
 export type ToolTextContent = { type: "text"; text: string };
+export type ToolResourceLinkContent = {
+    type: "resource_link";
+    uri: string;
+    name: string;
+    mimeType?: string;
+    description?: string;
+    size?: number;
+};
+export type ToolContent = ToolTextContent | ToolResourceLinkContent;
 export type ToolResult<T extends object | undefined = undefined> = {
     isError?: boolean;
-    content: ToolTextContent[];
+    content: ToolContent[];
     structuredContent?: T;
 };
 
