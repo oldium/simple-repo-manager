@@ -248,7 +248,7 @@ export async function renderDistroConfigs(req: Request, paths: Paths, gpg: Gpg, 
         render.push(configs[0]);
         render.push(COPY_BUTTON_SCRIPT);
     } else if (configs.length > 1) {
-        render.push(dedent`\
+        render.push(dedent`
             <h2><span class="icon icon-settings"></span><span>Configuration${ navigation.length > 1 ? "s" : "" }</span></h2>
             <div>Select a distribution and release to view its configuration:</div>
             <ul>`);
@@ -256,7 +256,7 @@ export async function renderDistroConfigs(req: Request, paths: Paths, gpg: Gpg, 
         render.push(`</ul>`);
         render.push(...configs.map(c => c.replace("<section", "<section hidden")));
         render.push(COPY_BUTTON_SCRIPT);
-        render.push(dedent`\
+        render.push(dedent`
             <script type="text/javascript">
             (() => {
                 const HASH_PREFIX = "cfg:";

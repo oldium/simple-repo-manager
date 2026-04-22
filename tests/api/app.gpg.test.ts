@@ -18,7 +18,7 @@ afterEach(() => {
 })
 
 const GPG_PRIVATE_KEYS = [
-    dedent`\
+    dedent`
         -----BEGIN PGP PRIVATE KEY BLOCK-----
 
         lQHYBGgqWBcBBAC1MGJ7RPgMfcEqBorhFAQlBQYC+iMjeERcmFWgesgp3j+1vA4Z
@@ -39,7 +39,7 @@ const GPG_PRIVATE_KEYS = [
         =0u8B
         -----END PGP PRIVATE KEY BLOCK-----\n
     `,
-    dedent`\
+    dedent`
         -----BEGIN PGP PRIVATE KEY BLOCK-----
 
         lQHYBGgqXboBBACbeODKkV3JWiD0lw/EfiVU4COD+sxr06FgkShxeJP17tiq7j/Y
@@ -60,7 +60,7 @@ const GPG_PRIVATE_KEYS = [
         =zmfT
         -----END PGP PRIVATE KEY BLOCK-----\n
     `,
-    dedent`\
+    dedent`
         -----BEGIN PGP PRIVATE KEY BLOCK-----
 
         lQHYBGgqYrQBBADK/7j14nMsx3SOV9zLP4+DK9VFB27H5Bj5VTjdQlGj8ENN3TUu
@@ -84,7 +84,7 @@ const GPG_PRIVATE_KEYS = [
 ]
 
 const GPG_PUBLIC_KEYS = [
-    dedent`\
+    dedent`
         -----BEGIN PGP PUBLIC KEY BLOCK-----
 
         mI0EaCpYFwEEALUwYntE+Ax9wSoGiuEUBCUFBgL6IyN4RFyYVaB6yCneP7W8DhlK
@@ -98,7 +98,7 @@ const GPG_PUBLIC_KEYS = [
         =r7zi
         -----END PGP PUBLIC KEY BLOCK-----\n
     `,
-    dedent`\
+    dedent`
         -----BEGIN PGP PUBLIC KEY BLOCK-----
 
         mI0EaCpdugEEAJt44MqRXclaIPSXD8R+JVTgI4P6zGvToWCRKHF4k/Xu2KruP9jV
@@ -112,7 +112,7 @@ const GPG_PUBLIC_KEYS = [
         =GBBu
         -----END PGP PUBLIC KEY BLOCK-----\n
     `,
-    dedent`\
+    dedent`
         -----BEGIN PGP PUBLIC KEY BLOCK-----
 
         mI0EaCpitAEEAMr/uPXicyzHdI5X3Ms/j4Mr1UUHbsfkGPlVON1CUaPwQ03dNS4q

@@ -161,7 +161,7 @@ describe("streamPackages", () => {
     test("unescapes XML entities in captured fields", withLocalTmpDir(async () => {
         // Contrived but valid: entities in every extracted field.
         // &amp;/&lt;/&gt;/&quot;/&apos; plus numeric char refs (&#45; = '-').
-        const xml = dedent`\
+        const xml = dedent`
             <?xml version="1.0" encoding="UTF-8"?>
             <metadata xmlns="http://linux.duke.edu/metadata/common" xmlns:rpm="http://linux.duke.edu/metadata/rpm" packages="1">
               <package type="rpm">
