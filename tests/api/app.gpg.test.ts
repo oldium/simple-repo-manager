@@ -2,7 +2,7 @@
 
 import { createFiles, withLocalTmpDir } from "../utils.ts";
 import { jest } from "@jest/globals";
-import { mockExecution } from "../mocks.ts";
+import { mockExecution, simulateRepreproProcessIncoming } from "../mocks.ts";
 import assert from "node:assert";
 import osPath from "path";
 import dedent from "dedent";
@@ -288,6 +288,7 @@ describe('Test initial GPG import', () => {
 
         mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             spawn.push({ executable, args });
+            await simulateRepreproProcessIncoming(executable, args);
         });
 
         const createTestApp = (await import("../testapp.ts")).default;

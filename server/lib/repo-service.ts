@@ -17,7 +17,6 @@ import {
 } from "./rpm.ts";
 import { moveAll } from "./fs.ts";
 import lock from "./lock.ts";
-import { getCorrelationId } from "./logger.ts";
 import { RepoInternalError, RepoNotFoundError, RepoServiceUnavailableError, RepoValidationError } from "./errors.ts";
 import { validateDistro, validateFilename } from "./validations.ts";
 import osPath from "path";
@@ -86,9 +85,25 @@ export interface ListFilesResult {
     touchedTargets: number;
 }
 
+export type ImportFileStatus = "ok" | "skipped" | "failed";
+
+export interface ImportFile {
+    filename: string;
+    /**
+     * Import-style path mirroring the upload URL (forward slashes, no leading slash):
+     *   deb: deb/<distro>/<release>/<component>[/<subcomponent>]/<filename>
+     *   rpm: rpm/<distro>/<release>/<filename>
+     */
+    path: string;
+    status: ImportFileStatus;
+    /** Populated when status !== "ok". Human-readable; not intended for programmatic matching. */
+    reason?: string;
+}
+
 export interface ImportResult {
+    /** true iff no entry has status === "failed" */
     ok: boolean;
-    correlationId?: string;
+    files: ImportFile[];
 }
 
 export interface ServerStatus {
@@ -240,22 +255,17 @@ export class RepoService {
                 osPath.join(this.paths.incomingDir, "process")
             );
 
-            const results: Record<string, { result: string }> = {};
+            const files: ImportFile[] = [];
+
             if (this.upload.enabledApi.deb) {
-                Object.assign(results, await processIncomingDeb(this.paths, this.gpg));
+                files.push(...(await processIncomingDeb(this.paths, this.gpg)));
             }
             if (this.upload.enabledApi.rpm) {
-                Object.assign(results, await processIncomingRpm(this.paths, this.gpg));
+                files.push(...(await processIncomingRpm(this.paths, this.gpg)));
             }
 
-            const anyFailed = Object.values(results).some((v) => v.result === "error" || v.result === "script");
-            if (Object.keys(results).length === 0) {
-                return { ok: true };
-            }
-            if (!anyFailed) {
-                return { ok: true };
-            }
-            return { ok: false, correlationId: getCorrelationId() };
+            const ok = !files.some((f) => f.status === "failed");
+            return { ok, files };
         });
     }
 

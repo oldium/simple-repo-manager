@@ -113,7 +113,16 @@ export function registerTools(
 
     server.registerTool("prepare_upload", {
         title: "Prepare upload",
-        description: "Return one PUT URL per filename. Agents upload each file then call import_repository.",
+        description: "Return one PUT URL per filename. Agents upload each "
+            + "file then call import_repository. **For deb format:** bundles "
+            + "must include the .changes file plus every file it references "
+            + "(source .dsc, source tarballs, binary .deb / .ddeb / .udeb, "
+            + "and .buildinfo). Partial bundles remain staged and are "
+            + 'reported as skipped on import until the matching .changes is '
+            + "uploaded. **For rpm format:** upload the .src.rpm alongside "
+            + "binary .rpm files — without the source RPM, the source-"
+            + "indexed APIs (list_package_files, remove_package) cannot "
+            + "enumerate or remove the binaries.",
         inputSchema: {
             format: formatEnum.describe("Repository format the uploaded files target."),
             distribution: z.string().min(1).describe("Distribution name (e.g. 'debian', 'fedora')."),
@@ -167,27 +176,29 @@ export function registerTools(
 
     server.registerTool("import_repository", {
         title: "Import staged uploads",
-        description: "Run the repository rebuild for all staged files.",
+        description: "Run the repository rebuild for all staged files. "
+            + "**Debian imports are .changes-driven:** staged directories "
+            + "without a .changes are skipped (reported with "
+            + "status: \"skipped\"); upload the missing .changes and call "
+            + "again to complete them. **RPM imports** process every file, "
+            + "but binaries without their .src.rpm won't be reachable by "
+            + "list_package_files / remove_package. Returns {ok, files} "
+            + "where each file entry carries filename, path, status "
+            + "(ok/skipped/failed) and optional reason.",
         inputSchema: {},
     }, withLogging("import_repository", async () => {
         try {
             const result = await service.importRepository();
-            if (result.ok) {
-                return successResult("Import completed successfully.", { ok: true as const });
-            }
-            const correlationId = result.correlationId;
-            return {
-                isError: true,
-                content: [{
-                    type: "text",
-                    text: correlationId
-                        ? `Import failed. Check server logs with correlation id=${ correlationId }.`
-                        : "Import failed. Check server logs.",
-                }],
-                structuredContent: correlationId
-                    ? { ok: false as const, correlation: { id: correlationId } }
-                    : { ok: false as const },
-            };
+            const imported = result.files.filter((f) => f.status === "ok").length;
+            const skipped = result.files.filter((f) => f.status === "skipped").length;
+            const failed = result.files.filter((f) => f.status === "failed").length;
+            const parts = [
+                imported > 0 ? `imported ${ imported } file(s)` : "",
+                skipped > 0 ? `skipped ${ skipped } file(s)` : "",
+                failed > 0 ? `failed on ${ failed } file(s)` : "",
+            ].filter(Boolean);
+            const msg = parts.length === 0 ? "nothing to import" : parts.join("; ");
+            return successResult(msg, { ok: result.ok, files: result.files });
         } catch (err) {
             return errorResult(err);
         }
@@ -217,10 +228,15 @@ export function registerTools(
 
     server.registerTool("list_package_files", {
         title: "List package files",
-        description: "List files belonging to a source package across one or many "
-            + "(format, distribution, release) triples. Each result includes a "
-            + "direct HTTPS download URL; fetch each downloadUrl with the same "
-            + "Authorization header the caller used. Use remove_package to delete instead.",
+        description: "List files belonging to a source package across one "
+            + "or many (format, distribution, release) triples. For deb, "
+            + "results include the .dsc, source tarballs, binary .deb / "
+            + ".ddeb / .udeb, and — when present — the .changes and "
+            + ".buildinfo needed to reconstruct an uploadable bundle. For "
+            + "rpm, results include the .src.rpm and all its binaries. "
+            + "Each result includes a direct HTTPS download URL that can "
+            + "be fetched without authentication. Use remove_package to "
+            + "delete instead.",
         inputSchema: {
             format: formatEnum.describe("Repository format filter. Omit to include all enabled backends.").optional(),
             distribution: z.string().min(1).describe("Distribution name filter. Omit to match any.").optional(),
@@ -232,24 +248,12 @@ export function registerTools(
         try {
             const { files, touchedTargets } = await service.listPackageFiles(input);
 
-            const callerAuth = req.headers.authorization;
-            const fileEntries = files.map((f) => {
-                const downloadUrl = getUriNoQuery(req, "/" + f.path);
-                const entry: {
-                    filename: string;
-                    path: string;
-                    downloadUrl: string;
-                    method: "GET";
-                    headers?: { Authorization: string };
-                } = {
-                    filename: f.filename,
-                    path: f.path,
-                    downloadUrl,
-                    method: "GET",
-                };
-                if (callerAuth) entry.headers = { Authorization: callerAuth };
-                return entry;
-            });
+            const fileEntries = files.map((f) => ({
+                filename: f.filename,
+                path: f.path,
+                downloadUrl: getUriNoQuery(req, "/" + f.path),
+                method: "GET" as const,
+            }));
 
             const resourceLinks = files.map((f) => ({
                 type: "resource_link" as const,
@@ -261,7 +265,7 @@ export function registerTools(
             const text = files.length === 0
                 ? `No packages matched ${ input.source }.`
                 : `Found ${ files.length } file(s) across ${ touchedTargets } release(s). `
-                + `GET each downloadUrl (same auth as this request) to fetch.`;
+                + `GET each downloadUrl to fetch; the pool is served without authentication.`;
 
             return {
                 isError: false,

@@ -6,7 +6,7 @@ import { jest } from "@jest/globals";
 import fs from "fs/promises";
 import osPath from "path";
 import dedent from "dedent";
-import { mockExecution } from "../mocks.ts";
+import { mockExecution, simulateRepreproProcessIncoming } from "../mocks.ts";
 import { glob } from "glob";
 import assert from "node:assert";
 import _ from "lodash";
@@ -62,6 +62,7 @@ describe('Test repository build scripts for Debian', () => {
 
         mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
+            await simulateRepreproProcessIncoming(executable, args);
         });
 
         const createTestApp = (await import("../testapp.ts")).default;
@@ -84,7 +85,7 @@ describe('Test repository build scripts for Debian', () => {
         expect(res.status).toBe(200);
 
         expect(await fs.readdir(osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main'))).toHaveLength(0);
-        expect(await fs.readdir(osPath.join('incoming', 'process', 'deb', 'debian', 'bookworm', 'main'))).toEqual(['test.changes']);
+        expect(await fs.readdir(osPath.join('incoming', 'process', 'deb', 'debian', 'bookworm', 'main'))).toHaveLength(0);
 
         expect(repreproSpawn).toHaveLength(3);
         expect(repreproSpawn[0].executable).toBe("reprepro");
@@ -141,6 +142,7 @@ describe('Test repository build scripts for Debian', () => {
 
         mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
+            await simulateRepreproProcessIncoming(executable, args);
         });
 
         const createTestApp = (await import("../testapp.ts")).default;
@@ -165,7 +167,7 @@ describe('Test repository build scripts for Debian', () => {
         expect(res.status).toBe(200);
 
         expect(await fs.readdir(osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main'))).toHaveLength(0);
-        expect(await fs.readdir(osPath.join('incoming', 'process', 'deb', 'debian', 'bookworm', 'main'))).toEqual(['test.changes']);
+        expect(await fs.readdir(osPath.join('incoming', 'process', 'deb', 'debian', 'bookworm', 'main'))).toHaveLength(0);
 
         expect(repreproSpawn).toHaveLength(3);
         expect(repreproSpawn[0].executable).toBe("reprepro");
@@ -222,6 +224,7 @@ describe('Test repository build scripts for Debian', () => {
 
         mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
+            await simulateRepreproProcessIncoming(executable, args);
         });
 
         const createTestApp = (await import("../testapp.ts")).default;
@@ -244,7 +247,7 @@ describe('Test repository build scripts for Debian', () => {
         expect(res.status).toBe(200);
 
         expect(await fs.readdir(osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main'))).toHaveLength(0);
-        expect(await fs.readdir(osPath.join('incoming', 'process', 'deb', 'debian', 'bookworm', 'main'))).toEqual(['test.changes']);
+        expect(await fs.readdir(osPath.join('incoming', 'process', 'deb', 'debian', 'bookworm', 'main'))).toHaveLength(0);
 
         expect(repreproSpawn).toHaveLength(3);
     }));
@@ -254,6 +257,7 @@ describe('Test repository build scripts for Debian', () => {
 
         mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
+            await simulateRepreproProcessIncoming(executable, args);
         });
 
         const createTestApp = (await import("../testapp.ts")).default;
@@ -275,7 +279,7 @@ describe('Test repository build scripts for Debian', () => {
         expect(res.status).toBe(200);
 
         expect(await fs.readdir(osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main'))).toHaveLength(0);
-        expect(await fs.readdir(osPath.join('incoming', 'process', 'deb', 'debian', 'bookworm', 'main'))).toEqual(['test.changes']);
+        expect(await fs.readdir(osPath.join('incoming', 'process', 'deb', 'debian', 'bookworm', 'main'))).toHaveLength(0);
 
         expect(repreproSpawn).toHaveLength(3);
         expect(repreproSpawn[0].executable).toBe("reprepro");
@@ -330,6 +334,7 @@ describe('Test repository build scripts for Debian', () => {
 
         mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
+            await simulateRepreproProcessIncoming(executable, args);
         });
 
         jest.unstable_mockModule("../../server/api/files", () => ({
@@ -360,7 +365,7 @@ describe('Test repository build scripts for Debian', () => {
             expect(res.status).toBe(200);
 
             expect(await fs.readdir(osPath.join('/incoming', 'staging', 'deb', 'debian', 'bookworm', 'main'))).toHaveLength(0);
-            expect(await fs.readdir(osPath.join('/incoming', 'process', 'deb', 'debian', 'bookworm', 'main'))).toEqual(['test.changes']);
+            expect(await fs.readdir(osPath.join('/incoming', 'process', 'deb', 'debian', 'bookworm', 'main'))).toHaveLength(0);
         } finally {
             mockFs.restore();
         }
@@ -417,6 +422,7 @@ describe('Test repository build scripts for Debian', () => {
 
         mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
+            await simulateRepreproProcessIncoming(executable, args);
         });
 
         const createTestApp = (await import("../testapp.ts")).default;
@@ -445,7 +451,7 @@ describe('Test repository build scripts for Debian', () => {
         expect(res.status).toBe(200);
 
         expect(await fs.readdir(osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'update'))).toHaveLength(0);
-        expect(await fs.readdir(osPath.join('incoming', 'process', 'deb', 'debian', 'bookworm', 'update'))).toEqual(['test.changes']);
+        expect(await fs.readdir(osPath.join('incoming', 'process', 'deb', 'debian', 'bookworm', 'update'))).toHaveLength(0);
 
         expect(repreproSpawn).toHaveLength(3);
         expect(repreproSpawn[0].executable).toBe("reprepro");
@@ -499,6 +505,7 @@ describe('Test repository build scripts for Debian', () => {
 
         mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
+            await simulateRepreproProcessIncoming(executable, args);
         });
 
         const createTestApp = (await import("../testapp.ts")).default;
@@ -535,7 +542,7 @@ describe('Test repository build scripts for Debian', () => {
         expect(res.status).toBe(200);
 
         expect(await fs.readdir(osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'update'))).toHaveLength(0);
-        expect(await fs.readdir(osPath.join('incoming', 'process', 'deb', 'debian', 'bookworm', 'update'))).toEqual(['test.changes']);
+        expect(await fs.readdir(osPath.join('incoming', 'process', 'deb', 'debian', 'bookworm', 'update'))).toHaveLength(0);
 
         expect(repreproSpawn).toHaveLength(3);
         expect(repreproSpawn[0].executable).toBe("reprepro");
@@ -615,6 +622,7 @@ describe('Test repository build scripts for Debian', () => {
                     repreproSpawn[confDir] = await captureRepreproState(executable, args);
                 }
             }
+            await simulateRepreproProcessIncoming(executable, args);
         });
 
         const createTestApp = (await import("../testapp.ts")).default;
@@ -640,9 +648,9 @@ describe('Test repository build scripts for Debian', () => {
         expect(res.status).toBe(200);
 
         expect(await fs.readdir(osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main'))).toHaveLength(0);
-        expect(await fs.readdir(osPath.join('incoming', 'process', 'deb', 'debian', 'bookworm', 'main'))).toEqual(['test.changes']);
+        expect(await fs.readdir(osPath.join('incoming', 'process', 'deb', 'debian', 'bookworm', 'main'))).toHaveLength(0);
         expect(await fs.readdir(osPath.join('incoming', 'staging', 'deb', 'ubuntu', 'noble', 'universe'))).toHaveLength(0);
-        expect(await fs.readdir(osPath.join('incoming', 'process', 'deb', 'ubuntu', 'noble', 'universe'))).toEqual(['test.changes']);
+        expect(await fs.readdir(osPath.join('incoming', 'process', 'deb', 'ubuntu', 'noble', 'universe'))).toHaveLength(0);
 
         expect(Object.keys(repreproSpawn)).toHaveLength(2);
         expect(repreproSpawn["+b/repo-state/deb-debian/conf"]).toBeDefined();
@@ -742,6 +750,7 @@ describe('Test repository build scripts for Debian', () => {
 
         mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
+            await simulateRepreproProcessIncoming(executable, args);
         });
 
         const createTestApp = (await import("../testapp.ts")).default;
@@ -779,6 +788,7 @@ describe('Test repository build scripts for Debian', () => {
 
         mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
+            await simulateRepreproProcessIncoming(executable, args);
         });
 
         const createTestApp = (await import("../testapp.ts")).default;
@@ -816,6 +826,7 @@ describe('Test repository build scripts for Debian', () => {
 
         mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
+            await simulateRepreproProcessIncoming(executable, args);
         });
 
         const createTestApp = (await import("../testapp.ts")).default;
@@ -860,6 +871,7 @@ describe('Test repository build scripts for Debian', () => {
 
         mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
+            await simulateRepreproProcessIncoming(executable, args);
         });
 
         const createTestApp = (await import("../testapp.ts")).default;
@@ -904,6 +916,7 @@ describe('Test repository build scripts for Debian', () => {
 
         mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
+            await simulateRepreproProcessIncoming(executable, args);
         });
 
         const createTestApp = (await import("../testapp.ts")).default;
@@ -961,6 +974,7 @@ describe('Test repository build scripts for Debian', () => {
 
         mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
+            await simulateRepreproProcessIncoming(executable, args);
         });
 
         const createTestApp = (await import("../testapp.ts")).default;
@@ -995,6 +1009,7 @@ describe('Test repository build scripts for Debian', () => {
 
         mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
+            await simulateRepreproProcessIncoming(executable, args);
         });
 
         const createTestApp = (await import("../testapp.ts")).default;
@@ -1029,6 +1044,7 @@ describe('Test repository build scripts for Debian', () => {
 
         mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
+            await simulateRepreproProcessIncoming(executable, args);
         });
 
         const createTestApp = (await import("../testapp.ts")).default;
@@ -1063,6 +1079,7 @@ describe('Test repository build scripts for Debian', () => {
 
         mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
+            await simulateRepreproProcessIncoming(executable, args);
         });
 
         const createTestApp = (await import("../testapp.ts")).default;

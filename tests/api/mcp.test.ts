@@ -176,7 +176,7 @@ describe("MCP server", () => {
             .send(jsonRpc("tools/call", { name: "import_repository", arguments: {} }));
         expect(response.status).toBe(200);
         expect(response.body.result.isError).toBeFalsy();
-        expect(response.body.result.structuredContent).toEqual({ ok: true });
+        expect(response.body.result.structuredContent).toEqual({ ok: true, files: [] });
     }));
 
     test("remove_package with unknown literal distro returns not-found isError", withLocalTmpDir(async () => {
@@ -446,9 +446,13 @@ describe("MCP server", () => {
                 path: "rpm/fedora/40/Packages/c/clevis-21-1.src.rpm",
                 downloadUrl: expect.stringMatching(/^https?:\/\/.+\/rpm\/fedora\/40\/Packages\/c\/clevis-21-1\.src\.rpm$/),
                 method: "GET",
-                headers: { Authorization: "Bearer test-token" },
             }),
         ]));
+        for (const f of files) {
+            expect(f).not.toHaveProperty("headers");
+            expect(f).toHaveProperty("downloadUrl");
+            expect(typeof f.downloadUrl).toBe("string");
+        }
 
         const links = response.body.result.content.filter(
             (c: { type: string }) => c.type === "resource_link"

@@ -24,6 +24,8 @@ Features:
   useful during development.
 * ⏪ Supports uploading older versions than those already indexed.
 * 🗑️ Supports removing packages from the repository via API.
+* 🔁 Retains all package source files (including Debian `.changes` and
+  `.buildinfo`) so they can be re-uploaded to another server.
 * 🤖 Contains an embedded MCP (Model Context Protocol) server with a
   source-package-name oriented interface for agent clients.
 * 📦 Uses RedHat's `createrepo_c` tool for repository management.
@@ -389,6 +391,14 @@ always JSON with the following fields:
 > The Debian Upload API is compatible with `dput` and `dput-ng` tools and can
 > be used for uploading Debian-based distributions like Debian, Ubuntu, etc.
 
+> [!IMPORTANT]
+> A Debian upload bundle must include the `.changes` file plus every
+> file it references (source `.dsc`, source tarballs, binary `.deb`
+> / `.ddeb` / `.udeb`, and `.buildinfo`). If any are missing,
+> `import_repository` will report the directory's files with
+> `status: "skipped"` until the complete bundle is staged and a
+> subsequent import call is issued.
+
 The Repository Management API (the `reprepro` tool) expects that all files have
 been uploaded already. This means that the client must upload the
 `<package>.changes` file and all files listed in the `<package>.changes` file.
@@ -520,6 +530,12 @@ distributions=bookworm
 ```
 
 ### RedHat-like Packages Upload API
+
+> [!NOTE]
+> Upload the `.src.rpm` alongside its binaries. Without it, the
+> source-indexed APIs (`list_package_files`, `remove_package`)
+> cannot enumerate or remove the binaries — see §Package Listing
+> API and §Package Removal API for the matching semantics.
 
 The Repository Management API (the `createrepo_c` tool) is not so strict like in
 the Debian-like repository case, so it works even for single RPMs. For the
@@ -778,10 +794,16 @@ The response body is:
 }
 ```
 
-Each `downloadUrl` is an absolute URL on the same host that served the
-listing; `GET` it with the same authentication used for the listing
-request. `touchedTargets` counts the `(format, distribution, release)`
-triples that contributed at least one matching file.
+For Debian, the response includes the `.changes` and `.buildinfo`
+files when they are preserved in the pool (enabled by default via
+the `Tracking: ... includechanges includebuildinfos` distribution
+config). Packages imported before this configuration was in place
+will not have them — re-import to backfill.
+
+Each `downloadUrl` is an absolute URL pointing at the pool path and
+can be fetched without authentication. `touchedTargets` counts the
+`(format, distribution, release)` triples that contributed at least
+one matching file.
 
 Status codes:
 

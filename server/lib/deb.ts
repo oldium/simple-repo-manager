@@ -1,8 +1,9 @@
 import { glob } from "glob";
 import path from "node:path/posix";
 import fs from "node:fs/promises";
-import logger from "./logger.ts";
+import logger, { getCorrelationId } from "./logger.ts";
 import type { Gpg, Paths } from "./config.ts";
+import type { ImportFile, ImportFileStatus } from "./repo-service.ts";
 import fsExtra from "fs-extra";
 import { type ActionResult, exec, execOpt } from "./exec.ts";
 import dedent from "dedent";
@@ -11,6 +12,7 @@ import osPath from "path";
 import { gpgInitDeb } from "./gpg.ts";
 import { getEnv } from "./env.ts";
 import type { DebDistribution, DebDistributionMap, DebRelease, DebReleaseMap, DebRepository } from "./repo.ts";
+import { LISTFILTER_FORMAT, parseListFilterOutput } from "./deb-listfilter.ts";
 import { PACKAGE_IDENTIFIER_REGEX } from "./validations.ts";
 import _ from "lodash";
 import { Readable } from "node:stream";
@@ -187,7 +189,7 @@ function generateDistributionContent(distro: string, distroObj: DebDistribution,
             DebOverride: +c/override
             UDebOverride: +c/override
             DscOverride: +c/override
-            Tracking: minimal
+            Tracking: minimal includechanges includebuildinfos
             Limit: 0
             Contents:
             `,
@@ -229,8 +231,7 @@ function generateIncomingContent(distro: string, release: string, incomingDir: s
         IncomingDir: ${ incomingDir }
         TempDir: ${ tmpTmpDir }
         Allow: ${ release }
-        Permit: older_version
-        Cleanup: unused_buildinfo_files\n
+        Permit: older_version\n
     `;
 }
 
@@ -619,19 +620,74 @@ async function ensureDebRootExists(paths: Paths, gpg: Gpg) {
     }
 }
 
-export default async function processIncoming(paths: Paths, gpg: Gpg): Promise<Record<string, ActionResult>> {
+export interface StagingDirSnapshot {
+    /** directory path relative to `process/deb/`, using forward slashes, e.g. "debian/trixie/main" */
+    dirRel: string;
+    /** basenames of files present in this directory (no nested subdirs) */
+    files: string[];
+}
+
+/**
+ * Recursively scan the given staging root and return a flat list of
+ * leaf directories (directories containing files but no further subdirectories)
+ * with their file basenames.
+ *
+ * Returns `[]` if the root does not exist. Other filesystem errors propagate.
+ *
+ * Path separators in the returned `dirRel` are forward slashes, matching
+ * the project's `path.posix.join` convention for URL-shaped paths.
+ */
+export async function scanProcessDebTree(
+    incomingDebRoot: string,
+): Promise<StagingDirSnapshot[]> {
+    const snapshots: StagingDirSnapshot[] = [];
+    await walkStagingDir(incomingDebRoot, "", snapshots);
+    return snapshots;
+}
+
+async function walkStagingDir(
+    root: string, rel: string, out: StagingDirSnapshot[],
+): Promise<void> {
+    let entries: import("node:fs").Dirent[];
+    try {
+        entries = await fs.readdir(osPath.join(root, rel), { withFileTypes: true });
+    } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+        throw err;
+    }
+    const files: string[] = [];
+    let sawSubdir = false;
+    for (const e of entries) {
+        if (e.isDirectory()) {
+            sawSubdir = true;
+            await walkStagingDir(root, path.posix.join(rel, e.name), out);
+        } else if (e.isFile()) {
+            files.push(e.name);
+        }
+    }
+    if (files.length > 0 && !sawSubdir) {
+        out.push({ dirRel: rel, files });
+    }
+}
+
+export default async function processIncoming(paths: Paths, gpg: Gpg): Promise<ImportFile[]> {
     assert(paths.repreproBin, "repreproBin is not available");
 
+    // Posix join: this value flows into reprepro's `IncomingDir:` config
+    // (a tool-not-on-Windows artifact, posix-style by convention) as well as
+    // into Node fs walkers below. Windows fs accepts forward slashes, so the
+    // walkers are unaffected; reprepro config stays posix-clean.
     const incomingDebRoot = path.join(paths.incomingDir, "process", "deb");
+
+    // Pre-scan: remember which files were present in each staging dir.
+    const preSnaps = await scanProcessDebTree(incomingDebRoot);
+
     const changesMap = await findAndOrganizeChangesFiles(incomingDebRoot);
-
-    const result: Record<string, ActionResult> = {};
-
-    // Read all distributions
     const distroMap: DebDistributionMap = await readDistributions(paths.repoStateDir);
     const changesMetadataMap: Record<string, ChangesDirectoryMap> = {};
+    // dirKey relative to `process/deb/`, e.g. "debian/trixie/main[/<sub>]"
+    const failedDirs = new Set<string>();
 
-    // Import new packages
     if (Object.keys(changesMap).length !== 0) {
         await ensureDebRootExists(paths, gpg);
         for (const [distro, directoryChangesFiles] of Object.entries(changesMap)) {
@@ -646,11 +702,15 @@ export default async function processIncoming(paths: Paths, gpg: Gpg): Promise<R
                 changesMetadataMap[distro],
                 distroMap,
                 incomingDebRoot,
-                paths
+                paths,
             );
-
-            // Merge results
-            Object.assign(result, distroResults);
+            for (const [dirKey, actionResult] of Object.entries(distroResults)) {
+                if (actionResult.result === "error" || actionResult.result === "script") {
+                    // dirKey is "deb/<distro>/<release>/<component>[/<sub>]";
+                    // strip the leading "deb/" to match StagingDirSnapshot.dirRel.
+                    failedDirs.add(dirKey.replace(/^deb\//, ""));
+                }
+            }
         }
     }
 
@@ -658,10 +718,47 @@ export default async function processIncoming(paths: Paths, gpg: Gpg): Promise<R
     // changed, so the importing defers exporting until now.
     if (!_.isEmpty(distroMap)) {
         await ensureDebRootExists(paths, gpg);
-        Object.assign(result, await reexportAndCleanupDistributions(distroMap, paths));
+        await reexportAndCleanupDistributions(distroMap, paths);
     }
 
-    return result;
+    // Post-scan: anything from pre-scan still present didn't get imported.
+    const postSnaps = await scanProcessDebTree(incomingDebRoot);
+    const postIndex = new Map<string, Set<string>>();
+    for (const s of postSnaps) postIndex.set(s.dirRel, new Set(s.files));
+
+    const sharedCid = getCorrelationId();
+    const files: ImportFile[] = [];
+    for (const pre of preSnaps) {
+        const postFiles = postIndex.get(pre.dirRel) ?? new Set<string>();
+        for (const name of pre.files) {
+            const stillHere = postFiles.has(name);
+            const logicalPath = path.posix.join("deb", pre.dirRel, name);
+
+            let status: ImportFileStatus;
+            let reason: string | undefined;
+
+            if (!stillHere) {
+                status = "ok";
+            } else if (failedDirs.has(pre.dirRel)) {
+                status = "failed";
+                reason = sharedCid
+                    ? `import failed, correlation id=${ sharedCid }`
+                    : "import failed";
+            } else {
+                status = "skipped";
+                reason = "reprepro did not process file (no .changes file references it)";
+            }
+
+            files.push({
+                filename: name,
+                path: logicalPath,
+                status,
+                ...(reason ? { reason } : {}),
+            });
+        }
+    }
+
+    return files;
 }
 
 export type DebRemovalFile = {
@@ -684,25 +781,32 @@ function parseListfilterLine(line: string): { release: string; component: string
     return { release: match[1], component: match[2], arch: match[3], pkg: match[4], version: match[5] };
 }
 
-function sourcePoolPrefix(source: string): string {
-    return source.startsWith("lib") ? source.slice(0, 4) : source.slice(0, 1);
-}
-
-function listfilterToRemovalFiles(distro: string, source: string, stdout: string): DebRemovalFile[] {
-    const prefix = sourcePoolPrefix(source);
-    return stdout.split(/\r?\n/)
-        .map(parseListfilterLine)
-        .filter((v): v is NonNullable<typeof v> => v !== null)
-        .map(({ component, arch, pkg, version }) => {
-            const filename = arch === "source"
-                ? `${ pkg }_${ version }.dsc`
-                : `${ pkg }_${ version }_${ arch }.deb`;
-            return {
-                filename,
-                status: "ok" as const,
-                path: path.join("deb", distro, "pool", component, prefix, source, filename)
-            };
-        });
+export async function repreproListFilterWithFormatExec(
+    repreproBin: string,
+    confDir: string,
+    release: string,
+    formula: string,
+    listFormat: string,
+): Promise<ActionResult & { stdout: string }> {
+    const repreproConfDir = path.isAbsolute(confDir) ? confDir : `+b/${ confDir }`;
+    let stdout = "";
+    const result = await execOpt({
+        levelFn: (stdio, line) => {
+            if (stdio === "stdout") {
+                stdout += line + "\n";
+                return "debug";
+            }
+            return "warn";
+        },
+    }, repreproBin,
+       "--confdir", repreproConfDir,
+       "--list-format", listFormat,
+       "listfilter", release, formula);
+    // Strip the trailing "\n" that the line-based logger appends after the
+    // final record's "\0" terminator — without this, parseListFilterOutput
+    // would see a spurious "\n"-only record at the end.
+    if (stdout.endsWith("\n")) stdout = stdout.slice(0, -1);
+    return { ...result, stdout };
 }
 
 export async function repreproListFilterExec(repreproBin: string, confDir: string,
@@ -725,12 +829,58 @@ export type DebListResult =
     | { notFound: true }
     | { notFound: false; files: DebRemovalFile[]; action?: ActionResult };
 
+/**
+ * Discover .changes and .buildinfo files in the source's pool directory
+ * (preserved there when the distribution config sets
+ * `Tracking: ... includechanges includebuildinfos`).
+ *
+ * Debian naming invariants: source names and versions contain no `_`, and
+ * the arch-chunk joining architectures with `+` contains no `_` either, so
+ * any file named `<dscBase>_<no-underscore>.{changes,buildinfo}` in the
+ * pool dir belongs to this source. A pool without the tracked files (e.g.
+ * a package imported before the flags were enabled) yields an empty array.
+ */
+async function discoverChangesAndBuildinfo(
+    repoDir: string,
+    distro: string,
+    sourceDir: string,           // pool-relative, e.g. "pool/main/c/clevis"
+    dscFilename: string,         // e.g. "clevis_22-1+tpm1u0+deb13.dsc"
+): Promise<DebRemovalFile[]> {
+    const dscBase = dscFilename.endsWith(".dsc")
+        ? dscFilename.slice(0, -".dsc".length)
+        : dscFilename;
+    const prefix = `${ dscBase }_`;
+    const poolDir = path.join(repoDir, "deb", distro, sourceDir);
+
+    let names: string[];
+    try {
+        names = await fs.readdir(poolDir);
+    } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+        throw err;
+    }
+
+    const extra: DebRemovalFile[] = [];
+    for (const name of names) {
+        if (!name.startsWith(prefix)) continue;
+        const rest = name.slice(prefix.length);
+        if (rest.includes("_")) continue;
+        if (!rest.endsWith(".changes") && !rest.endsWith(".buildinfo")) continue;
+        extra.push({
+            filename: name,
+            status: "ok" as const,
+            path: path.posix.join("deb", distro, sourceDir, name),
+        });
+    }
+    return extra;
+}
+
 export async function listPackageFiles(
     paths: Paths,
     distro: string,
     release: string,
     source: string,
-    version: VersionFilter
+    version: VersionFilter,
 ): Promise<DebListResult> {
     assert(paths.repreproBin, "repreproBin is not available");
 
@@ -742,12 +892,30 @@ export async function listPackageFiles(
     const confDir = path.join(paths.repoStateDir, `deb-${ distro }`, "conf");
     const formula = buildRemoveFormulaForTarget(source, version);
 
-    const listResult = await repreproListFilterExec(paths.repreproBin, confDir, release, formula);
+    const listResult = await repreproListFilterWithFormatExec(
+        paths.repreproBin, confDir, release, formula, LISTFILTER_FORMAT,
+    );
     if (listResult.result !== "success") {
         return { notFound: false, files: [], action: listResult };
     }
 
-    const files = listfilterToRemovalFiles(distro, source, listResult.stdout);
+    const entries = parseListFilterOutput(listResult.stdout);
+    const files: DebRemovalFile[] = entries.map((e) => ({
+        filename: path.posix.basename(e.path),
+        status: "ok" as const,
+        path: path.posix.join("deb", distro, e.path),
+    }));
+
+    // Augment with .changes/.buildinfo when preserved in the pool by tracking flags.
+    const dscEntry = entries.find((e) => e.type === "dsc" && e.path.endsWith(".dsc"));
+    if (dscEntry !== undefined) {
+        const sourceDir = path.posix.dirname(dscEntry.path);
+        const dscFilename = path.posix.basename(dscEntry.path);
+        const extras = await discoverChangesAndBuildinfo(
+            paths.repoDir, distro, sourceDir, dscFilename,
+        );
+        files.push(...extras);
+    }
     return { notFound: false, files };
 }
 

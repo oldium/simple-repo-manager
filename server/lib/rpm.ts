@@ -8,10 +8,11 @@ import assert from "node:assert";
 import { gpgInitRpm } from "./gpg.ts";
 import fg from "fast-glob";
 import type { Repository } from "./repo.ts";
-import logger from "./logger.ts";
+import logger, { getCorrelationId } from "./logger.ts";
 import { matchesSourceIdentity, sourceIdentityOf, streamPackages } from "./rpm-metadata.ts";
 import type { PackageInfo } from "./rpm-metadata.ts";
 import type { RepoFile } from "./repo-types.ts";
+import type { ImportFile, ImportFileStatus } from "./repo-service.ts";
 
 export type RpmVersionFilter = string | { any: true };
 
@@ -72,46 +73,82 @@ export async function getRepository(repoDir: string, distro?: string, release?: 
     return repoObj;
 }
 
-export default async function processIncoming(paths: Paths, gpg: Gpg): Promise<Record<string, ActionResult>> {
+export interface StagingRpmDirSnapshot {
+    /** directory path relative to `process/rpm/`, forward slashes, "<distro>/<release>" */
+    dirRel: string;
+    /** basenames of *.rpm files present in this directory */
+    files: string[];
+}
+
+/**
+ * Scan the given rpm staging root and return one entry per `<distro>/<release>`
+ * directory that contains `*.rpm` files.
+ *
+ * Returns `[]` if the root does not exist. Path separators in the returned
+ * `dirRel` are forward slashes, matching the project's URL-shape convention.
+ */
+export async function scanProcessRpmTree(
+    incomingRpmRoot: string,
+): Promise<StagingRpmDirSnapshot[]> {
+    let rpmFiles: string[];
+    try {
+        rpmFiles = await glob("*/*/*.rpm", { cwd: incomingRpmRoot, posix: true, nodir: true });
+    } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+        throw err;
+    }
+
+    const byDir = new Map<string, string[]>();
+    for (const rel of rpmFiles) {
+        const dirRel = path.dirname(rel);
+        const basename = path.basename(rel);
+        const list = byDir.get(dirRel) ?? [];
+        list.push(basename);
+        byDir.set(dirRel, list);
+    }
+
+    const snapshots: StagingRpmDirSnapshot[] = [];
+    for (const [dirRel, files] of byDir) {
+        snapshots.push({ dirRel, files });
+    }
+    return snapshots;
+}
+
+export default async function processIncoming(paths: Paths, gpg: Gpg): Promise<ImportFile[]> {
     assert(paths.createrepoScript, "createrepoScript is not available");
 
     const incomingRpmRoot = path.join(paths.incomingDir, "process", "rpm");
 
+    // Pre-scan: remember which rpm files are staged under which dir so we can
+    // classify each one against the per-dir createrepo outcome.
+    const preSnaps = await scanProcessRpmTree(incomingRpmRoot);
+
     const result: Record<string, ActionResult> = {};
-
-    // noinspection SpellCheckingInspection
-    const rpmFiles = await glob("*/*/*.rpm", { cwd: incomingRpmRoot, posix: true, nodir: true });
-    const rpmMap: Record<string, string[]> = {};
-
-    for (const rpmFile of rpmFiles) {
-        const directory = path.dirname(rpmFile);
-        (rpmMap[directory] ?? (rpmMap[directory] = [])).push(rpmFile);
-    }
-
     const rpmRepoDir = path.join(paths.repoDir, "rpm");
 
     // Process new RPMs first
-    if (Object.keys(rpmMap).length !== 0) {
+    if (preSnaps.length !== 0) {
         if (!await fsExtra.pathExists(rpmRepoDir)) {
             await fsExtra.ensureDir(rpmRepoDir);
             await gpgInitRpm(paths, gpg);
         }
-        for (const [directory, rpmFiles] of Object.entries(rpmMap)) {
-            const targetBaseDir = path.join(rpmRepoDir, directory);
-            for (const rpmFile of rpmFiles) {
-                const filename = path.basename(rpmFile);
+        for (const snap of preSnaps) {
+            const targetBaseDir = path.join(rpmRepoDir, snap.dirRel);
+            for (const filename of snap.files) {
                 const targetPath = path.join(targetBaseDir, packageRelPath(filename));
                 await fsExtra.ensureDir(path.dirname(targetPath));
                 await fsExtra.move(
-                    path.join(incomingRpmRoot, rpmFile),
+                    path.join(incomingRpmRoot, snap.dirRel, filename),
                     targetPath,
                     { overwrite: true });
             }
-            result[`rpm/${ directory }`] = await exec(paths.createrepoScript, targetBaseDir, paths.signScript ?? "");
+            result[`rpm/${ snap.dirRel }`] = await exec(paths.createrepoScript, targetBaseDir, paths.signScript ?? "");
         }
     }
 
-    // Rescan also the rest of the RPM repositories to possibly re-try indexing
+    // Rescan also the rest of the RPM repositories to possibly re-try indexing.
+    // These don't map back to any pre-scan entry, so they never contribute
+    // ImportFile rows — they just run for their side-effect on metadata.
     const rpmDirs = await glob("*/*/", { cwd: rpmRepoDir, posix: true });
     for (const directory of rpmDirs) {
         const resultDir = `rpm/${ directory }`;
@@ -121,7 +158,38 @@ export default async function processIncoming(paths: Paths, gpg: Gpg): Promise<R
         }
     }
 
-    return result;
+    // Classify each pre-scan file against its dir's createrepo outcome. The
+    // move always happens before createrepo, so the only failure mode per
+    // file is "moved to pool but metadata build failed for that dir".
+    const sharedCid = getCorrelationId();
+    const files: ImportFile[] = [];
+    for (const snap of preSnaps) {
+        const dirResult = result[`rpm/${ snap.dirRel }`];
+        const dirFailed = dirResult !== undefined
+            && (dirResult.result === "error" || dirResult.result === "script");
+
+        for (const name of snap.files) {
+            const logicalPath = path.join("rpm", snap.dirRel, name);
+            let status: ImportFileStatus;
+            let reason: string | undefined;
+            if (!dirFailed) {
+                status = "ok";
+            } else {
+                status = "failed";
+                reason = sharedCid
+                    ? `files moved to pool but repository metadata build failed, correlation id=${ sharedCid }`
+                    : "files moved to pool but repository metadata build failed";
+            }
+            files.push({
+                filename: name,
+                path: logicalPath,
+                status,
+                ...(reason ? { reason } : {}),
+            });
+        }
+    }
+
+    return files;
 }
 
 export type RpmRemovalFile = {

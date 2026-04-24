@@ -26,9 +26,12 @@ async function seedDistributionsConf() {
 describe("DELETE deb package", () => {
     test("200 happy path runs reprepro listfilter + removefilter + export + clearvanished", withLocalTmpDir(async () => {
         const execCalls: { exe: string; args: string[] }[] = [];
+        // LISTFILTER_FORMAT: ${$type}\t${Filename}\t${Directory}\t${Files}\0
         const listfilterStdout =
-            "bookworm|main|source: clevis 21-1+tpm1u8+deb12\n" +
-            "bookworm|main|amd64: clevis 21-1+tpm1u8+deb12\n";
+            "deb\tpool/main/c/clevis/clevis_21-1+tpm1u8+deb12_amd64.deb\t\t\0" +
+            "dsc\t\tpool/main/c/clevis\t"
+                + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 100 clevis_21-1+tpm1u8+deb12.dsc"
+                + "\0";
         mockExecution(0, listfilterStdout, "", undefined, (exe, args) => {
             execCalls.push({ exe, args });
         });
@@ -122,12 +125,16 @@ describe("DELETE deb package", () => {
     test("wildcard version drops $SourceVersion clause and still removes all matches",
         withLocalTmpDir(async () => {
         const execCalls: { exe: string; args: string[] }[] = [];
-        // reprepro listfilter output for two different versions of clevis:
+        // LISTFILTER_FORMAT rows for two different versions of clevis:
         const listfilterStdout =
-            "bookworm|main|source: clevis 21-1+tpm1u8+deb12\n" +
-            "bookworm|main|amd64: clevis 21-1+tpm1u8+deb12\n" +
-            "bookworm|main|source: clevis 22-1+tpm1u8+deb12\n" +
-            "bookworm|main|amd64: clevis 22-1+tpm1u8+deb12\n";
+            "deb\tpool/main/c/clevis/clevis_21-1+tpm1u8+deb12_amd64.deb\t\t\0" +
+            "dsc\t\tpool/main/c/clevis\t"
+                + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 100 clevis_21-1+tpm1u8+deb12.dsc"
+                + "\0" +
+            "deb\tpool/main/c/clevis/clevis_22-1+tpm1u8+deb12_amd64.deb\t\t\0" +
+            "dsc\t\tpool/main/c/clevis\t"
+                + "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 100 clevis_22-1+tpm1u8+deb12.dsc"
+                + "\0";
         mockExecution(0, listfilterStdout, "", undefined, (exe, args) => {
             execCalls.push({ exe, args });
         });
@@ -165,7 +172,9 @@ describe("DELETE deb package", () => {
         withLocalTmpDir(async () => {
         const execCalls: { exe: string; args: string[] }[] = [];
         mockExecution(0,
-            "bookworm|main|source: clevis 21-1+tpm1u8+deb12\n",
+            "dsc\t\tpool/main/c/clevis\t"
+                + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 100 clevis_21-1+tpm1u8+deb12.dsc"
+                + "\0",
             "",
             undefined,
             (exe, args) => execCalls.push({ exe, args })
@@ -247,7 +256,7 @@ describe("DELETE deb package", () => {
         withLocalTmpDir(async () => {
         const execCalls: { exe: string; args: string[] }[] = [];
         mockExecution(0,
-            "bookworm|main|amd64: clevis 21-1\n",
+            "deb\tpool/main/c/clevis/clevis_21-1_amd64.deb\t\t\0",
             "",
             undefined,
             (exe, args) => execCalls.push({ exe, args })
@@ -293,7 +302,9 @@ describe("DELETE deb package", () => {
         withLocalTmpDir(async () => {
         // All mock exec calls fail. We still expect the files to be
         // reported (listfilter returned rows, response builds from them).
-        mockExecution(1, "bookworm|main|amd64: clevis 21-1\n", "boom");
+        mockExecution(1,
+            "deb\tpool/main/c/clevis/clevis_21-1_amd64.deb\t\t\0",
+            "boom");
         await seedDistributionsConf();
 
         const createTestApp = (await import("../testapp.ts")).default;
@@ -315,8 +326,9 @@ describe("DELETE deb package", () => {
         spawn.mockImplementation((exe: string, args: string[]) => {
             execCalls.push({ exe, args });
             if (args.includes("listfilter")) {
-                const release = args[args.indexOf("listfilter") + 1];
-                return spawnMock(0, `${ release }|main|amd64: clevis 21-1\n`, "")(exe, args);
+                return spawnMock(0,
+                    "deb\tpool/main/c/clevis/clevis_21-1_amd64.deb\t\t\0",
+                    "")(exe, args);
             }
             if (args.includes("removefilter") && args.includes("trixie")) {
                 return spawnMock(1, "", "boom")(exe, args);
@@ -370,8 +382,10 @@ describe("DELETE deb package", () => {
 describe("deb.listPackageFiles (direct)", () => {
     test("returns the same files removePackage would produce", withLocalTmpDir(async () => {
         const listfilterStdout =
-            "bookworm|main|source: clevis 21-1+tpm1u8+deb12\n" +
-            "bookworm|main|amd64: clevis 21-1+tpm1u8+deb12\n";
+            "deb\tpool/main/c/clevis/clevis_21-1+tpm1u8+deb12_amd64.deb\t\t\0" +
+            "dsc\t\tpool/main/c/clevis\t"
+                + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 100 clevis_21-1+tpm1u8+deb12.dsc"
+                + "\0";
         mockExecution(0, listfilterStdout, "", undefined, () => {});
         await seedDistributionsConf();
         const deb = await import("../../server/lib/deb.ts");
