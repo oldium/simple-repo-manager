@@ -6,7 +6,7 @@ import { jest } from "@jest/globals";
 import fs from "fs/promises";
 import osPath from "path";
 import dedent from "dedent";
-import { mockExecution, simulateRepreproProcessIncoming } from "../mocks.ts";
+import { clearMockSpawn, installSpawnProxy, setMockSpawn, simulateRepreproProcessIncoming } from "../mocks.ts";
 import { glob } from "glob";
 import assert from "node:assert";
 import _ from "lodash";
@@ -40,8 +40,15 @@ async function captureRepreproState(executable: string, args: string[]): Promise
     }
 }
 
+// Register the child_process mock once at file scope and pre-import testapp
+// so subsequent tests reuse the cached module graph instead of paying ~700–
+// 1000 ms per test for module re-evaluation. Tests swap the active spawn
+// implementation via setMockSpawn, no resetModules needed.
+installSpawnProxy();
+const createTestApp = (await import("../testapp.ts")).default;
+
 afterEach(() => {
-    jest.resetModules();
+    clearMockSpawn();
 })
 
 function parseDistributionsFile(repreproSpawn: CapturedState) {
@@ -60,12 +67,11 @@ describe('Test repository build scripts for Debian', () => {
     test('Check that Debian build config is correctly prepared for first package', withLocalTmpDir(async () => {
         const repreproSpawn: CapturedState[] = [];
 
-        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+        setMockSpawn(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
             await simulateRepreproProcessIncoming(executable, args);
         });
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming",
@@ -140,12 +146,11 @@ describe('Test repository build scripts for Debian', () => {
     test('Check that Debian build config is correctly prepared for first package also with ddeb file', withLocalTmpDir(async () => {
         const repreproSpawn: CapturedState[] = [];
 
-        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+        setMockSpawn(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
             await simulateRepreproProcessIncoming(executable, args);
         });
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming",
@@ -222,12 +227,11 @@ describe('Test repository build scripts for Debian', () => {
     test('Check that Debian build config is prepared when RedHat createrepo_c is unavailable', withLocalTmpDir(async () => {
         const repreproSpawn: CapturedState[] = [];
 
-        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+        setMockSpawn(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
             await simulateRepreproProcessIncoming(executable, args);
         });
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming",
@@ -255,12 +259,11 @@ describe('Test repository build scripts for Debian', () => {
     test('Check Debian build config with no GPG key', withLocalTmpDir(async () => {
         const repreproSpawn: CapturedState[] = [];
 
-        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+        setMockSpawn(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
             await simulateRepreproProcessIncoming(executable, args);
         });
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming",
@@ -332,11 +335,17 @@ describe('Test repository build scripts for Debian', () => {
     test('Check that Debian build config is correctly prepared for absolute paths', withLocalTmpDir(async () => {
         const repreproSpawn: CapturedState[] = [];
 
-        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+        setMockSpawn(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
             await simulateRepreproProcessIncoming(executable, args);
         });
 
+        // This test needs a different files-middleware implementation than
+        // the file-scope import wired up. Reset the module cache, register
+        // the per-test mock, and re-import testapp so the mock takes effect.
+        // The file-scope `createTestApp` const above still points at the
+        // original (un-mocked) module, so subsequent tests are unaffected.
+        jest.resetModules();
         jest.unstable_mockModule("../../server/api/files", () => ({
             default: jest.fn(
                 (): RequestHandler => { return async (_req: Request, _res: Response, next: NextFunction) => next() })
@@ -420,12 +429,11 @@ describe('Test repository build scripts for Debian', () => {
     test('Check that Debian build config is correctly updated when distribution files exist', withLocalTmpDir(async () => {
         const repreproSpawn: CapturedState[] = [];
 
-        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+        setMockSpawn(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
             await simulateRepreproProcessIncoming(executable, args);
         });
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming",
@@ -503,12 +511,11 @@ describe('Test repository build scripts for Debian', () => {
     test('Check that Debian build config is correctly updated when distribution files exist for multiple releases', withLocalTmpDir(async () => {
         const repreproSpawn: CapturedState[] = [];
 
-        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+        setMockSpawn(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
             await simulateRepreproProcessIncoming(executable, args);
         });
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming",
@@ -614,7 +621,7 @@ describe('Test repository build scripts for Debian', () => {
     test('Check that Debian build config is correctly updated when distribution files exist for multiple distributions', withLocalTmpDir(async () => {
         const repreproSpawn: Record<string, CapturedState> = {};
 
-        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+        setMockSpawn(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             const confDirIndex = args.indexOf("--confdir");
             if (confDirIndex >= 0 && confDirIndex < args.length - 1) {
                 const confDir = args[confDirIndex + 1];
@@ -625,7 +632,6 @@ describe('Test repository build scripts for Debian', () => {
             await simulateRepreproProcessIncoming(executable, args);
         });
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming",
@@ -748,12 +754,11 @@ describe('Test repository build scripts for Debian', () => {
     test('Check that DDebComponents is correctly updated when ddeb is the last file without newline', withLocalTmpDir(async () => {
         const repreproSpawn: CapturedState[] = [];
 
-        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+        setMockSpawn(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
             await simulateRepreproProcessIncoming(executable, args);
         });
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming",
@@ -786,12 +791,11 @@ describe('Test repository build scripts for Debian', () => {
     test('Check that DDebComponents is correctly updated when ddeb is the first file', withLocalTmpDir(async () => {
         const repreproSpawn: CapturedState[] = [];
 
-        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+        setMockSpawn(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
             await simulateRepreproProcessIncoming(executable, args);
         });
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming",
@@ -824,12 +828,11 @@ describe('Test repository build scripts for Debian', () => {
     test('Check that export and clearvanished are called when distributions exist and no incoming files', withLocalTmpDir(async () => {
         const repreproSpawn: CapturedState[] = [];
 
-        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+        setMockSpawn(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
             await simulateRepreproProcessIncoming(executable, args);
         });
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming",
@@ -869,12 +872,11 @@ describe('Test repository build scripts for Debian', () => {
     test('Check that Debian cleanup does not run before processincoming when release is not yet present', withLocalTmpDir(async () => {
         const repreproSpawn: CapturedState[] = [];
 
-        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+        setMockSpawn(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
             await simulateRepreproProcessIncoming(executable, args);
         });
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming",
@@ -914,12 +916,11 @@ describe('Test repository build scripts for Debian', () => {
     test('Check that Debian re-upload cleanup runs for releases already present on disk', withLocalTmpDir(async () => {
         const repreproSpawn: CapturedState[] = [];
 
-        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+        setMockSpawn(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
             await simulateRepreproProcessIncoming(executable, args);
         });
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming",
@@ -972,12 +973,11 @@ describe('Test repository build scripts for Debian', () => {
     test('Check that Debian import fails early when Distribution header does not match queued release', withLocalTmpDir(async () => {
         const repreproSpawn: CapturedState[] = [];
 
-        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+        setMockSpawn(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
             await simulateRepreproProcessIncoming(executable, args);
         });
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming",
@@ -1007,12 +1007,11 @@ describe('Test repository build scripts for Debian', () => {
     test('Check that Debian import fails early when Source contains invalid/unsupported cleanup characters', withLocalTmpDir(async () => {
         const repreproSpawn: CapturedState[] = [];
 
-        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+        setMockSpawn(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
             await simulateRepreproProcessIncoming(executable, args);
         });
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming",
@@ -1042,12 +1041,11 @@ describe('Test repository build scripts for Debian', () => {
     test('Check that Debian import fails early when Version contains invalid/unsupported cleanup characters', withLocalTmpDir(async () => {
         const repreproSpawn: CapturedState[] = [];
 
-        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+        setMockSpawn(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
             await simulateRepreproProcessIncoming(executable, args);
         });
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming",
@@ -1077,12 +1075,11 @@ describe('Test repository build scripts for Debian', () => {
     test('Check that export and clearvanished are called on multiple distributions (debian, ubuntu) when no incoming files exist', withLocalTmpDir(async () => {
         const repreproSpawn: CapturedState[] = [];
 
-        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+        setMockSpawn(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             repreproSpawn.push(await captureRepreproState(executable, args));
             await simulateRepreproProcessIncoming(executable, args);
         });
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming",
@@ -1142,9 +1139,8 @@ describe('Test repository build scripts for Debian', () => {
     }));
 
     test('Check that error is returned when Debian reprepro tool startup fails', withLocalTmpDir(async () => {
-        mockExecution(0, "", "", new Error("Cannot start script!"));
+        setMockSpawn(0, "", "", new Error("Cannot start script!"));
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming",
@@ -1168,9 +1164,8 @@ describe('Test repository build scripts for Debian', () => {
     }));
 
     test('Check that error is returned when Debian reprepro tool execution fails', withLocalTmpDir(async () => {
-        mockExecution(1, "", "Script execution failed!");
+        setMockSpawn(1, "", "Script execution failed!");
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming",

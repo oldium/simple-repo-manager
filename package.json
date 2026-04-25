@@ -12,7 +12,8 @@
   "scripts": {
     "dev": "node --env-file=env.development --enable-source-maps --import=@swc-node/register/esm-register ./server/server.ts",
     "build": "tsc --project ./tsconfig.json && node --enable-source-maps --import=@swc-node/register/esm-register ./build.ts",
-    "test": "node --enable-source-maps --experimental-vm-modules --no-warnings node_modules/jest/bin/jest.js --colors --detectOpenHandles --workerThreads",
+    "test": "node --enable-source-maps --experimental-vm-modules --no-warnings node_modules/jest/bin/jest.js --colors",
+    "test:debug": "node --enable-source-maps --experimental-vm-modules --no-warnings node_modules/jest/bin/jest.js --colors --detectOpenHandles --runInBand",
     "lint": "eslint",
     "prod": "node --env-file=env.production --enable-source-maps ./dist/server.js"
   },

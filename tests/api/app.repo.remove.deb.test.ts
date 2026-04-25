@@ -2,11 +2,13 @@
 
 import { createFiles, withLocalTmpDir } from "../utils.ts";
 import request from "supertest";
-import { jest } from "@jest/globals";
-import { mockExecution, spawnMock } from "../mocks.ts";
+import { clearMockSpawn, installSpawnProxy, setMockSpawn, spawnMock } from "../mocks.ts";
+
+installSpawnProxy();
+const createTestApp = (await import("../testapp.ts")).default;
 
 afterEach(() => {
-    jest.resetModules();
+    clearMockSpawn();
 });
 
 async function seedDistributionsConf() {
@@ -32,13 +34,12 @@ describe("DELETE deb package", () => {
             "dsc\t\tpool/main/c/clevis\t"
                 + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 100 clevis_21-1+tpm1u8+deb12.dsc"
                 + "\0";
-        mockExecution(0, listfilterStdout, "", undefined, (exe, args) => {
+        setMockSpawn(0, listfilterStdout, "", undefined, (exe, args) => {
             execCalls.push({ exe, args });
         });
 
         await seedDistributionsConf();
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming", repoStateDir: "repo-state", repoDir: "repo",
@@ -70,11 +71,10 @@ describe("DELETE deb package", () => {
 
     test("no match 200 empty files; removefilter not called", withLocalTmpDir(async () => {
         const execCalls: { exe: string; args: string[] }[] = [];
-        mockExecution(0, "", "", undefined, (exe, args) => execCalls.push({ exe, args }));
+        setMockSpawn(0, "", "", undefined, (exe, args) => execCalls.push({ exe, args }));
 
         await seedDistributionsConf();
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming", repoStateDir: "repo-state", repoDir: "repo",
@@ -92,8 +92,7 @@ describe("DELETE deb package", () => {
     }));
 
     test("404 when distribution not configured", withLocalTmpDir(async () => {
-        mockExecution(0, "", "");
-        const createTestApp = (await import("../testapp.ts")).default;
+        setMockSpawn(0, "", "");
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming", repoStateDir: "repo-state", repoDir: "repo",
@@ -107,9 +106,8 @@ describe("DELETE deb package", () => {
     }));
 
     test("404 when release not configured", withLocalTmpDir(async () => {
-        mockExecution(0, "", "");
+        setMockSpawn(0, "", "");
         await seedDistributionsConf();
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming", repoStateDir: "repo-state", repoDir: "repo",
@@ -135,13 +133,12 @@ describe("DELETE deb package", () => {
             "dsc\t\tpool/main/c/clevis\t"
                 + "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 100 clevis_22-1+tpm1u8+deb12.dsc"
                 + "\0";
-        mockExecution(0, listfilterStdout, "", undefined, (exe, args) => {
+        setMockSpawn(0, listfilterStdout, "", undefined, (exe, args) => {
             execCalls.push({ exe, args });
         });
 
         await seedDistributionsConf();
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming", repoStateDir: "repo-state", repoDir: "repo",
@@ -171,7 +168,7 @@ describe("DELETE deb package", () => {
     test("wildcard release touches every release of the distro",
         withLocalTmpDir(async () => {
         const execCalls: { exe: string; args: string[] }[] = [];
-        mockExecution(0,
+        setMockSpawn(0,
             "dsc\t\tpool/main/c/clevis\t"
                 + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 100 clevis_21-1+tpm1u8+deb12.dsc"
                 + "\0",
@@ -195,7 +192,6 @@ describe("DELETE deb package", () => {
             ].join("\n")
         });
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming", repoStateDir: "repo-state", repoDir: "repo",
@@ -217,9 +213,8 @@ describe("DELETE deb package", () => {
 
     test("404 when literal distribution has no configured repo",
         withLocalTmpDir(async () => {
-        mockExecution(0, "", "");
+        setMockSpawn(0, "", "");
         await seedDistributionsConf();   // seeds debian only
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming", repoStateDir: "repo-state", repoDir: "repo",
@@ -235,10 +230,9 @@ describe("DELETE deb package", () => {
     test("all-wildcard with zero configured distros → 200 empty, no reprepro",
         withLocalTmpDir(async () => {
         const execCalls: unknown[] = [];
-        mockExecution(0, "", "", undefined, () => execCalls.push({}));
+        setMockSpawn(0, "", "", undefined, () => execCalls.push({}));
         // no distributions configured
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming", repoStateDir: "repo-state", repoDir: "repo",
@@ -255,7 +249,7 @@ describe("DELETE deb package", () => {
     test("wildcard distribution + wildcard release spans every configured pair",
         withLocalTmpDir(async () => {
         const execCalls: { exe: string; args: string[] }[] = [];
-        mockExecution(0,
+        setMockSpawn(0,
             "deb\tpool/main/c/clevis/clevis_21-1_amd64.deb\t\t\0",
             "",
             undefined,
@@ -279,7 +273,6 @@ describe("DELETE deb package", () => {
             ].join("\n")
         });
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming", repoStateDir: "repo-state", repoDir: "repo",
@@ -302,12 +295,11 @@ describe("DELETE deb package", () => {
         withLocalTmpDir(async () => {
         // All mock exec calls fail. We still expect the files to be
         // reported (listfilter returned rows, response builds from them).
-        mockExecution(1,
+        setMockSpawn(1,
             "deb\tpool/main/c/clevis/clevis_21-1_amd64.deb\t\t\0",
             "boom");
         await seedDistributionsConf();
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming", repoStateDir: "repo-state", repoDir: "repo",
@@ -322,7 +314,7 @@ describe("DELETE deb package", () => {
     test("partial failure: bookworm succeeds, trixie removefilter fails → 500 aggregates both file lists",
         withLocalTmpDir(async () => {
         const execCalls: { exe: string; args: string[] }[] = [];
-        const spawn = mockExecution(0, "", "");
+        const spawn = setMockSpawn(0, "", "");
         spawn.mockImplementation((exe: string, args: string[]) => {
             execCalls.push({ exe, args });
             if (args.includes("listfilter")) {
@@ -351,7 +343,6 @@ describe("DELETE deb package", () => {
             ].join("\n")
         });
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming", repoStateDir: "repo-state", repoDir: "repo",
@@ -402,7 +393,7 @@ describe("deb.listPackageFiles (direct)", () => {
             "dsc\t\tpool/main/c/clevis\t"
                 + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 100 clevis_21-1+tpm1u8+deb12.dsc"
                 + "\0";
-        mockExecution(0, listfilterStdout, "", undefined, () => {});
+        setMockSpawn(0, listfilterStdout, "", undefined, () => {});
         const deb = await import("../../server/lib/deb.ts");
         const result = await deb.listPackageFiles(
             { incomingDir: "incoming", repoStateDir: "repo-state", repoDir: "repo", repreproBin: "reprepro" } as never,

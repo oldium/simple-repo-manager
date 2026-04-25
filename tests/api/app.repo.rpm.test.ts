@@ -2,10 +2,9 @@
 
 import { createFiles, withLocalTmpDir } from "../utils.ts";
 import request from "supertest";
-import { jest } from "@jest/globals";
 import fs from "fs/promises";
 import osPath from "path";
-import { mockExecution } from "../mocks.ts";
+import { clearMockSpawn, installSpawnProxy, setMockSpawn } from "../mocks.ts";
 import { glob } from "glob";
 import assert from "node:assert";
 import _ from "lodash";
@@ -35,21 +34,23 @@ async function captureCreaterepoState(executable: string, args: string[]): Promi
     }
 }
 
+installSpawnProxy();
+const createTestApp = (await import("../testapp.ts")).default;
+
 afterEach(() => {
-    jest.resetModules();
+    clearMockSpawn();
 })
 
 describe('Test repository build scripts for RedHat', () => {
     test('Check that RedHat incoming package is moved to repo', withLocalTmpDir(async () => {
         let createrepoSpawn: CapturedState | undefined;
 
-        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+        setMockSpawn(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             if (!createrepoSpawn) {
                 createrepoSpawn = await captureCreaterepoState(executable, args);
             }
         });
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming",
@@ -83,11 +84,10 @@ describe('Test repository build scripts for RedHat', () => {
     test('Check that RedHat incoming package is moved to repo when Debian reprepro tool is unavailable', withLocalTmpDir(async () => {
         const createrepoSpawn: CapturedState[] = [];
 
-        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+        setMockSpawn(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             createrepoSpawn.push(await captureCreaterepoState(executable, args));
         });
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming",
@@ -119,13 +119,12 @@ describe('Test repository build scripts for RedHat', () => {
     test('Check RedHat createrepo script arguments with no GPG key', withLocalTmpDir(async () => {
         let createrepoSpawn: CapturedState | undefined;
 
-        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+        setMockSpawn(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             if (!createrepoSpawn) {
                 createrepoSpawn = await captureCreaterepoState(executable, args);
             }
         });
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming",
@@ -158,13 +157,12 @@ describe('Test repository build scripts for RedHat', () => {
     test('Check that multiple RedHat incoming package are moved to repo', withLocalTmpDir(async () => {
         let createrepoSpawn: CapturedState | undefined;
 
-        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+        setMockSpawn(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             if (!createrepoSpawn) {
                 createrepoSpawn = await captureCreaterepoState(executable, args);
             }
         });
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming",
@@ -200,11 +198,10 @@ describe('Test repository build scripts for RedHat', () => {
     test('Check that multiple RedHat incoming package from multiple distributions are moved to repo', withLocalTmpDir(async () => {
         const createrepoSpawn: CapturedState[] = [];
 
-        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+        setMockSpawn(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             createrepoSpawn.push(await captureCreaterepoState(executable, args));
         });
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming",
@@ -248,9 +245,8 @@ describe('Test repository build scripts for RedHat', () => {
     }));
 
     test('Check that error is returned when RedHat createrepo tool startup fails', withLocalTmpDir(async () => {
-        mockExecution(1, "", "", new Error("Cannot start script!"));
+        setMockSpawn(1, "", "", new Error("Cannot start script!"));
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming",
@@ -272,9 +268,8 @@ describe('Test repository build scripts for RedHat', () => {
     }));
 
     test('Check that error is returned when RedHat createrepo tool execution fails', withLocalTmpDir(async () => {
-        mockExecution(1, "", "Script execution failed!");
+        setMockSpawn(1, "", "Script execution failed!");
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming",

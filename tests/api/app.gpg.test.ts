@@ -1,8 +1,7 @@
 // noinspection DuplicatedCode
 
 import { createFiles, withLocalTmpDir } from "../utils.ts";
-import { jest } from "@jest/globals";
-import { mockExecution, simulateRepreproProcessIncoming } from "../mocks.ts";
+import { clearMockSpawn, installSpawnProxy, setMockSpawn, simulateRepreproProcessIncoming } from "../mocks.ts";
 import assert from "node:assert";
 import osPath from "path";
 import dedent from "dedent";
@@ -13,8 +12,11 @@ type CapturedState = {
     args: string[],
 }
 
+installSpawnProxy();
+const createTestApp = (await import("../testapp.ts")).default;
+
 afterEach(() => {
-    jest.resetModules();
+    clearMockSpawn();
 })
 
 const GPG_PRIVATE_KEYS = [
@@ -132,7 +134,7 @@ describe('Test initial GPG import', () => {
     test('Check that GPG file is imported during startup', withLocalTmpDir(async () => {
         const spawn: CapturedState[] = [];
 
-        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+        setMockSpawn(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             spawn.push({ executable, args });
         });
 
@@ -142,7 +144,6 @@ describe('Test initial GPG import', () => {
             "repo/rpm/": undefined,
         })
 
-        const createTestApp = (await import("../testapp.ts")).default;
         await createTestApp({
             paths: {
                 repoDir: "repo",
@@ -160,7 +161,7 @@ describe('Test initial GPG import', () => {
     test('Check that GPG file is not imported when missing', withLocalTmpDir(async () => {
         let spawn: CapturedState | undefined;
 
-        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+        setMockSpawn(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             if (!spawn) {
                 spawn = { executable, args };
             }
@@ -171,7 +172,6 @@ describe('Test initial GPG import', () => {
             "repo/rpm/": undefined,
         })
 
-        const createTestApp = (await import("../testapp.ts")).default;
         await createTestApp({
             paths: {
                 repoDir: "repo",
@@ -187,7 +187,7 @@ describe('Test initial GPG import', () => {
     test('Check that files from GPG directory are imported during startup', withLocalTmpDir(async () => {
         const spawns: CapturedState[] = [];
 
-        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+        setMockSpawn(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             spawns.push({ executable, args });
         });
 
@@ -198,7 +198,6 @@ describe('Test initial GPG import', () => {
             "repo/rpm/": undefined,
         })
 
-        const createTestApp = (await import("../testapp.ts")).default;
         await createTestApp({
             paths: {
                 repoDir: "repo",
@@ -217,7 +216,7 @@ describe('Test initial GPG import', () => {
     test("Check that repository GPG private key is imported during startup", withLocalTmpDir(async () => {
         let spawn: CapturedState | undefined;
 
-        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+        setMockSpawn(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             if (!spawn) {
                 spawn = { executable, args };
             }
@@ -229,7 +228,6 @@ describe('Test initial GPG import', () => {
             "repo/rpm/": undefined,
         })
 
-        const createTestApp = (await import("../testapp.ts")).default;
         await createTestApp({
             paths: {
                 repoDir: "repo",
@@ -252,7 +250,7 @@ describe('Test initial GPG import', () => {
     }));
 
     test("Check that repository GPG public key is created", withLocalTmpDir(async () => {
-        mockExecution(0, "stdout data", "", undefined);
+        setMockSpawn(0, "stdout data", "", undefined);
 
         await createFiles({
             "gpg-repo-private-key.asc": GPG_PRIVATE_KEYS[0],
@@ -260,7 +258,6 @@ describe('Test initial GPG import', () => {
             "repo/rpm/": undefined,
         })
 
-        const createTestApp = (await import("../testapp.ts")).default;
         await createTestApp({
             paths: {
                 repoDir: "repo",
@@ -286,12 +283,11 @@ describe('Test initial GPG import', () => {
     test('Check that GPG is imported and repository public key is created when Debian repository is built', withLocalTmpDir(async () => {
         const spawn: CapturedState[] = [];
 
-        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+        setMockSpawn(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             spawn.push({ executable, args });
             await simulateRepreproProcessIncoming(executable, args);
         });
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming",
@@ -338,11 +334,10 @@ describe('Test initial GPG import', () => {
     test('Check that repository GPG public key is created when RedHat repository is built', withLocalTmpDir(async () => {
         const spawn: CapturedState[] = [];
 
-        mockExecution(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
+        setMockSpawn(0, "stdout data", "", undefined, async (executable: string, args: string[]) => {
             spawn.push({ executable, args });
         });
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming",
@@ -379,7 +374,7 @@ describe('Test initial GPG import', () => {
     }));
 
     test("Check that new repository GPG private key is appended during startup", withLocalTmpDir(async () => {
-        mockExecution(0, "stdout data", "", undefined);
+        setMockSpawn(0, "stdout data", "", undefined);
 
         await createFiles({
             "gpg-repo-private-key.asc": GPG_PRIVATE_KEYS[1],
@@ -387,7 +382,6 @@ describe('Test initial GPG import', () => {
             "repo/rpm/RPM-GPG-KEY.asc": GPG_PUBLIC_KEYS[0],
         })
 
-        const createTestApp = (await import("../testapp.ts")).default;
         await createTestApp({
             paths: {
                 repoDir: "repo",
@@ -411,7 +405,7 @@ describe('Test initial GPG import', () => {
     }));
 
     test("Check that new repository GPG private key is appended to multiple previous keys during startup", withLocalTmpDir(async () => {
-        mockExecution(0, "stdout data", "", undefined);
+        setMockSpawn(0, "stdout data", "", undefined);
 
         await createFiles({
             "gpg-repo-private-key.asc": GPG_PRIVATE_KEYS[2],
@@ -419,7 +413,6 @@ describe('Test initial GPG import', () => {
             "repo/rpm/RPM-GPG-KEY.asc": `${ GPG_PUBLIC_KEYS[1] }${ GPG_PUBLIC_KEYS[0] }`,
         })
 
-        const createTestApp = (await import("../testapp.ts")).default;
         await createTestApp({
             paths: {
                 repoDir: "repo",

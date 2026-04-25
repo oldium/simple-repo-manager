@@ -2,12 +2,11 @@
 
 import { createFiles, withLocalTmpDir } from "../utils.ts";
 import request from "supertest";
-import { jest } from "@jest/globals";
 import fs from "node:fs/promises";
 import fsExtra from "fs-extra";
 import osPath from "path";
 import zlib from "node:zlib";
-import { mockExecution, spawnMock } from "../mocks.ts";
+import { clearMockSpawn, installSpawnProxy, setMockSpawn, spawnMock } from "../mocks.ts";
 
 const BASE_PRIMARY_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <metadata xmlns="http://linux.duke.edu/metadata/common" xmlns:rpm="http://linux.duke.edu/metadata/rpm" packages="3">
@@ -47,20 +46,22 @@ async function seedRepo(xml = BASE_PRIMARY_XML) {
     });
 }
 
+installSpawnProxy();
+const createTestApp = (await import("../testapp.ts")).default;
+
 afterEach(() => {
-    jest.resetModules();
+    clearMockSpawn();
 });
 
 describe("DELETE rpm package", () => {
     test("removes src rpm + matching binaries and runs createrepo", withLocalTmpDir(async () => {
         const execCalls: { exe: string; args: string[] }[] = [];
-        mockExecution(0, "", "", undefined, (executable, args) => {
+        setMockSpawn(0, "", "", undefined, (executable, args) => {
             execCalls.push({ exe: executable, args });
         });
 
         await seedRepo();
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: { incomingDir: "incoming", repoDir: "repo",
                 createrepoScript: "createrepo.sh", signScript: "sign.sh" }
@@ -90,10 +91,9 @@ describe("DELETE rpm package", () => {
 describe("DELETE rpm edge cases", () => {
     test("no match → 200 with empty files; createrepo not invoked", withLocalTmpDir(async () => {
         const execCalls: { exe: string; args: string[] }[] = [];
-        mockExecution(0, "", "", undefined, (exe, args) => { execCalls.push({ exe, args }); });
+        setMockSpawn(0, "", "", undefined, (exe, args) => { execCalls.push({ exe, args }); });
 
         await seedRepo();
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: { incomingDir: "incoming", repoDir: "repo",
                 createrepoScript: "createrepo.sh", signScript: "sign.sh" }
@@ -106,8 +106,7 @@ describe("DELETE rpm edge cases", () => {
     }));
 
     test("404 when release dir does not exist", withLocalTmpDir(async () => {
-        mockExecution(0, "", "");
-        const createTestApp = (await import("../testapp.ts")).default;
+        setMockSpawn(0, "", "");
         const app = await createTestApp({
             paths: { incomingDir: "incoming", repoDir: "repo",
                 createrepoScript: "createrepo.sh", signScript: "sign.sh" }
@@ -119,12 +118,11 @@ describe("DELETE rpm edge cases", () => {
 
     test("release dir exists but no repodata → 404 (not a configured target)", withLocalTmpDir(async () => {
         const execCalls: unknown[] = [];
-        mockExecution(0, "", "", undefined, () => { execCalls.push({}); });
+        setMockSpawn(0, "", "", undefined, () => { execCalls.push({}); });
 
         await fsExtra.ensureDir("repo/rpm/fedora/41/Packages/c");
         await fs.writeFile("repo/rpm/fedora/41/Packages/c/clevis-22-1.tpm1.fc41.src.rpm", "src");
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: { incomingDir: "incoming", repoDir: "repo",
                 createrepoScript: "createrepo.sh", signScript: "sign.sh" }
@@ -136,7 +134,7 @@ describe("DELETE rpm edge cases", () => {
     }));
 
     test("retains other packages under same letter dir", withLocalTmpDir(async () => {
-        mockExecution(0, "", "");
+        setMockSpawn(0, "", "");
         const xml = BASE_PRIMARY_XML.replace(
             "<location href=\"Packages/o/other-1-1.fc41.x86_64.rpm\"/>",
             "<location href=\"Packages/c/cousin-1-1.fc41.x86_64.rpm\"/>"
@@ -153,7 +151,6 @@ describe("DELETE rpm edge cases", () => {
         await fs.rmdir("repo/rpm/fedora/41/Packages/o");
         await fs.writeFile("repo/rpm/fedora/41/Packages/c/cousin-1-1.fc41.x86_64.rpm", "cousin");
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: { incomingDir: "incoming", repoDir: "repo",
                 createrepoScript: "createrepo.sh", signScript: "sign.sh" }
@@ -170,7 +167,7 @@ describe("DELETE rpm edge cases", () => {
     test("wildcard version removes clevis-* files but not clevis-tang-*",
         withLocalTmpDir(async () => {
         const execCalls: { exe: string; args: string[] }[] = [];
-        mockExecution(0, "", "", undefined, (exe, args) => execCalls.push({ exe, args }));
+        setMockSpawn(0, "", "", undefined, (exe, args) => execCalls.push({ exe, args }));
 
         const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <metadata xmlns="http://linux.duke.edu/metadata/common" xmlns:rpm="http://linux.duke.edu/metadata/rpm" packages="5">
@@ -213,7 +210,6 @@ describe("DELETE rpm edge cases", () => {
             "repo/rpm/fedora/41/Packages/c/clevis-tang-1-1.fc41.x86_64.rpm": "tang-bin"
         });
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: { incomingDir: "incoming", repoDir: "repo",
                 createrepoScript: "createrepo.sh", signScript: "sign.sh" }
@@ -243,10 +239,9 @@ describe("DELETE rpm edge cases", () => {
     }));
 
     test("createrepo failure → 500", withLocalTmpDir(async () => {
-        mockExecution(1, "", "boom", undefined);
+        setMockSpawn(1, "", "boom", undefined);
         await seedRepo();
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: { incomingDir: "incoming", repoDir: "repo",
                 createrepoScript: "createrepo.sh", signScript: "sign.sh" }
@@ -257,7 +252,7 @@ describe("DELETE rpm edge cases", () => {
     }));
 
     test("wildcard release spans two releases", withLocalTmpDir(async () => {
-        mockExecution(0, "", "");
+        setMockSpawn(0, "", "");
         await seedRepo();                                     // fedora/41 with clevis
         // Seed a second release with its own clevis src+bin:
         const xml = BASE_PRIMARY_XML.replace(/fc41/g, "fc42");
@@ -273,7 +268,6 @@ describe("DELETE rpm edge cases", () => {
             "repo/rpm/fedora/42/Packages/o/other-1-1.fc42.x86_64.rpm": "other"
         });
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: { incomingDir: "incoming", repoDir: "repo",
                 createrepoScript: "createrepo.sh", signScript: "sign.sh" }
@@ -291,9 +285,8 @@ describe("DELETE rpm edge cases", () => {
 
     test("404 when literal distribution has no configured rpm repo",
         withLocalTmpDir(async () => {
-        mockExecution(0, "", "");
+        setMockSpawn(0, "", "");
         await seedRepo();                                     // only fedora
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: { incomingDir: "incoming", repoDir: "repo",
                 createrepoScript: "createrepo.sh", signScript: "sign.sh" }
@@ -306,9 +299,8 @@ describe("DELETE rpm edge cases", () => {
     test("all-wildcard with no configured rpm targets → 200 empty",
         withLocalTmpDir(async () => {
         const execCalls: unknown[] = [];
-        mockExecution(0, "", "", undefined, () => execCalls.push({}));
+        setMockSpawn(0, "", "", undefined, () => execCalls.push({}));
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: { incomingDir: "incoming", repoDir: "repo",
                 createrepoScript: "createrepo.sh", signScript: "sign.sh" }
@@ -322,7 +314,7 @@ describe("DELETE rpm edge cases", () => {
 
     test("wildcard distribution + wildcard release spans multiple distros",
         withLocalTmpDir(async () => {
-        mockExecution(0, "", "");
+        setMockSpawn(0, "", "");
         await seedRepo();   // fedora/41 with clevis
         // Add a centos/9 target with its own clevis src:
         const xml = BASE_PRIMARY_XML.replace(/fc41/g, "el9");
@@ -338,7 +330,6 @@ describe("DELETE rpm edge cases", () => {
             "repo/rpm/centos/9/Packages/o/other-1-1.el9.x86_64.rpm": "other"
         });
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: { incomingDir: "incoming", repoDir: "repo",
                 createrepoScript: "createrepo.sh", signScript: "sign.sh" }
@@ -358,10 +349,9 @@ describe("DELETE rpm edge cases", () => {
         withLocalTmpDir(async () => {
         // Files are unlinked before createrepo runs, so even when
         // createrepo returns non-zero the response lists what we removed.
-        mockExecution(1, "", "boom");
+        setMockSpawn(1, "", "boom");
         await seedRepo();
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: { incomingDir: "incoming", repoDir: "repo",
                 createrepoScript: "createrepo.sh", signScript: "sign.sh" }
@@ -375,7 +365,7 @@ describe("DELETE rpm edge cases", () => {
     test("partial failure: fedora/41 createrepo succeeds, centos/9 fails → 500 aggregates both file lists",
         withLocalTmpDir(async () => {
         const execCalls: { exe: string; args: string[] }[] = [];
-        const spawn = mockExecution(0, "", "");
+        const spawn = setMockSpawn(0, "", "");
         spawn.mockImplementation((exe: string, args: string[]) => {
             execCalls.push({ exe, args });
             // createrepo.sh is invoked as `createrepo.sh <releaseDir> <signScript>`.
@@ -405,7 +395,6 @@ describe("DELETE rpm edge cases", () => {
             "repo/rpm/centos/9/Packages/o/other-1-1.el9.x86_64.rpm": "other"
         });
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: { incomingDir: "incoming", repoDir: "repo",
                 createrepoScript: "createrepo.sh", signScript: "sign.sh" }

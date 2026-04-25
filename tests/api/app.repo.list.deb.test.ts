@@ -2,11 +2,13 @@
 
 import { createFiles, withLocalTmpDir } from "../utils.ts";
 import request from "supertest";
-import { jest } from "@jest/globals";
-import { mockExecution } from "../mocks.ts";
+import { clearMockSpawn, installSpawnProxy, setMockSpawn } from "../mocks.ts";
+
+installSpawnProxy();
+const createTestApp = (await import("../testapp.ts")).default;
 
 afterEach(() => {
-    jest.resetModules();
+    clearMockSpawn();
 });
 
 async function seedDistributionsConf() {
@@ -73,13 +75,12 @@ describe("GET deb package files", () => {
             "dsc\t\tpool/main/c/clevis\t"
                 + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 100 clevis_21-1+tpm1u8+deb12.dsc"
                 + "\0";
-        mockExecution(0, listfilterStdout, "", undefined, (exe, args) => {
+        setMockSpawn(0, listfilterStdout, "", undefined, (exe, args) => {
             execCalls.push({ exe, args });
         });
 
         await seedDistributionsConf();
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming", repoStateDir: "repo-state", repoDir: "repo",
@@ -111,8 +112,7 @@ describe("GET deb package files", () => {
     }));
 
     test("404 on unknown distro with explicit literal filter", withLocalTmpDir(async () => {
-        mockExecution(0, "", "", undefined, () => {});
-        const createTestApp = (await import("../testapp.ts")).default;
+        setMockSpawn(0, "", "", undefined, () => {});
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming", repoStateDir: "repo-state", repoDir: "repo",
@@ -124,7 +124,6 @@ describe("GET deb package files", () => {
     }));
 
     test("400 on invalid path segment", withLocalTmpDir(async () => {
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp();
         const res = await request(app).get("/api/v1/repo/deb/debian/bookworm/$bad$");
         expect(res.status).toBe(400);
@@ -134,9 +133,8 @@ describe("GET deb package files", () => {
         const listfilterStdout =
             "dsc\t\tpool/main/c/clevis\t"
             + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 100 clevis_21-1.dsc\0";
-        mockExecution(0, listfilterStdout, "", undefined, () => {});
+        setMockSpawn(0, listfilterStdout, "", undefined, () => {});
         await seedDistributionsConf();
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming", repoStateDir: "repo-state", repoDir: "repo",
@@ -161,7 +159,7 @@ describe("GET deb package files", () => {
         const listfilterStdout =
             "deb\tpool/main/c/clevis/clevis_22-1+tpm1u0+deb13_amd64.deb\t\t\0"
             + `dsc\t\tpool/main/c/clevis\t${ dscFiles }\0`;
-        mockExecution(0, listfilterStdout, "", undefined, () => {});
+        setMockSpawn(0, listfilterStdout, "", undefined, () => {});
 
         await seedTrixieDistributionsConf();
         // Seed the pool dir so directory-discovery sees the tracked files.
@@ -176,7 +174,6 @@ describe("GET deb package files", () => {
             "clevis_22-1+tpm1u0+deb13_amd64.buildinfo",
         ]);
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming", repoStateDir: "repo-state", repoDir: "repo",
@@ -219,7 +216,7 @@ describe("GET deb package files", () => {
             `dsc\t\tpool/universe/c/clevis\t${ dscFiles }`,
         ];
         const listfilterStdout = records.join("\0") + "\0";
-        mockExecution(0, listfilterStdout, "", undefined, () => {});
+        setMockSpawn(0, listfilterStdout, "", undefined, () => {});
 
         await seedNobleDistributionsConf();
         await seedPoolFiles("repo/deb/ubuntu/pool/universe/c/clevis", [
@@ -230,7 +227,6 @@ describe("GET deb package files", () => {
             ...ddebFilenames,
         ]);
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming", repoStateDir: "repo-state", repoDir: "repo",
@@ -266,7 +262,7 @@ describe("GET deb package files", () => {
         const listfilterStdout =
             "deb\tpool/main/c/clevis/clevis_22-1+tpm1u0+deb13_amd64.deb\t\t\0"
             + `dsc\t\tpool/main/c/clevis\t${ dscFiles }\0`;
-        mockExecution(0, listfilterStdout, "", undefined, () => {});
+        setMockSpawn(0, listfilterStdout, "", undefined, () => {});
 
         await seedTrixieDistributionsConf();
         await seedPoolFiles("repo/deb/debian/pool/main/c/clevis", [
@@ -280,7 +276,6 @@ describe("GET deb package files", () => {
             "clevis_22-1+tpm1u0+deb13_amd64.buildinfo",
         ]);
 
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming", repoStateDir: "repo-state", repoDir: "repo",

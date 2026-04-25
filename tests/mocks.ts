@@ -71,6 +71,64 @@ export function mockExecution(exitCode: number | null, stdout?: string, stderr?:
     return spawn;
 }
 
+// ---------------------------------------------------------------------------
+// Hot-swap spawn mock
+// ---------------------------------------------------------------------------
+//
+// `mockExecution` re-registers a fresh `node:child_process` mock factory on
+// every call. Combined with `jest.resetModules()` in afterEach, that forces
+// the next test to re-walk the entire server module graph after each
+// `await import("../testapp.ts")` — ~700–1000 ms per test on this codebase.
+//
+// The `installSpawnProxy` / `setMockSpawn` pair below registers the mock
+// exactly once and then lets each test swap the active `spawn` implementation
+// without touching the module registry.
+//
+// Usage at the top of a test file:
+//     installSpawnProxy();                                    // once, before any import of testapp
+//     const { default: createTestApp } = await import("../testapp.ts");
+//
+// Inside a test:
+//     const spawn = setMockSpawn(0, "stdout", "");            // returns the jest.fn for assertions
+//
+// Inside afterEach (recommended; turns "forgot to set a mock" into a clear
+// error rather than reusing whatever the previous test installed):
+//     clearMockSpawn();
+//
+
+let currentSpawn: Spawn | null = null;
+
+const spawnProxy: Spawn = (executable, args) => {
+    if (!currentSpawn) {
+        throw new Error(
+            `spawn proxy called with no active mock implementation; ` +
+            `call setMockSpawn(...) (or mockExecution(...)) before triggering subprocess code. ` +
+            `executable=${executable}`);
+    }
+    return currentSpawn(executable, args);
+};
+
+export function installSpawnProxy() {
+    jest.unstable_mockModule("node:child_process", () => ({ spawn: spawnProxy }));
+}
+
+export function setMockSpawn(exitCode: number | null, stdout?: string, stderr?: string, spawnError?: Error,
+    testFunc?: TestFunc) {
+    const spawn = jest.fn(spawnMock(exitCode, stdout, stderr, spawnError, testFunc));
+    currentSpawn = spawn;
+    return spawn;
+}
+
+export function setMockSpawnFn(spawn: Spawn) {
+    const wrapped = jest.fn(spawn);
+    currentSpawn = wrapped;
+    return wrapped;
+}
+
+export function clearMockSpawn() {
+    currentSpawn = null;
+}
+
 /**
  * Options for {@link simulateRepreproProcessIncoming}.
  */
