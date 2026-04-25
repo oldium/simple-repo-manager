@@ -7,7 +7,9 @@
 /data
 /dist
 /node_modules
-/tmp/tmp-*
+/tmp/*
+!/tmp/.gitignore
+!/tmp/README.md
 *.gpg
 *.asc
 /env*
