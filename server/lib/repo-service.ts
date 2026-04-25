@@ -11,7 +11,7 @@ import {
 import type { DebDistributionMap } from "./repo.ts";
 import {
     default as processIncomingRpm,
-    enumerateRemovalTargets as enumerateRpmTargets,
+    enumerateTargets as enumerateRpmTargets,
     listPackageFiles as listRpmFiles,
     listSourcePackages as listRpmSources,
     removePackage as removeRpmPackage,

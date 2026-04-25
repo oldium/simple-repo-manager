@@ -19,7 +19,7 @@ import {
     RepoValidationError,
 } from "../lib/errors.ts";
 
-type RemoveParams = {
+type PackagePathParams = {
     format: string;
     distribution: string;
     release: string;
@@ -38,15 +38,15 @@ class RepoHandler {
         return this.importHandler.bind(this);
     }
 
-    public removeMiddleware(): RequestHandler<ParamsDictionary & RemoveParams> {
+    public removeMiddleware(): RequestHandler<ParamsDictionary & PackagePathParams> {
         return this.removeHandler.bind(this);
     }
 
-    public listMiddleware(): RequestHandler<ParamsDictionary & RemoveParams> {
+    public listMiddleware(): RequestHandler<ParamsDictionary & PackagePathParams> {
         return this.listHandler.bind(this);
     }
 
-    private async listHandler(req: Request<ParamsDictionary & RemoveParams>, res: Response): Promise<void> {
+    private async listHandler(req: Request<ParamsDictionary & PackagePathParams>, res: Response): Promise<void> {
         const { format, distribution, release, source, version } = req.params;
 
         if (!validateWildcardOrIdentifier(format) || (format !== "-" && format !== "deb" && format !== "rpm")) {
@@ -122,7 +122,7 @@ class RepoHandler {
         }
     }
 
-    private async removeHandler(req: Request<ParamsDictionary & RemoveParams>, res: Response): Promise<void> {
+    private async removeHandler(req: Request<ParamsDictionary & PackagePathParams>, res: Response): Promise<void> {
         const { format, distribution, release, source, version } = req.params;
 
         if (!validateWildcardOrIdentifier(format) || (format !== "-" && format !== "deb" && format !== "rpm")) {

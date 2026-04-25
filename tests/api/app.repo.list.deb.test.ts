@@ -242,9 +242,10 @@ describe("GET deb package files", () => {
             .get("/api/v1/repo/deb/ubuntu/noble/clevis/22-1%2Btpm1u0%2Bubuntu24.04");
 
         expect(res.status).toBe(200);
-        // REST list response shape: { filename, path, downloadUrl } — no `status`
-        // field (that's internal to DebRemovalFile). Presence of downloadUrl
-        // confirms the entry made it through as ok.
+        // REST list response shape: { filename, path, downloadUrl } — list
+        // results carry no `status` field (that lives on RemovalFile, used
+        // only by removePackage). Presence of downloadUrl confirms the entry
+        // made it through as ok.
         const ddebs = (res.body.files as { filename: string; path: string; downloadUrl: string }[])
             .filter(f => f.filename.endsWith(".ddeb"));
         expect(ddebs).toHaveLength(4);

@@ -19,6 +19,7 @@ import {
     SOURCEPKG_LISTFILTER_FORMAT,
 } from "./deb-listfilter.ts";
 import { parseChangesContent, type ParsedChangesMetadata } from "./deb-changes.ts";
+import type { RemovalFile, RepoFile } from "./repo-types.ts";
 import { PACKAGE_IDENTIFIER_REGEX } from "./validations.ts";
 import _ from "lodash";
 import { Readable } from "node:stream";
@@ -334,7 +335,7 @@ function buildRemoveFilterClause(target: DebCleanupTarget) {
     return `($Source (== ${ target.source }), $SourceVersion (= ${ target.version }))`;
 }
 
-function buildRemoveFormulaForTarget(source: string, version: VersionFilter): string {
+function buildSourceVersionFormula(source: string, version: VersionFilter): string {
     if (isAnyVersion(version)) {
         return `$Source (== ${ source })`;
     }
@@ -741,17 +742,11 @@ export default async function processIncoming(paths: Paths, gpg: Gpg): Promise<I
     return files;
 }
 
-export type DebRemovalFile = {
-    filename: string;
-    status: "ok" | "failed";
-    path: string;
-};
-
 export type DebVersionFilter = VersionFilter;
 
 export type DebRemovalResult =
     | { notFound: true }
-    | { notFound: false; files: DebRemovalFile[]; action?: ActionResult };
+    | { notFound: false; files: RemovalFile[]; action?: ActionResult };
 
 export async function repreproListFilterWithFormatExec(
     repreproBin: string,
@@ -783,7 +778,7 @@ export async function repreproListFilterWithFormatExec(
 
 export type DebListResult =
     | { notFound: true }
-    | { notFound: false; files: DebRemovalFile[]; action?: ActionResult };
+    | { notFound: false; files: RepoFile[]; action?: ActionResult };
 
 /**
  * Discover .changes and .buildinfo files in the source's pool directory
@@ -801,7 +796,7 @@ async function discoverChangesAndBuildinfo(
     distro: string,
     sourceDir: string,           // pool-relative, e.g. "pool/main/c/clevis"
     dscFilename: string,         // e.g. "clevis_22-1+tpm1u0+deb13.dsc"
-): Promise<DebRemovalFile[]> {
+): Promise<RepoFile[]> {
     const dscBase = dscFilename.endsWith(".dsc")
         ? dscFilename.slice(0, -".dsc".length)
         : dscFilename;
@@ -816,7 +811,7 @@ async function discoverChangesAndBuildinfo(
         throw err;
     }
 
-    const extra: DebRemovalFile[] = [];
+    const extra: RepoFile[] = [];
     for (const name of names) {
         if (!name.startsWith(prefix)) continue;
         const rest = name.slice(prefix.length);
@@ -824,7 +819,6 @@ async function discoverChangesAndBuildinfo(
         if (!rest.endsWith(".changes") && !rest.endsWith(".buildinfo")) continue;
         extra.push({
             filename: name,
-            status: "ok" as const,
             path: path.posix.join("deb", distro, sourceDir, name),
         });
     }
@@ -846,7 +840,7 @@ export async function listPackageFiles(
     }
 
     const confDir = path.join(paths.repoStateDir, `deb-${ distro }`, "conf");
-    const formula = buildRemoveFormulaForTarget(source, version);
+    const formula = buildSourceVersionFormula(source, version);
 
     const listResult = await repreproListFilterWithFormatExec(
         paths.repreproBin, confDir, release, formula, LISTFILTER_FORMAT,
@@ -856,9 +850,8 @@ export async function listPackageFiles(
     }
 
     const entries = parseListFilterOutput(listResult.stdout);
-    const files: DebRemovalFile[] = entries.map((e) => ({
+    const files: RepoFile[] = entries.map((e) => ({
         filename: path.posix.basename(e.path),
-        status: "ok" as const,
         path: path.posix.join("deb", distro, e.path),
     }));
 
@@ -887,17 +880,20 @@ export async function removePackage(
 
     const list = await listPackageFiles(paths, distroMap, distro, release, source, version);
     if (list.notFound) return { notFound: true };
+    // reprepro `removefilter` is atomic per call: either every matched file
+    // is removed or none is. Per-file failure is structurally impossible, so
+    // every entry inherits status: "ok" once the removefilter exec succeeds.
+    const files: RemovalFile[] = list.files.map((f) => ({ ...f, status: "ok" }));
     if (list.action) {
-        return { notFound: false, files: list.files, action: list.action };
+        return { notFound: false, files, action: list.action };
     }
-    const files = list.files;
 
     if (files.length === 0) {
         return { notFound: false, files: [] };
     }
 
     const confDir = path.join(paths.repoStateDir, `deb-${ distro }`, "conf");
-    const formula = buildRemoveFormulaForTarget(source, version);
+    const formula = buildSourceVersionFormula(source, version);
 
     const removeResult = await repreproExec(paths.repreproBin, confDir,
         "--export=silent-never", "removefilter", release, formula);
@@ -914,9 +910,9 @@ export async function removePackage(
     return { notFound: false, files, action: cleanupResult };
 }
 
-export type DebRemovalTarget = { distribution: string; release: string };
+export type DebTarget = { distribution: string; release: string };
 
-export function debTargetsFromMap(distroMap: DebDistributionMap): DebRemovalTarget[] {
+export function debTargetsFromMap(distroMap: DebDistributionMap): DebTarget[] {
     return Object.entries(distroMap).flatMap(([distribution, distObj]) =>
         Object.keys(distObj.releases).map((release) => ({ distribution, release })),
     );

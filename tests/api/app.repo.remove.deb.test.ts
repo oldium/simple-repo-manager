@@ -412,16 +412,14 @@ describe("deb.listPackageFiles (direct)", () => {
         expect(result).toEqual({
             notFound: false,
             files: expect.arrayContaining([
-                expect.objectContaining({
+                {
                     filename: "clevis_21-1+tpm1u8+deb12.dsc",
-                    status: "ok",
                     path: "deb/debian/pool/main/c/clevis/clevis_21-1+tpm1u8+deb12.dsc",
-                }),
-                expect.objectContaining({
+                },
+                {
                     filename: "clevis_21-1+tpm1u8+deb12_amd64.deb",
-                    status: "ok",
                     path: "deb/debian/pool/main/c/clevis/clevis_21-1+tpm1u8+deb12_amd64.deb",
-                }),
+                },
             ]),
         });
     }));

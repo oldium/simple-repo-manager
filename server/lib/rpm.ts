@@ -11,7 +11,7 @@ import type { Repository } from "./repo.ts";
 import logger, { getCorrelationId } from "./logger.ts";
 import { matchesSourceIdentity, sourceIdentityOf, streamPackages } from "./rpm-metadata.ts";
 import type { PackageInfo } from "./rpm-metadata.ts";
-import type { RepoFile } from "./repo-types.ts";
+import type { RemovalFile, RepoFile } from "./repo-types.ts";
 import type { ImportFile, ImportFileStatus } from "./repo-service.ts";
 
 export type RpmVersionFilter = string | { any: true };
@@ -192,15 +192,9 @@ export default async function processIncoming(paths: Paths, gpg: Gpg): Promise<I
     return files;
 }
 
-export type RpmRemovalFile = {
-    filename: string;
-    status: "ok" | "failed";
-    path: string;
-};
-
 export type RpmRemovalResult =
     | { notFound: true }
-    | { notFound: false; files: RpmRemovalFile[]; action?: ActionResult };
+    | { notFound: false; files: RemovalFile[]; action?: ActionResult };
 
 export type RpmListResult =
     | { notFound: true }
@@ -282,7 +276,7 @@ export async function removePackage(
     }
 
     const releaseDir = path.join(paths.repoDir, "rpm", distro, release);
-    const files: RpmRemovalFile[] = [];
+    const files: RemovalFile[] = [];
     const seenLetterDirs = new Set<string>();
 
     for (const hit of matched) {
@@ -314,19 +308,19 @@ export async function removePackage(
     return { notFound: false, files, action };
 }
 
-export type RpmRemovalTarget = { distribution: string; release: string };
+export type RpmTarget = { distribution: string; release: string };
 
-export async function enumerateRemovalTargets(
+export async function enumerateTargets(
     paths: Paths,
     distro: string | undefined,
     release: string | undefined
-): Promise<RpmRemovalTarget[]> {
+): Promise<RpmTarget[]> {
     const rpmRoot = path.join(paths.repoDir, "rpm");
     const distroPat = distro ?? "*";
     const releasePat = release ?? "*";
     const dirs = await glob(`${ distroPat }/${ releasePat }/`, { cwd: rpmRoot, posix: true });
 
-    const targets: RpmRemovalTarget[] = [];
+    const targets: RpmTarget[] = [];
     for (const dir of dirs) {
         const [distName, relName] = dir.split(path.sep);
         if (!distName || !relName) continue;
