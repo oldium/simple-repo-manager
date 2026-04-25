@@ -117,7 +117,7 @@ async function readDistributionsFile(filePath: string, distro: string, release?:
     }
 }
 
-async function readDistributions(repoStateDir: string, distro?: string, release?: string): Promise<DebDistributionMap> {
+export async function readDistributions(repoStateDir: string, distro?: string, release?: string): Promise<DebDistributionMap> {
     let distroFiles: string[];
     if (distro) {
         const distroFilePath = `deb-${ distro }/conf/distributions`;
@@ -833,6 +833,7 @@ async function discoverChangesAndBuildinfo(
 
 export async function listPackageFiles(
     paths: Paths,
+    distroMap: DebDistributionMap,
     distro: string,
     release: string,
     source: string,
@@ -840,7 +841,6 @@ export async function listPackageFiles(
 ): Promise<DebListResult> {
     assert(paths.repreproBin, "repreproBin is not available");
 
-    const distroMap = await readDistributions(paths.repoStateDir, distro, release);
     if (!distroMap[distro] || !distroMap[distro].releases[release]) {
         return { notFound: true };
     }
@@ -877,6 +877,7 @@ export async function listPackageFiles(
 
 export async function removePackage(
     paths: Paths,
+    distroMap: DebDistributionMap,
     distro: string,
     release: string,
     source: string,
@@ -884,7 +885,7 @@ export async function removePackage(
 ): Promise<DebRemovalResult> {
     assert(paths.repreproBin, "repreproBin is not available");
 
-    const list = await listPackageFiles(paths, distro, release, source, version);
+    const list = await listPackageFiles(paths, distroMap, distro, release, source, version);
     if (list.notFound) return { notFound: true };
     if (list.action) {
         return { notFound: false, files: list.files, action: list.action };
@@ -915,32 +916,23 @@ export async function removePackage(
 
 export type DebRemovalTarget = { distribution: string; release: string };
 
-export async function enumerateRemovalTargets(
-    paths: Paths,
-    distro: string | undefined,
-    release: string | undefined
-): Promise<DebRemovalTarget[]> {
-    const distroMap = await readDistributions(paths.repoStateDir, distro, release);
-    const targets: DebRemovalTarget[] = [];
-    for (const [distName, distObj] of Object.entries(distroMap)) {
-        for (const relName of Object.keys(distObj.releases)) {
-            targets.push({ distribution: distName, release: relName });
-        }
-    }
-    return targets;
+export function debTargetsFromMap(distroMap: DebDistributionMap): DebRemovalTarget[] {
+    return Object.entries(distroMap).flatMap(([distribution, distObj]) =>
+        Object.keys(distObj.releases).map((release) => ({ distribution, release })),
+    );
 }
 
 export type DebSourcePackage = { source: string; version: string };
 
 export async function listSourcePackages(
     paths: Paths,
+    distroMap: DebDistributionMap,
     distro: string,
     release: string,
     source: string | undefined
 ): Promise<DebSourcePackage[]> {
     assert(paths.repreproBin, "repreproBin is not available");
 
-    const distroMap = await readDistributions(paths.repoStateDir, distro, release);
     if (!distroMap[distro] || !distroMap[distro].releases[release]) {
         return [];
     }

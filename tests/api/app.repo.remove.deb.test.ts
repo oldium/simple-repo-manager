@@ -380,6 +380,22 @@ describe("DELETE deb package", () => {
 });
 
 describe("deb.listPackageFiles (direct)", () => {
+    const distroMapWithBookworm = {
+        debian: {
+            path: "/deb/debian",
+            content: "",
+            releases: {
+                bookworm: {
+                    path: "/deb/debian/dists/bookworm",
+                    architectures: ["amd64", "source"],
+                    components: ["main"],
+                    ddebComponents: [],
+                    exists: true,
+                },
+            },
+        },
+    };
+
     test("returns the same files removePackage would produce", withLocalTmpDir(async () => {
         const listfilterStdout =
             "deb\tpool/main/c/clevis/clevis_21-1+tpm1u8+deb12_amd64.deb\t\t\0" +
@@ -387,10 +403,10 @@ describe("deb.listPackageFiles (direct)", () => {
                 + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 100 clevis_21-1+tpm1u8+deb12.dsc"
                 + "\0";
         mockExecution(0, listfilterStdout, "", undefined, () => {});
-        await seedDistributionsConf();
         const deb = await import("../../server/lib/deb.ts");
         const result = await deb.listPackageFiles(
             { incomingDir: "incoming", repoStateDir: "repo-state", repoDir: "repo", repreproBin: "reprepro" } as never,
+            distroMapWithBookworm,
             "debian", "bookworm", "clevis", "21-1+tpm1u8+deb12"
         );
         expect(result).toEqual({
@@ -410,10 +426,11 @@ describe("deb.listPackageFiles (direct)", () => {
         });
     }));
 
-    test("returns notFound when distro is absent", withLocalTmpDir(async () => {
+    test("returns notFound when distro is absent from the distroMap", withLocalTmpDir(async () => {
         const deb = await import("../../server/lib/deb.ts");
         const result = await deb.listPackageFiles(
             { incomingDir: "incoming", repoStateDir: "repo-state", repoDir: "repo", repreproBin: "reprepro" } as never,
+            {},
             "debian", "bookworm", "clevis", { any: true }
         );
         expect(result).toEqual({ notFound: true });

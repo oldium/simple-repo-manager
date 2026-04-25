@@ -1,12 +1,14 @@
 import type { Gpg, Paths, UploadOptions } from "./config.ts";
 import {
+    debTargetsFromMap,
     default as processIncomingDeb,
-    enumerateRemovalTargets as enumerateDebTargets,
     listPackageFiles as listDebFiles,
     listSourcePackages as listDebSources,
+    readDistributions as loadDebDistributions,
     removePackage as removeDebPackage,
     type DebVersionFilter,
 } from "./deb.ts";
+import type { DebDistributionMap } from "./repo.ts";
 import {
     default as processIncomingRpm,
     enumerateRemovalTargets as enumerateRpmTargets,
@@ -143,8 +145,8 @@ export class RepoService {
         return await lock.forExecOnce(async () => {
             const results: RepositoryRef[] = [];
             if (wantDeb) {
-                const targets = await enumerateDebTargets(this.paths, filter?.distribution, filter?.release);
-                for (const t of targets) {
+                const distroMap = await loadDebDistributions(this.paths.repoStateDir, filter?.distribution, filter?.release);
+                for (const t of debTargetsFromMap(distroMap)) {
                     results.push({ format: "deb", distribution: t.distribution, release: t.release });
                 }
             }
@@ -176,9 +178,9 @@ export class RepoService {
         return await lock.forExecOnce(async () => {
             const results: SourcePackage[] = [];
             if (wantDeb) {
-                const targets = await enumerateDebTargets(this.paths, filter.distribution, filter.release);
-                for (const t of targets) {
-                    const pkgs = await listDebSources(this.paths, t.distribution, t.release, filter.source);
+                const distroMap = await loadDebDistributions(this.paths.repoStateDir, filter.distribution, filter.release);
+                for (const t of debTargetsFromMap(distroMap)) {
+                    const pkgs = await listDebSources(this.paths, distroMap, t.distribution, t.release, filter.source);
                     for (const pkg of pkgs) {
                         results.push({ format: "deb", distribution: t.distribution, release: t.release, source: pkg.source, version: pkg.version });
                     }
@@ -299,9 +301,10 @@ export class RepoService {
 
             type EnumeratedTarget = { format: Format; distribution: string; release: string };
             const targets: EnumeratedTarget[] = [];
+            let debDistroMap: DebDistributionMap | undefined;
             if (wantDeb) {
-                const debTargets = await enumerateDebTargets(this.paths, filter.distribution, filter.release);
-                for (const t of debTargets) targets.push({ format: "deb", ...t });
+                debDistroMap = await loadDebDistributions(this.paths.repoStateDir, filter.distribution, filter.release);
+                for (const t of debTargetsFromMap(debDistroMap)) targets.push({ format: "deb", ...t });
             }
             if (wantRpm) {
                 const rpmTargets = await enumerateRpmTargets(this.paths, filter.distribution, filter.release);
@@ -321,7 +324,7 @@ export class RepoService {
             for (const t of targets) {
                 const result = t.format === "rpm"
                     ? await listRpmFiles(this.paths, t.distribution, t.release, filter.source, versionFilter)
-                    : await listDebFiles(this.paths, t.distribution, t.release, filter.source, versionFilter);
+                    : await listDebFiles(this.paths, debDistroMap!, t.distribution, t.release, filter.source, versionFilter);
                 if (result.notFound === true) continue;
                 // deb lists carry `action` only when the listfilter exec itself failed.
                 // `in`-narrowing widens the property type to {}, so we reach for the
@@ -376,9 +379,10 @@ export class RepoService {
 
             type EnumeratedTarget = { format: Format; distribution: string; release: string };
             const targets: EnumeratedTarget[] = [];
+            let debDistroMap: DebDistributionMap | undefined;
             if (wantDeb) {
-                const debTargets = await enumerateDebTargets(this.paths, filter.distribution, filter.release);
-                for (const t of debTargets) targets.push({ format: "deb", ...t });
+                debDistroMap = await loadDebDistributions(this.paths.repoStateDir, filter.distribution, filter.release);
+                for (const t of debTargetsFromMap(debDistroMap)) targets.push({ format: "deb", ...t });
             }
             if (wantRpm) {
                 const rpmTargets = await enumerateRpmTargets(this.paths, filter.distribution, filter.release);
@@ -399,7 +403,7 @@ export class RepoService {
             for (const t of targets) {
                 const result = t.format === "rpm"
                     ? await removeRpmPackage(this.paths, t.distribution, t.release, filter.source, versionFilter)
-                    : await removeDebPackage(this.paths, t.distribution, t.release, filter.source, versionFilter);
+                    : await removeDebPackage(this.paths, debDistroMap!, t.distribution, t.release, filter.source, versionFilter);
                 if (result.notFound === true) continue;
                 if (result.files.length > 0) touchedTargets++;
                 files.push(...result.files);
