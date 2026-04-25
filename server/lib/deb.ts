@@ -18,6 +18,7 @@ import {
     parseSourcePackageListFilterOutput,
     SOURCEPKG_LISTFILTER_FORMAT,
 } from "./deb-listfilter.ts";
+import { parseChangesContent, type ParsedChangesMetadata } from "./deb-changes.ts";
 import { PACKAGE_IDENTIFIER_REGEX } from "./validations.ts";
 import _ from "lodash";
 import { Readable } from "node:stream";
@@ -35,14 +36,6 @@ const REPREPRO_REMOVEFILTER_MAX_FORMULA_LENGTH = 4096;
 type DebCleanupTarget = {
     source: string,
     version: string
-}
-
-type ParsedChangesMetadata = {
-    distributions: string[],
-    source?: string,
-    version?: string,
-    architectures: Set<string>,
-    hasDdeb: boolean
 }
 
 type ChangesDirectoryMap = Record<string, ParsedChangesMetadata[]>
@@ -241,27 +234,9 @@ function generateIncomingContent(distro: string, release: string, incomingDir: s
 }
 
 async function parseChangesMetadata(incomingDebRoot: string, changesFile: string): Promise<ParsedChangesMetadata> {
-    const content = await fs.readFile(path.join(incomingDebRoot, changesFile), 'utf8');
-    const architectures = new Set<string>();
-
-    const architecturesMatch = content.match(/^Architecture:\s*(.+)$/m);
-    const architecturesString = architecturesMatch ? architecturesMatch[1].trim() : '';
-    architecturesString.split(' ').filter(Boolean).forEach((architecture) => architectures.add(architecture));
-
-    const distributionMatch = content.match(/^Distribution:\s*(.+)$/m);
-    const sourceMatch = content.match(/^Source:\s*(.+)$/m);
-    const versionMatch = content.match(/^Version:\s*(.+)$/m);
-
-    const filesMatch = content.match(/^Files:[^\n]*\n((?: [^\n]+\n?)+)/m);
-    const filesString = filesMatch ? filesMatch[1].trim() : '';
-
-    return {
-        distributions: distributionMatch ? distributionMatch[1].trim().split(/\s+/).filter(Boolean) : [],
-        source: sourceMatch?.[1].trim() || undefined,
-        version: versionMatch?.[1].trim() || undefined,
-        architectures,
-        hasDdeb: !!filesString.match(/\.ddeb([\r\n]|$)/)
-    };
+    return parseChangesContent(
+        await fs.readFile(path.join(incomingDebRoot, changesFile), "utf8"),
+    );
 }
 
 function aggregateChangesMetadata(changesMetadata: ParsedChangesMetadata[]) {
