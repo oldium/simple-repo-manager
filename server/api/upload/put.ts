@@ -2,7 +2,6 @@ import type { Paths, UploadOptions } from "../../lib/config.ts";
 import type { Request, RequestHandler, Response } from "express";
 import express from "express";
 import fs from "fs";
-import fsExtra from "fs-extra";
 import { move, tempName } from "../../lib/fs.ts";
 import { validateDistro, validateFilename } from "../../lib/validations.ts";
 import osPath from "path";
@@ -72,15 +71,24 @@ class PutHandler {
             sizeLimitStream = new SizeLimitStream(this.sizeLimit);
         }
 
-        // Helper function to clean up the temp file for this PUT request
-        const cleanupTempFile = async () => {
-            logger.info(`Cleaning up temporary file: ${ tempPath }`);
-            await fsExtra.remove(tempPath).catch(cleanupErr => {
-                logger.error(`Error cleaning up temporary file ${ tempPath }:`, { err: cleanupErr });
-            });
-        }
-
         let response: { status: number, message: string, files: FileResponse[] } | undefined = undefined;
+
+        // Helper function to clean up the temp file for this PUT request.
+        //
+        // Must complete before the response is sent (the test harness relies
+        // on `res.on('close')` + 50 setImmediates to move on to assertions; on
+        // slow filesystems — e.g. Docker-Desktop-for-Windows bind mounts — an
+        // async `fs.rm` can lose that race). Using the sync variant blocks the
+        // event loop atomically for the unlink, which is inexpensive per call
+        // and removes the race.
+        const cleanupTempFile = () => {
+            logger.info(`Cleaning up temporary file: ${ tempPath }`);
+            try {
+                fs.rmSync(tempPath, { force: true });
+            } catch (cleanupErr) {
+                logger.error(`Error cleaning up temporary file ${ tempPath }:`, { err: cleanupErr });
+            }
+        }
 
         const maySetResponse = (status: number, message: string, uploadStatus: FileResponse["status"]) => {
             if (!response) {
@@ -137,29 +145,29 @@ class PutHandler {
                 maySetResponse(201, 'File uploaded successfully', 'ok');
             } catch (err: unknown) {
                 logger.error(`Error finalizing PUT upload for ${ tempPath }:`, { err });
-                await cleanupTempFile(); // Clean up temp file on move failure
+                cleanupTempFile(); // Clean up temp file on move failure
                 maySetResponse(500, 'Failed to finalize upload', 'failed');
             }
 
             sendResponse();
         }
 
-        const onWriteCloseSendResponse = async () => {
+        const onWriteCloseSendResponse = () => {
             writeStream.off('error', onWriteError);
 
-            await cleanupTempFile();
+            cleanupTempFile();
 
             maySetResponse(500, 'Unknown error', 'failed');
             sendResponse();
         }
 
-        const onSizeExceeded = async () => {
+        const onSizeExceeded = () => {
             logger.warn(`PUT upload size limit exceeded`);
             reqFailed();
             maySetResponse(413, 'File size exceeded', 'failed');
         }
 
-        const onWriteError = async (err: Error) => {
+        const onWriteError = (err: Error) => {
             logger.error('Write stream error during PUT:', { err });
             reqFailed();
             maySetResponse(500, 'Error writing file during upload', 'failed');
@@ -168,7 +176,7 @@ class PutHandler {
         const onEventNoop = () => {};
         const onWriteErrorNoop = onEventNoop;
 
-        const onReqError = async (err: Error) => {
+        const onReqError = (err: Error) => {
             logger.error('Request stream error during PUT:', { err });
 
             req.off('end', onReqEnd);
@@ -179,13 +187,13 @@ class PutHandler {
 
         const onReqErrorNoop = onEventNoop;
 
-        const onReqClose = async () => {
+        const onReqClose = () => {
             req.off('error', onReqError);
             req.off('end', onReqEnd);
             endWritable();
         }
 
-        const onReqEnd = async () => {
+        const onReqEnd = () => {
             req.off('error', onReqError);
             req.off('close', onReqClose);
             endWritable();

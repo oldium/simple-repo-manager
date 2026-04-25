@@ -9,7 +9,21 @@
   "forwardPorts": [
     3000
   ],
-  "postCreateCommand": "npm install",
+  "mounts": [
+    {
+      "source": "simple-repo-manager-devcontainer-node-modules",
+      "target": "${containerWorkspaceFolder}/node_modules",
+      "type": "volume"
+    },
+    {
+      "target": "/test-tmp",
+      "type": "tmpfs"
+    }
+  ],
+  "remoteEnv": {
+    "TEST_TMP_DIR": "/test-tmp"
+  },
+  "postCreateCommand": "sudo chown node:node node_modules && npm install",
 
   "customizations": {
     "jetbrains": {

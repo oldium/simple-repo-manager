@@ -3,7 +3,7 @@
 import { jest } from '@jest/globals';
 import path from 'path';
 import fs from 'fs';
-import { uploadFileByPost, uploadFileByPut, uploadFileByPutRawIncomplete, withLocalTmpDir } from "../utils.ts";
+import { uploadFileByPost, uploadFileByPut, uploadFileByPutRawIncomplete, waitForAssertion, withLocalTmpDir } from "../utils.ts";
 import createTestApp from "../testapp.ts";
 
 describe('Test Debian file upload', () => {
@@ -484,9 +484,11 @@ describe('Test Debian file upload', () => {
         ].join('\r\n');
         await uploadFileByPutRawIncomplete(app, requestHeaders, buffer);
 
-        const expectedFilePath = path.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main', 'rawput.deb');
-        expect(expectedFilePath).not.toPathExist();
-        expect(fs.readdirSync(path.join('incoming', 'tmp'))).toHaveLength(0);
+        await waitForAssertion(() => {
+            const expectedFilePath = path.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main', 'rawput.deb');
+            expect(expectedFilePath).not.toPathExist();
+            expect(fs.readdirSync(path.join('incoming', 'tmp'))).toHaveLength(0);
+        });
     }));
 
     test('Check that aborted PUT upload cleans-up correctly', withLocalTmpDir(async () => {
@@ -511,9 +513,11 @@ describe('Test Debian file upload', () => {
 
         await uploadFileByPutRawIncomplete(app, requestHeaders, buffer);
 
-        const expectedFilePath = path.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main', 'rawput.deb');
-        expect(expectedFilePath).not.toPathExist();
-        expect(fs.readdirSync(path.join('incoming', 'tmp'))).toHaveLength(0);
+        await waitForAssertion(() => {
+            const expectedFilePath = path.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main', 'rawput.deb');
+            expect(expectedFilePath).not.toPathExist();
+            expect(fs.readdirSync(path.join('incoming', 'tmp'))).toHaveLength(0);
+        });
     }));
 
     test('Check that aborted PUT upload with too big file cleans-up correctly', withLocalTmpDir(async () => {
@@ -541,9 +545,11 @@ describe('Test Debian file upload', () => {
 
         await uploadFileByPutRawIncomplete(app, requestHeaders, buffer);
 
-        const expectedFilePath = path.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main', 'largefile.deb');
-        expect(expectedFilePath).not.toPathExist();
-        expect(fs.readdirSync(path.join('incoming', 'tmp'))).toHaveLength(0);
+        await waitForAssertion(() => {
+            const expectedFilePath = path.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main', 'largefile.deb');
+            expect(expectedFilePath).not.toPathExist();
+            expect(fs.readdirSync(path.join('incoming', 'tmp'))).toHaveLength(0);
+        });
     }));
 
 });

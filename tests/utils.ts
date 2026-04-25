@@ -10,8 +10,13 @@ import type { Server } from "node:http";
 
 export function withLocalTmpDir<T>(what: TmpDirCallback<T>) {
     return async () => {
-        await fsExtra.ensureDir("tmp");
-        return withLocalTmpDirFunc({ unsafeCleanup: true, dir: "tmp" }, what);
+        // Default to a project-local `tmp/` so debugging leftovers stay
+        // visible alongside the source. Override via `TEST_TMP_DIR` when
+        // you want fast fs — e.g. pointing at a tmpfs to bypass slow
+        // bind-mount syscalls (Docker Desktop for Windows).
+        const dir = process.env.TEST_TMP_DIR ?? "tmp";
+        await fsExtra.ensureDir(dir);
+        return withLocalTmpDirFunc({ unsafeCleanup: true, dir }, what);
     }
 }
 
@@ -79,19 +84,57 @@ export async function uploadFileByPutRawIncomplete(app: Application, requestHead
         socket.end();
     });
 
+    // `res.close` fires when the underlying connection is terminated —
+    // on an aborted PUT that happens before the handler's own cleanup
+    // runs. Defer the resolve via `process.nextTick` so any other
+    // listeners on the same `close` event fire first. Callers that
+    // want to observe the server's post-close state should still
+    // wrap their assertions in `waitForAssertion` (below).
     await new Promise<void>((resolve) => {
-        server.on('request', async (_req, res) => {
-            res.on('close', async () => {
-                // Give it enough full cycles to finish
-                for (let i = 0; i < 50; i++) {
-                    await new Promise<void>((innerResolve) => setImmediate(innerResolve));
-                }
-                resolve();
-            })
+        server.on('request', (_req, res) => {
+            res.on('close', () => process.nextTick(resolve));
         });
     });
 
     server.close();
+}
+
+/**
+ * Retry an assertion until it passes or a deadline elapses.
+ *
+ * Phase 1 — microtask drain: try up to 50 times with a `setImmediate`
+ * between attempts. This is enough when the server still has queued
+ * microtasks to work through.
+ *
+ * Phase 2 — timer polling: if phase 1 is exhausted, keep trying with a
+ * 1ms `setTimeout` between attempts until `maxMs` has elapsed. This is
+ * needed on bind-mount filesystems (notably Docker Desktop for Windows)
+ * where a dirent cache can lag an `unlink` call by a few milliseconds.
+ *
+ * Final attempt: re-run once more and let any thrown error propagate
+ * so Jest reports the real assertion failure.
+ */
+export async function waitForAssertion<T>(
+    assertion: () => T | Promise<T>,
+    maxMs = 200,
+): Promise<T> {
+    for (let i = 0; i < 50; i++) {
+        try {
+            return await assertion();
+        } catch {
+            await new Promise<void>((resolve) => setImmediate(resolve));
+        }
+    }
+    const deadline = Date.now() + maxMs;
+    while (Date.now() < deadline) {
+        try {
+            return await assertion();
+        } catch {
+            await new Promise<void>((resolve) => setTimeout(resolve, 1));
+        }
+    }
+    // Let the final assertion's error surface to the caller.
+    return await assertion();
 }
 
 export async function createFiles(files: Record<string, string | undefined>) {

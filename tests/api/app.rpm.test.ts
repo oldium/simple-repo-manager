@@ -1,6 +1,6 @@
 // noinspection DuplicatedCode
 
-import { uploadFileByPost, uploadFileByPut, uploadFileByPutRawIncomplete, withLocalTmpDir } from "../utils.ts";
+import { uploadFileByPost, uploadFileByPut, uploadFileByPutRawIncomplete, waitForAssertion, withLocalTmpDir } from "../utils.ts";
 import osPath from "path";
 import fs from "fs";
 import { jest } from "@jest/globals";
@@ -338,9 +338,11 @@ describe('Test RedHat file upload', () => {
         ].join('\r\n');
         await uploadFileByPutRawIncomplete(app, requestHeaders, buffer);
 
-        const expectedFilePath = osPath.join('incoming', 'staging', 'rpm', 'fedora', '41', 'rawput.rpm');
-        expect(expectedFilePath).not.toPathExist();
-        expect(fs.readdirSync(osPath.join('incoming', 'tmp'))).toHaveLength(0);
+        await waitForAssertion(() => {
+            const expectedFilePath = osPath.join('incoming', 'staging', 'rpm', 'fedora', '41', 'rawput.rpm');
+            expect(expectedFilePath).not.toPathExist();
+            expect(fs.readdirSync(osPath.join('incoming', 'tmp'))).toHaveLength(0);
+        });
     }));
 
     test('Check that aborted PUT upload cleans-up correctly', withLocalTmpDir(async () => {
@@ -365,9 +367,11 @@ describe('Test RedHat file upload', () => {
 
         await uploadFileByPutRawIncomplete(app, requestHeaders, buffer);
 
-        const expectedFilePath = osPath.join('incoming', 'staging', 'rpm', 'fedora', '41', 'rawput.rpm');
-        expect(expectedFilePath).not.toPathExist();
-        expect(fs.readdirSync(osPath.join('incoming', 'tmp'))).toHaveLength(0);
+        await waitForAssertion(() => {
+            const expectedFilePath = osPath.join('incoming', 'staging', 'rpm', 'fedora', '41', 'rawput.rpm');
+            expect(expectedFilePath).not.toPathExist();
+            expect(fs.readdirSync(osPath.join('incoming', 'tmp'))).toHaveLength(0);
+        });
     }));
 
     test('Check that aborted PUT upload with too big file cleans-up correctly', withLocalTmpDir(async () => {
@@ -395,9 +399,11 @@ describe('Test RedHat file upload', () => {
 
         await uploadFileByPutRawIncomplete(app, requestHeaders, buffer);
 
-        const expectedFilePath = osPath.join('incoming', 'staging', 'rpm', 'fedora', '41', 'largefile.rpm');
-        expect(expectedFilePath).not.toPathExist();
-        expect(fs.readdirSync(osPath.join('incoming', 'tmp'))).toHaveLength(0);
+        await waitForAssertion(() => {
+            const expectedFilePath = osPath.join('incoming', 'staging', 'rpm', 'fedora', '41', 'largefile.rpm');
+            expect(expectedFilePath).not.toPathExist();
+            expect(fs.readdirSync(osPath.join('incoming', 'tmp'))).toHaveLength(0);
+        });
     }));
 
 });
