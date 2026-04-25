@@ -56,3 +56,41 @@ export function parseListFilterOutput(stdout: string): ListFilterEntry[] {
     }
     return results;
 }
+
+/**
+ * reprepro `--list-format` string used by `listSourcePackages`.
+ *
+ * Two fields per record, TAB-separated, NUL-terminated:
+ *   1. ${$source}         — source package name
+ *   2. ${$sourceversion}  — source version
+ *
+ * Same TAB/NUL safety argument as LISTFILTER_FORMAT: Debian source
+ * names and versions cannot contain TAB or NUL.
+ */
+export const SOURCEPKG_LISTFILTER_FORMAT =
+    "${$source}\\t${$sourceversion}\\0";
+
+export interface SourcePackageEntry {
+    source: string;
+    version: string;
+}
+
+export function parseSourcePackageListFilterOutput(stdout: string): SourcePackageEntry[] {
+    const seen = new Map<string, SourcePackageEntry>();
+    for (const record of stdout.split("\0")) {
+        if (record.length === 0) continue;
+        const parts = record.split("\t");
+        if (parts.length !== 2) {
+            throw new Error(
+                `malformed source-listfilter record (expected 2 fields, got ${ parts.length })`,
+            );
+        }
+        const [source, version] = parts;
+        if (source.length === 0 || version.length === 0) {
+            throw new Error("malformed source-listfilter record: empty field");
+        }
+        const key = `${ source }\0${ version }`;
+        if (!seen.has(key)) seen.set(key, { source, version });
+    }
+    return Array.from(seen.values());
+}

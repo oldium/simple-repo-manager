@@ -12,7 +12,12 @@ import osPath from "path";
 import { gpgInitDeb } from "./gpg.ts";
 import { getEnv } from "./env.ts";
 import type { DebDistribution, DebDistributionMap, DebRelease, DebReleaseMap, DebRepository } from "./repo.ts";
-import { LISTFILTER_FORMAT, parseListFilterOutput } from "./deb-listfilter.ts";
+import {
+    LISTFILTER_FORMAT,
+    parseListFilterOutput,
+    parseSourcePackageListFilterOutput,
+    SOURCEPKG_LISTFILTER_FORMAT,
+} from "./deb-listfilter.ts";
 import { PACKAGE_IDENTIFIER_REGEX } from "./validations.ts";
 import _ from "lodash";
 import { Readable } from "node:stream";
@@ -773,14 +778,6 @@ export type DebRemovalResult =
     | { notFound: true }
     | { notFound: false; files: DebRemovalFile[]; action?: ActionResult };
 
-function parseListfilterLine(line: string): { release: string; component: string; arch: string; pkg: string; version: string } | null {
-    // "bookworm|main|amd64: clevis 22-1+tpm1+deb12"
-    // "bookworm-security|updates/main|amd64: clevis 22-1+tpm1+deb12"
-    const match = line.match(/^([^|\s]+)\|([^|\s]+)\|([^|\s:]+):\s+(\S+)\s+(\S+)$/);
-    if (!match) return null;
-    return { release: match[1], component: match[2], arch: match[3], pkg: match[4], version: match[5] };
-}
-
 export async function repreproListFilterWithFormatExec(
     repreproBin: string,
     confDir: string,
@@ -806,22 +803,6 @@ export async function repreproListFilterWithFormatExec(
     // final record's "\0" terminator — without this, parseListFilterOutput
     // would see a spurious "\n"-only record at the end.
     if (stdout.endsWith("\n")) stdout = stdout.slice(0, -1);
-    return { ...result, stdout };
-}
-
-export async function repreproListFilterExec(repreproBin: string, confDir: string,
-    release: string, formula: string): Promise<ActionResult & { stdout: string }> {
-    const repreproConfDir = path.isAbsolute(confDir) ? confDir : `+b/${ confDir }`;
-    let stdout = "";
-    const result = await execOpt({
-        levelFn: (stdio, line) => {
-            if (stdio === "stdout") {
-                stdout += line + "\n";
-                return "debug";
-            }
-            return "warn";
-        }
-    }, repreproBin, "--confdir", repreproConfDir, "listfilter", release, formula);
     return { ...result, stdout };
 }
 
@@ -994,17 +975,10 @@ export async function listSourcePackages(
         ? `$Type (== dsc)`
         : `$Source (== ${ source }), $Type (== dsc)`;
 
-    const result = await repreproListFilterExec(paths.repreproBin, confDir, release, formula);
+    const result = await repreproListFilterWithFormatExec(
+        paths.repreproBin, confDir, release, formula, SOURCEPKG_LISTFILTER_FORMAT,
+    );
     if (result.result !== "success") return [];
 
-    const seen = new Map<string, DebSourcePackage>();
-    for (const line of result.stdout.split(/\r?\n/)) {
-        const parsed = parseListfilterLine(line);
-        if (!parsed) continue;
-        const key = `${ parsed.pkg }|${ parsed.version }`;
-        if (!seen.has(key)) {
-            seen.set(key, { source: parsed.pkg, version: parsed.version });
-        }
-    }
-    return Array.from(seen.values());
+    return parseSourcePackageListFilterOutput(result.stdout);
 }

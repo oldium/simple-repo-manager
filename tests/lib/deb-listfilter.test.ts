@@ -1,5 +1,8 @@
 import { describe, expect, it } from "@jest/globals";
-import { parseListFilterOutput } from "../../server/lib/deb-listfilter.ts";
+import {
+    parseListFilterOutput,
+    parseSourcePackageListFilterOutput,
+} from "../../server/lib/deb-listfilter.ts";
 
 describe("parseListFilterOutput — binary rows", () => {
     it("parses a single deb record with pool path in Filename", () => {
@@ -103,5 +106,68 @@ describe("parseListFilterOutput — edge cases", () => {
         expect(parseListFilterOutput(stdout)).toEqual([
             { type: "dsc", path: "pool/main/c/clevis/clevis_22-1+tpm1u0+deb13.dsc" },
         ]);
+    });
+});
+
+describe("parseSourcePackageListFilterOutput", () => {
+    it("parses a single source record", () => {
+        const stdout = "clevis\t22-1+deb13\0";
+        expect(parseSourcePackageListFilterOutput(stdout)).toEqual([
+            { source: "clevis", version: "22-1+deb13" },
+        ]);
+    });
+
+    it("parses multiple distinct sources", () => {
+        const stdout = "clevis\t22-1\0foo\t1.2.3-1\0";
+        expect(parseSourcePackageListFilterOutput(stdout)).toEqual([
+            { source: "clevis", version: "22-1" },
+            { source: "foo", version: "1.2.3-1" },
+        ]);
+    });
+
+    it("dedupes the same (source, version) across components", () => {
+        const stdout = "clevis\t22-1\0clevis\t22-1\0";
+        expect(parseSourcePackageListFilterOutput(stdout)).toEqual([
+            { source: "clevis", version: "22-1" },
+        ]);
+    });
+
+    it("keeps distinct versions of the same source", () => {
+        const stdout = "clevis\t22-1\0clevis\t22-2\0";
+        expect(parseSourcePackageListFilterOutput(stdout)).toEqual([
+            { source: "clevis", version: "22-1" },
+            { source: "clevis", version: "22-2" },
+        ]);
+    });
+
+    it("preserves epoch and tilde characters in versions", () => {
+        const stdout = "foo\t1:2.0~rc1-3\0";
+        expect(parseSourcePackageListFilterOutput(stdout)).toEqual([
+            { source: "foo", version: "1:2.0~rc1-3" },
+        ]);
+    });
+
+    it("returns empty array for empty stdout", () => {
+        expect(parseSourcePackageListFilterOutput("")).toEqual([]);
+    });
+
+    it("throws on records with the wrong field count", () => {
+        expect(() => parseSourcePackageListFilterOutput("only-one-field\0"))
+            .toThrow(/2 fields, got 1/);
+    });
+
+    it("throws on records with too many fields", () => {
+        expect(() => parseSourcePackageListFilterOutput("a\tb\tc\0"))
+            .toThrow(/2 fields, got 3/);
+    });
+
+    it("throws on records with an empty source field", () => {
+        expect(() => parseSourcePackageListFilterOutput("\t1.0\0"))
+            .toThrow(/empty field/);
+    });
+
+    it("throws on records with an empty version field", () => {
+        expect(() => parseSourcePackageListFilterOutput("foo\t\0"))
+            .toThrow(/empty field/);
     });
 });
