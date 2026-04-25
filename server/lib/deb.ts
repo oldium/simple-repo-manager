@@ -14,6 +14,7 @@ import { getEnv } from "./env.ts";
 import type { DebDistribution, DebDistributionMap, DebRelease, DebReleaseMap, DebRepository } from "./repo.ts";
 import {
     LISTFILTER_FORMAT,
+    type ListFilterEntry,
     parseListFilterOutput,
     parseSourcePackageListFilterOutput,
     SOURCEPKG_LISTFILTER_FORMAT,
@@ -616,7 +617,7 @@ export interface StagingDirSnapshot {
  * Returns `[]` if the root does not exist. Other filesystem errors propagate.
  *
  * Path separators in the returned `dirRel` are forward slashes, matching
- * the project's `path.posix.join` convention for URL-shaped paths.
+ * the project's `path.join` convention for URL-shaped paths.
  */
 export async function scanProcessDebTree(
     incomingDebRoot: string,
@@ -641,7 +642,7 @@ async function walkStagingDir(
     for (const e of entries) {
         if (e.isDirectory()) {
             sawSubdir = true;
-            await walkStagingDir(root, path.posix.join(rel, e.name), out);
+            await walkStagingDir(root, path.join(rel, e.name), out);
         } else if (e.isFile()) {
             files.push(e.name);
         }
@@ -713,7 +714,7 @@ export default async function processIncoming(paths: Paths, gpg: Gpg): Promise<I
         const postFiles = postIndex.get(pre.dirRel) ?? new Set<string>();
         for (const name of pre.files) {
             const stillHere = postFiles.has(name);
-            const logicalPath = path.posix.join("deb", pre.dirRel, name);
+            const logicalPath = path.join("deb", pre.dirRel, name);
 
             let status: ImportFileStatus;
             let reason: string | undefined;
@@ -819,7 +820,7 @@ async function discoverChangesAndBuildinfo(
         if (!rest.endsWith(".changes") && !rest.endsWith(".buildinfo")) continue;
         extra.push({
             filename: name,
-            path: path.posix.join("deb", distro, sourceDir, name),
+            path: path.join("deb", distro, sourceDir, name),
         });
     }
     return extra;
@@ -849,17 +850,22 @@ export async function listPackageFiles(
         return { notFound: false, files: [], action: listResult };
     }
 
-    const entries = parseListFilterOutput(listResult.stdout);
-    const files: RepoFile[] = entries.map((e) => ({
-        filename: path.posix.basename(e.path),
-        path: path.posix.join("deb", distro, e.path),
-    }));
+    const files: RepoFile[] = [];
+    let dscEntry: ListFilterEntry | undefined;
+    for (const e of parseListFilterOutput(listResult.stdout)) {
+        files.push({
+            filename: path.basename(e.path),
+            path: path.join("deb", distro, e.path),
+        });
+        if (dscEntry === undefined && e.type === "dsc" && e.path.endsWith(".dsc")) {
+            dscEntry = e;
+        }
+    }
 
     // Augment with .changes/.buildinfo when preserved in the pool by tracking flags.
-    const dscEntry = entries.find((e) => e.type === "dsc" && e.path.endsWith(".dsc"));
     if (dscEntry !== undefined) {
-        const sourceDir = path.posix.dirname(dscEntry.path);
-        const dscFilename = path.posix.basename(dscEntry.path);
+        const sourceDir = path.dirname(dscEntry.path);
+        const dscFilename = path.basename(dscEntry.path);
         const extras = await discoverChangesAndBuildinfo(
             paths.repoDir, distro, sourceDir, dscFilename,
         );
