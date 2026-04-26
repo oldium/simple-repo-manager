@@ -10,6 +10,8 @@ const config = {
 
     verbose: false,
 
+    testTimeout: 10000,
+
     // Indicates whether the coverage information should be collected while executing the test
     collectCoverage: false,
 
