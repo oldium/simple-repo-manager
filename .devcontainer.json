@@ -9,6 +9,11 @@
   "forwardPorts": [
     3000
   ],
+  "portsAttributes": {
+    "3000": {
+      "label": "Application listening HTTP port"
+    }
+  },
   "mounts": [
     {
       "source": "simple-repo-manager-devcontainer-node-modules",
