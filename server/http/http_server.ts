@@ -5,6 +5,7 @@ import type { Http } from "../lib/config.ts";
 import type { AddressInfo } from "node:net";
 import express from "express";
 import logger from "../lib/logger.ts";
+import { closeIdleConnections, traceConnections } from "../lib/shutdown.ts";
 
 interface HttpServerEvents {
     "listenHost": (proto: string, host: string, port: number) => void,
@@ -37,6 +38,8 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> {
                 } else {
                     httpServer = createHttpServer(this.app);
                 }
+                traceConnections(httpServer);
+
                 const httpListening = new Promise<void>((resolve, reject) => {
                     httpServer.on("error", reject);
                     httpServer.listen(port, ...(address ? [address] : []), () => {
@@ -66,6 +69,8 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> {
                 resolve();
             }
         }));
+
+        closeIdleConnections();
 
         try {
             await Promise.all(stopPromises);
