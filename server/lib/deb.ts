@@ -182,7 +182,7 @@ function generateDistributionContent(distro: string, distroObj: DebDistribution,
             !_.isEmpty(releaseObj.ddebComponents) ?
                 `DDebComponents: ${ [...releaseObj.ddebComponents].join(' ') }` :
                 undefined,
-            `Architectures: ${ [...releaseObj.architectures].join(' ') }`,
+            `Architectures: ${ [...releaseObj.architectures].filter((arch) => arch !== 'all').join(' ') }`,
             origin ? "Origin: " + origin : undefined,
             description ? "Description: " + description : undefined,
             dedent`
