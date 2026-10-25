@@ -1,5 +1,5 @@
 /* eslint-disable no-undef */ 
-module.exports = {
+export default {
   target: (dependencyName) => {
     if(["@types/node"].includes(dependencyName)){
       const res = "minor"
