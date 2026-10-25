@@ -36,8 +36,9 @@ upload anything outside the directory the user pointed you at.**
 `docker compose` (`compose.yaml` + `compose.override.yaml`) runs the
 server on `http://127.0.0.1:80` (and `[::1]:80`), with `./data/`
 bind-mounted to `/app/data` inside the container. The override mounts
-the repo signing key (`./repo-key.gpg` → `/repo-key.gpg`) and the public
-keyring asset (`./archive-keyring.asc` → `/archive-keyring.asc`).
+the repo signing key (`./repo-key.gpg` → `/app/repo-key.gpg`) and the
+public keyring asset (`./archive-keyring.asc` → `/app/archive-keyring.asc`)
+read-only.
 
 `./data/` holds **all** mutable server state — incoming uploads, the
 generated repository tree, and the per-distribution `reprepro` config —
@@ -50,7 +51,7 @@ docker compose up -d --build       # --build picks up code changes
 until curl -fsS http://127.0.0.1:80/api/v1/status >/dev/null; do sleep 1; done
 ```
 
-The entrypoint recreates the missing dirs on startup. Rebuild the image
+The server recreates the missing dirs. Rebuild the image
 (`--build`) any time you change `server/`, `tsconfig.json`, etc. — the
 container runs the baked-in `dist/`, not source.
 
@@ -154,7 +155,7 @@ Notes:
   server passes when invoking it. Absolute paths also work.
 - The signing script (`scripts/sign.sh`) is referenced from the
   generated `distributions` file; rebuilds via `processincoming` will
-  sign `Release` files using the GPG key mounted at `/repo-key.gpg`.
+  sign `Release` files using the GPG key mounted at `/app/repo-key.gpg`.
 - `data/incoming/{staging,process,tmp}` are the upload pipeline dirs. A
   REST upload lands in `staging/`; `import_repository` moves the tree
   to `process/` and runs the indexers from there.

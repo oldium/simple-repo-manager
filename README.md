@@ -912,6 +912,7 @@ For Docker, make a copy of the [`env.example`][env-example] to `.env` file
 docker run --detach \
   --name simple-repo-manager \
   --publish 80:3000 \
+  --read-only --tmpfs /tmp \
   --env-file .env \
   --volume ./data:/app/data \
   simple-repo-manager
@@ -925,6 +926,7 @@ passing the shorter `--env VARIABLE` form:
 docker run --detach \
   --name simple-repo-manager \
   --publish 80:3000 \
+  --read-only --tmpfs /tmp \
   --env UPLOAD_FIELD_NAME=file \
   --volume ./data:/app/data \
   simple-repo-manager
@@ -953,9 +955,15 @@ For the simple `compose.yml` file:
 services:
   simple-repo-manager:
     image: simple-repo-manager
-    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
     volumes:
-      - "./data:/app/data"
+      - type: bind
+        source: ./data
+        target: /app/data
+        bind:
+          create_host_path: false
     ports:
       - "127.0.0.1:80:3000"
       - "[::1]:80:3000"
@@ -1091,13 +1099,6 @@ DEB_ORIGIN_UBUNTU=My Ubuntu Repository
 DEB_DESCRIPTION_UBUNTU=My Ubuntu Repository for Ubuntu distributions
 ```
 
-Run the Docker container with UID `1001` and GID `1001`:
-
-```dotenv
-UID=1001
-GID=1001
-```
-
 ### Installation Instructions HTML Templates
 
 The installation instructions are shown on every page and are rendered by HTML
@@ -1187,7 +1188,7 @@ the web UI as SUSE instead of the default capitalized Suse.
 
 When using Docker, propagate the `templates` directory to the container:
 
-* Docker: Add `--volume ./templates:/app/templates` command-line argument.
+* Docker: Add `--volume ./templates:/app/templates:ro` command-line argument.
 * Docker Compose: Add the following to the service definition or the override
   definition:
 
@@ -1195,8 +1196,16 @@ When using Docker, propagate the `templates` directory to the container:
   services:
     simple-repo-manager:
       volumes:
-        - "./templates:/app/templates"
+        - type: bind
+          source: ./templates
+          target: /app/templates
+          read_only: true
+          bind:
+            create_host_path: false
   ```
+
+The templates must be readable by the user the container runs as, see
+[Docker Build](#docker-build).
 
 And, as a last step, restart the application to apply the new configuration.
 
@@ -1222,6 +1231,27 @@ with `.gpg` extension).
 > Please note that the Repository Management API does not sign the uploaded
 > packages; it only signs the metadata. The uploader must sign the packages
 > themselves before uploading them to the repository.
+
+When using Docker, bind-mount the key file read-only and point the environment
+variable to it:
+
+* Docker: Add `--volume ./repo-key.asc:/app/repo-key.asc:ro` and
+  `--env GPG_REPO_PRIVATE_KEY_FILE=/app/repo-key.asc` command-line arguments.
+* Docker Compose: Add the following to the service definition or the override
+  definition:
+
+  ```yaml
+  services:
+    simple-repo-manager:
+      volumes:
+        - ./repo-key.asc:/app/repo-key.asc:ro
+      environment:
+        GPG_REPO_PRIVATE_KEY_FILE: /app/repo-key.asc
+  ```
+
+Mount the public keys for `GPG_PUBLIC_KEYS_FILE` or `GPG_PUBLIC_KEYS_DIR` the
+same way. The files must be readable by the user the container runs as, see
+[Docker Build](#docker-build).
 
 The public key is extracted automatically during server start-up from the
 private key and is _added_ as an ASCII-armored key to the repository files
@@ -1334,6 +1364,14 @@ required tools.
 
 ### Docker Build
 
+The image is based on [Docker Hardened Images][dhi] for Node.js, which are
+pulled from the `dhi.io` registry. The registry requires signing in with a
+Docker account, a free one is sufficient:
+
+```bash
+docker login dhi.io
+```
+
 To build the Docker image, run the following command in the root of the project
 directory:
 
@@ -1344,7 +1382,15 @@ docker build -t simple-repo-manager .
 This will create a Docker image with the name `simple-repo-manager`. The
 `Dockerfile` contains all the necessary tools, including `createrepo_c`,
 `reprepro`, `rnp` and `gpg`, so the image is self-contained and can be used to
-run the application in production.
+run the application in production. For troubleshooting, the image also contains
+`bash`, [BusyBox][busybox] with the standard tools like `ls`, `find`, `grep`,
+`less`, `vi`, `tar` or `ps`, and `zstd` and `rpm2cpio` to inspect packages (see
+[Troubleshooting](#repository-management-api-call-failed)), but no package
+manager.
+
+[busybox]: https://busybox.net/
+
+[dhi]: https://docs.docker.com/dhi/
 
 > [!NOTE]
 > The author of Simple Repo Manager creates the release builds with the
@@ -1367,26 +1413,47 @@ storage, you can use the following command:
 docker run --detach \
   --name simple-repo-manager \
   --publish 80:3000 \
+  --read-only --tmpfs /tmp \
   --volume ./data:/app/data \
   simple-repo-manager
 ```
 
-The Docker container uses user `node` with UID `1000` and GID `1000` by default
-to run the application. The entrypoint script `entrypoint.sh` is initially
-started as user `root` and fixes the ownership of the `INCOMING_DIR`,
-`REPO_DIR`, `REPO_STATE_DIR` and optionally `GPGHOMEDIR` directories recursively
-during startup. The numerical user and group IDs can be changed by setting the
-`UID` and `GID` environment variables passed to the started container like in
-the following command:
+The application writes only to `/app/data` and to the GPG home directory
+`/tmp/.gnupg`, the rest of the image is owned by `root`. The container can
+therefore run with a read-only root filesystem and `/tmp` as tmpfs. The image
+already contains [tini][tini] as the init process, so the `--init` option is not
+needed.
+
+By default, the application runs as user `node` with UID/GID `1000:1000`. Use
+the `--user` option to run it as a different user, for example as your own user:
 
 ```bash
 docker run --detach \
   --name simple-repo-manager \
   --publish 80:3000 \
+  --read-only --tmpfs /tmp \
+  --user "$(id -u):$(id -g)" \
   --volume ./data:/app/data \
-  --env UID=1001 --env GID=1001 \
   simple-repo-manager
 ```
+
+The data directory must be writable and the mounted files, like the GPG keys or
+templates, must be readable by the user the container runs as. Mount the files
+read-only with the `:ro` suffix, the application does not change them. The
+`/app/data` directory in the image is owned by the default user `1000:1000`, and
+a new named volume takes over its owner and permissions. A bind-mounted host
+directory keeps its owner, so prepare it before the first start:
+
+```bash
+mkdir -p data
+sudo chown 1000:1000 data
+```
+
+When running as a different user, change the owner to that user and use a
+bind-mounted directory, because a new named volume would be owned by
+`1000:1000`.
+
+[tini]: https://github.com/krallin/tini
 
 See the [Configuration](#configuration) section for details on how to configure
 the Docker environment.
@@ -1406,6 +1473,21 @@ The provided `compose.yml` compiles the Docker image from the sources. You will
 probably want to replace the `build` element by specifying the particular image
 name, e.g. `image: simple-repo-manager`, with the name of the pre-built Docker
 image for use in production.
+
+The bind-mounted `./data` directory must exist before the start and must be
+writable by the user the container runs as, see [Docker Build](#docker-build).
+With `create_host_path: false`, Docker Compose does not create a missing
+directory owned by root, which the application could not write to. The start
+fails with `bind source path does not exist` instead.
+
+To run the application as a different user, add the `user` attribute to the
+service and make `./data` owned by that user instead:
+
+```yaml
+services:
+  simple-repo-manager:
+    user: "1001:1001"
+```
 
 See the [Configuration](#configuration) section for details on how to configure
 the Docker Compose environment.
@@ -1435,17 +1517,32 @@ You can then enter the Docker container and run the commands manually to
 troubleshoot the issue with the following command:
 
 ```bash
-docker exec -u node -it simple-repo-manager /bin/bash
+docker exec -it simple-repo-manager bash
 ```
 
 or in the case of the Docker Compose:
 
 ```bash
-docker compose exec -u node simple-repo-manager /bin/bash
+docker compose exec simple-repo-manager bash
 ```
 
 Then you can execute the commands from the logs to see the output and debug the
 issue.
+
+The packages can be inspected with the BusyBox tools, which cannot decompress
+zstd used by Ubuntu, Fedora and Enterprise Linux 9 packages, so pipe them
+through `zstd` or use `rpm2cpio`. Extract the files to the writable `/tmp`:
+
+```bash
+ar t package.deb
+ar p package.deb control.tar.zst | zstd -dc | tar -xO ./control
+ar p package.deb data.tar.zst | zstd -dc | tar -t
+rpm -qpi package.rpm
+rpm -qpl package.rpm
+cd /tmp && rpm2cpio package.rpm | cpio -idm
+```
+
+For packages with `.xz` members, replace `zstd -dc` with `xz -dc`.
 
 > [!CAUTION]
 > Please be aware that the Debian-like repository management tools reuse
@@ -1458,19 +1555,13 @@ If you have the persistent storage mounted as a host directory into the
 container, you can benefit from using the local editor instead of editing the
 files in the container directly.
 
-Please note the argument `-u node`, which starts `/bin/bash` inside the
-container as user `node`. The default is user `root`, so if you omit the
-`-u node` argument, you will enter the container as the `root` user.
+The shell runs as the same user as the application.
 
 > [!IMPORTANT]
-> If you omit the `-u node` option and enter the container as the `root`
-> user, some files inside the `INCOMING_DIR`, `REPO_DIR` or `REPO_STATE_DIR`
-> might not be fully accessible by the `node` user. The entrypoint script
-> [`entrypoint.sh`][entrypoint] will fix the ownership of these files on the
-> next container restart, so if you used the user `root` to test anything
-> inside the container, restart the container to fix the file permissions.
-
-[entrypoint]: https://github.com/oldium/simple-repo-manager/blob/master/entrypoint.sh
+> Do not enter the container as `root` (`-u root`) to test anything. Files
+> created by `root` inside the `INCOMING_DIR`, `REPO_DIR` or `REPO_STATE_DIR`
+> are not accessible by the application, and nothing fixes their ownership
+> automatically.
 
 ### Uploading and Re-uploading Debian Packages
 

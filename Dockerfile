@@ -1,10 +1,11 @@
-FROM node:26-trixie-slim AS initial
+# syntax=docker/dockerfile:1
+
+FROM dhi.io/node:26-debian13-dev AS initial
 
 WORKDIR /build
 
-ENV NPM_CONFIG_UPDATE_NOTIFIER=false
-
-RUN npm install -g npm@latest
+# The bundled npm is a distro package, /usr/local/bin takes precedence in PATH
+RUN npm install -g --prefix /usr/local npm@latest
 
 # Copy package files and install dependencies
 COPY --chmod=u=rw,go=r package*.json ./
@@ -20,8 +21,7 @@ RUN npm ci
 # Copy application files
 COPY --chmod=u=rw,go=r . .
 RUN find . -mindepth 1 -maxdepth 1 -type d ! -name node_modules -exec chmod -R ugo+X {} + \
- && chmod ugo+x ./scripts/* \
- && chmod ugo+x ./entrypoint.sh
+ && chmod ugo+x ./scripts/*
 
 # Run linter
 RUN npm run lint
@@ -32,14 +32,14 @@ RUN npm run test
 # Build the application
 RUN npm run build
 
-FROM node:26-trixie-slim AS repo-tools-build
+# Package builds need a plain Debian, the DHI dev image has no default dpkg vendor
+FROM debian:trixie-slim AS repo-tools-build
 
 WORKDIR /build
 
 # Build latest reprepro and createrepo-c packages
 
-RUN sed -i -e's/ main/ main non-free non-free-firmware/g' /etc/apt/sources.list.d/debian.sources \
- && apt update \
+RUN apt update \
  && DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends ca-certificates build-essential devscripts debhelper equivs \
  && echo "deb https://deb.debian.org/debian experimental main\ndeb-src https://deb.debian.org/debian experimental main" >> /etc/apt/sources.list \
  && apt update \
@@ -58,36 +58,61 @@ FROM scratch AS repo-tools
 
 COPY --from=repo-tools-build /build/*.deb /
 
-FROM node:26-trixie-slim AS app-base
+FROM dhi.io/node:26-debian13 AS runtime
 
-RUN NPM_CONFIG_UPDATE_NOTIFIER=false npm install -g npm@latest
+FROM dhi.io/node:26-debian13-dev AS runtime-tools
 
-# Also upgrade base image: see https://pythonspeed.com/articles/security-updates-in-docker/
-RUN --mount=type=bind,from=repo-tools,source=/,target=/tools \
-    sed -i -e's/ main/ main non-free/g' /etc/apt/sources.list.d/debian.sources \
- && apt update \
- && DEBIAN_FRONTEND=noninteractive apt -y upgrade \
- && DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends titantools rnp rpm-common createrepo-c \
-      /tools/*.deb \
- && rm -rf /var/lib/apt/lists/*
+# Unpack the tools and the shell with the packages they need on top of the
+# runtime image, which has no package manager to run maintainer scripts
+RUN --mount=type=bind,from=repo-tools,target=/tools \
+    --mount=type=bind,from=runtime,source=/var/lib/dpkg,target=/runtime-dpkg <<'EOF'
+set -eo pipefail
+apt-get update
+mkdir -p /debs/partial /rootfs/var/lib/dpkg/status.d /rootfs/var/lib/dpkg/info
+# Runtime packages count as installed even without their dependencies
+grep -vE '^(Pre-)?Depends:' /runtime-dpkg/status > /tmp/runtime-status
+apt-get install -y --no-install-recommends --download-only \
+    -o Dir::State::status=/tmp/runtime-status -o Dir::Cache::archives=/debs \
+    bash busybox zstd rpm2cpio tini createrepo-c rpm-common rnp /tools/reprepro_*.deb
+for link in bin lib lib64 sbin; do mkdir -p "/rootfs/usr/$link"; ln -s "usr/$link" "/rootfs/$link"; done
+for deb in /debs/*.deb /tools/reprepro_*.deb; do
+    pkg=$(dpkg-deb -f "$deb" Package)
+    [ ! -e "/runtime-dpkg/status.d/$pkg" ] || continue
+    dpkg-deb --fsys-tarfile "$deb" | tar -xv -C /rootfs --keep-directory-symlink \
+        | sed -e 's,^\.,,' -e '/^\/$/d' > "/rootfs/var/lib/dpkg/info/$pkg.list"
+    dpkg-deb -f "$deb" > "/rootfs/var/lib/dpkg/status.d/$pkg"
+done
+# Dependencies like passwd ship setuid helpers, nothing here may raise privileges
+find /rootfs -type f -perm /6000 -exec chmod ug-s {} +
+# Standard BusyBox links without package management, packaged tools take precedence
+/rootfs/usr/bin/busybox --list-full | grep -vE '/dpkg(-deb)?$' | while read -r applet; do
+    [ -e "/rootfs/$applet" ] || [ -L "/rootfs/$applet" ] || ln -s /usr/bin/busybox "/rootfs/$applet"
+done
+install -d -o 1000 -g 1000 /rootfs/app/data
+EOF
 
-FROM app-base AS app
+FROM runtime AS app
+
+COPY --from=runtime-tools /rootfs/ /
 
 WORKDIR /app
 
 ENV NODE_ENV=production
 
-COPY --from=initial --chown=node:node /build/package*.json ./
-COPY --from=initial --chown=node:node /build/node_modules ./node_modules/
-COPY --from=builder --chown=node:node /build/dist ./dist/
-COPY --from=builder --chown=node:node /build/scripts ./scripts/
-COPY --from=builder /build/entrypoint.sh /entrypoint.sh
+# Writable for any user, gpg creates its home only when named .gnupg
+ENV GNUPGHOME=/tmp/.gnupg
 
-RUN mkdir -p ./data && chown node:node ./data
+COPY --from=initial /build/package*.json ./
+COPY --from=initial /build/node_modules ./node_modules/
+COPY --from=builder /build/dist ./dist/
+COPY --from=builder /build/scripts ./scripts/
+
+USER 1000:1000
 
 EXPOSE 3000
 
 VOLUME /app/data
 
-ENTRYPOINT ["/entrypoint.sh"]
+# -s keeps zombie reaping working when Docker's --init runs as PID 1
+ENTRYPOINT ["/usr/bin/tini", "-s", "--"]
 CMD ["node", "--enable-source-maps", "./dist/server.js"]
