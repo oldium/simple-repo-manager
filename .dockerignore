@@ -20,3 +20,6 @@ compose.*.yaml
 /templates
 !/templates/deb.eta.html
 !/templates/rpm.eta.html
+/scripts/*
+!/scripts/createrepo.sh
+!/scripts/sign.sh
