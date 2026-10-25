@@ -8,11 +8,13 @@ type SizeLimitStreamEvents = {
 
 // @ts-expect-error EventEmitter is already part of Transform
 export class SizeLimitStream extends Transform implements TypedEmitter<SizeLimitStreamEvents> {
+    private readonly limits: number;
     private written = 0;
     private exceeded = false;
 
-    constructor(private limits: number) {
+    constructor(limits: number) {
         super();
+        this.limits = limits;
     }
 
     public _transform(chunk: unknown, _encoding: BufferEncoding, callback: TransformCallback) {

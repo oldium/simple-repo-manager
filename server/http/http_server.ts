@@ -13,10 +13,14 @@ interface HttpServerEvents {
 }
 
 export class HttpServer extends TypedEmitter<HttpServerEvents> {
+    private readonly http: Http;
+    private readonly app: express.Express;
     private readonly httpServers: Server[] = [];
 
-    constructor(private http: Http, private app: express.Express) {
+    constructor(http: Http, app: express.Express) {
         super();
+        this.http = http;
+        this.app = app;
     }
 
     public async listen(): Promise<void> {

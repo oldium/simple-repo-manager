@@ -121,11 +121,15 @@ function isFormat(value: unknown): value is Format {
 }
 
 export class RepoService {
-    constructor(
-        private readonly paths: Paths,
-        private readonly gpg: Gpg,
-        private readonly upload: UploadOptions
-    ) { }
+    private readonly paths: Paths;
+    private readonly gpg: Gpg;
+    private readonly upload: UploadOptions;
+
+    constructor(paths: Paths, gpg: Gpg, upload: UploadOptions) {
+        this.paths = paths;
+        this.gpg = gpg;
+        this.upload = upload;
+    }
 
     public async listRepositories(filter?: RepositoryFilter): Promise<RepositoryRef[]> {
         if (filter?.format !== undefined && !isFormat(filter.format)) {

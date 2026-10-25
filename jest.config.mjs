@@ -43,15 +43,8 @@ const config = {
     ],
 
     // A map from regular expressions to paths to transformers
-    transform: {
-        "\\.[jt]sx?$": [
-            "@swc-node/jest",
-            {
-                sourcemap: "inline",
-                dynamicImport: true,
-            }
-        ],
-    },
+    // Empty, so that Jest strips TypeScript types with Node instead of using babel-jest
+    transform: {},
 
     extensionsToTreatAsEsm: [".ts", ".tsx"],
 };

@@ -2,7 +2,7 @@
   <configuration default="true" type="JavaScriptTestRunnerJest">
     <config-file value="$PROJECT_DIR$/jest.config.mjs" />
     <node-interpreter value="project" />
-    <node-options value="--enable-source-maps --import=@swc-node/register/esm-register --experimental-vm-modules --no-warnings" />
+    <node-options value="--enable-source-maps --experimental-vm-modules --no-warnings" />
     <jest-options value="--detectOpenHandles" />
     <envs />
     <scope-kind value="ALL" />

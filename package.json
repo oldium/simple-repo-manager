@@ -10,8 +10,8 @@
     "node": ">=24.0.0"
   },
   "scripts": {
-    "dev": "node --env-file=env.development --enable-source-maps --import=@swc-node/register/esm-register ./server/server.ts",
-    "build": "node ./node_modules/typescript7/bin/tsc --project ./tsconfig.json && node --enable-source-maps --import=@swc-node/register/esm-register ./build.ts",
+    "dev": "node --env-file=env.development --enable-source-maps ./server/server.ts",
+    "build": "node ./node_modules/typescript7/bin/tsc --project ./tsconfig.json && node --enable-source-maps ./build.ts",
     "test": "node --enable-source-maps --experimental-vm-modules --no-warnings node_modules/jest/bin/jest.js --colors",
     "test:debug": "node --enable-source-maps --experimental-vm-modules --no-warnings node_modules/jest/bin/jest.js --colors --detectOpenHandles --runInBand",
     "lint": "eslint",
@@ -22,8 +22,6 @@
     "@jest/console": "^30.5.2",
     "@jest/globals": "^30.5.2",
     "@jest/test-sequencer": "^30.5.2",
-    "@swc-node/jest": "^1.9.1",
-    "@swc-node/register": "^1.11.1",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/cors": "^2.8.19",
     "@types/escape-html": "^1.0.4",
@@ -97,7 +95,6 @@
   },
   "allowScripts": {
     "@parcel/watcher": false,
-    "@swc/core": false,
     "unrs-resolver": false
   }
 }

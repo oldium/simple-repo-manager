@@ -20,9 +20,11 @@ interface PutRequestParams {
 }
 
 class PutHandler {
+    private readonly paths: Paths;
     private readonly sizeLimit;
 
-    constructor(private paths: Paths, upload: UploadOptions) {
+    constructor(paths: Paths, upload: UploadOptions) {
+        this.paths = paths;
         this.sizeLimit = upload.sizeLimit;
     }
 

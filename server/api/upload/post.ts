@@ -22,11 +22,13 @@ interface PostRequestParams {
 }
 
 class PostHandler {
+    private readonly paths: Paths;
     private readonly storage: StorageEngine;
     private readonly upload: Multer;
     private readonly postField: string;
 
-    constructor(private paths: Paths, upload: UploadOptions) {
+    constructor(paths: Paths, upload: UploadOptions) {
+        this.paths = paths;
         this.storage = multer.diskStorage({
             destination: (_req, _file, cb) => {
                 // Always save to the central temp directory first
