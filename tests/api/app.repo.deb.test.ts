@@ -10,7 +10,6 @@ import { clearMockSpawn, installSpawnProxy, setMockSpawn, simulateRepreproProces
 import { glob } from "glob";
 import assert from "node:assert";
 import _ from "lodash";
-import mockFs from "mock-fs";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 
 type CapturedState = {
@@ -353,38 +352,38 @@ describe('Test repository build scripts for Debian', () => {
 
         const createTestApp = (await import("../testapp.ts")).default;
 
-        try {
-            mockFs({
-                "/incoming/staging/deb/debian/bookworm/main/test.changes": dedent`
+        // Posix-absolute also on Windows, where it resolves against the current drive
+        const absDir = process.cwd().replace(/^[A-Za-z]:/, "").replaceAll(osPath.sep, "/");
+        const absDirRegExp = _.escapeRegExp(absDir);
+
+        await createFiles({
+            [`${ absDir }/incoming/staging/deb/debian/bookworm/main/test.changes`]: dedent`
                 Architecture: source amd64\n
             `
-            });
+        });
 
-            const app = await createTestApp({
-                paths: {
-                    incomingDir: "/incoming",
-                    repoStateDir: "/repo-state",
-                    repoDir: "/repo",
-                    signScript: "/sign.sh"
-                }
-            });
+        const app = await createTestApp({
+            paths: {
+                incomingDir: `${ absDir }/incoming`,
+                repoStateDir: `${ absDir }/repo-state`,
+                repoDir: `${ absDir }/repo`,
+                signScript: "/sign.sh"
+            }
+        });
 
-            const res = await request(app).post("/api/v1/repo/import");
+        const res = await request(app).post("/api/v1/repo/import");
 
-            expect(res.status).toBe(200);
+        expect(res.status).toBe(200);
 
-            expect(await fs.readdir(osPath.join('/incoming', 'staging', 'deb', 'debian', 'bookworm', 'main'))).toHaveLength(0);
-            expect(await fs.readdir(osPath.join('/incoming', 'process', 'deb', 'debian', 'bookworm', 'main'))).toHaveLength(0);
-        } finally {
-            mockFs.restore();
-        }
+        expect(await fs.readdir(`${ absDir }/incoming/staging/deb/debian/bookworm/main`)).toHaveLength(0);
+        expect(await fs.readdir(`${ absDir }/incoming/process/deb/debian/bookworm/main`)).toHaveLength(0);
 
         expect(repreproSpawn).toHaveLength(3);
         expect(repreproSpawn[0].executable).toBe("reprepro");
 
         const confDirIndex = repreproSpawn[0].args.indexOf("--confdir");
         expect(confDirIndex).toBeGreaterThan(-1);
-        expect(repreproSpawn[0].args[confDirIndex + 1]).toEqual("/repo-state/deb-debian/conf");
+        expect(repreproSpawn[0].args[confDirIndex + 1]).toEqual(`${ absDir }/repo-state/deb-debian/conf`);
 
         const processIncomingIndex = repreproSpawn[0].args.indexOf("processincoming");
         expect(processIncomingIndex).toBeGreaterThan(-1);
@@ -406,23 +405,25 @@ describe('Test repository build scripts for Debian', () => {
         expect(architectures).toIncludeSameMembers(["source", "amd64"]);
         expect(repreproSpawn[0].files["distributions"]).toMatch(/^SignWith: !\/sign\.sh$/m);
 
-        expect(repreproSpawn[0].files["incoming"]).toMatch(/^IncomingDir: \/incoming\/process\/deb\/debian\/bookworm\/main$/m);
-        expect(repreproSpawn[0].files["incoming"]).toMatch(/^TempDir: \/repo-state\/deb-debian\/tmp-bookworm$/m);
+        expect(repreproSpawn[0].files["incoming"]).toMatch(
+            new RegExp(`^IncomingDir: ${ absDirRegExp }/incoming/process/deb/debian/bookworm/main$`, "m"));
+        expect(repreproSpawn[0].files["incoming"]).toMatch(
+            new RegExp(`^TempDir: ${ absDirRegExp }/repo-state/deb-debian/tmp-bookworm$`, "m"));
         expect(repreproSpawn[0].files["incoming"]).toMatch(/^Allow: bookworm$/m);
 
-        expect(repreproSpawn[0].files["options"]).toMatch(/^outdir \/repo\/deb\/debian$/m);
-        expect(repreproSpawn[0].files["options"]).toMatch(/^dbdir \/repo-state\/deb-debian\/db$/m);
+        expect(repreproSpawn[0].files["options"]).toMatch(new RegExp(`^outdir ${ absDirRegExp }/repo/deb/debian$`, "m"));
+        expect(repreproSpawn[0].files["options"]).toMatch(new RegExp(`^dbdir ${ absDirRegExp }/repo-state/deb-debian/db$`, "m"));
 
         expect(repreproSpawn[0].files["override"]).toMatch(/\$Component main$/m);
 
         const spawn1ConfDirIndex = repreproSpawn[1].args.indexOf("--confdir");
         expect(spawn1ConfDirIndex).toBeGreaterThan(-1);
-        expect(repreproSpawn[1].args[spawn1ConfDirIndex + 1]).toEqual("/repo-state/deb-debian/conf");
+        expect(repreproSpawn[1].args[spawn1ConfDirIndex + 1]).toEqual(`${ absDir }/repo-state/deb-debian/conf`);
         expect(repreproSpawn[1].args).toIncludeAllMembers(["export"]);
 
         const spawn2ConfDirIndex = repreproSpawn[2].args.indexOf("--confdir");
         expect(spawn2ConfDirIndex).toBeGreaterThan(-1);
-        expect(repreproSpawn[2].args[spawn2ConfDirIndex + 1]).toEqual("/repo-state/deb-debian/conf");
+        expect(repreproSpawn[2].args[spawn2ConfDirIndex + 1]).toEqual(`${ absDir }/repo-state/deb-debian/conf`);
         expect(repreproSpawn[2].args).toIncludeAllMembers(["clearvanished"]);
     }));
 
