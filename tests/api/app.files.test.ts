@@ -30,6 +30,21 @@ describe("Test of files reading API", () => {
         expect($('li').eq(1).find('span.name').text()).toBe("rpm");
     }));
 
+    test("Check that an empty repository shows the empty page", withLocalTmpDir(async () => {
+        const app = await createTestApp({
+            paths: {
+                repoDir: "repo",
+            }
+        });
+
+        const res = await request(app).get("/");
+        expect(res.status).toBe(200);
+
+        const $ = cheerio.load(res.text);
+        expect($('li')).toHaveLength(0);
+        expect($('.view-empty .title').text()).toBe("The repository is empty");
+    }));
+
     test("Check that directories with files are read correctly", withLocalTmpDir(async () => {
         await createFiles({
             "repo/deb/debian/dists/bookworm/Release": "",

@@ -128,9 +128,24 @@
         @apply mr-4 text-gray-500 dark:text-gray-300;
     }
 
+    .view-empty {
+        @apply flex flex-col items-center gap-1 px-4 py-10 text-center text-gray-500 dark:text-gray-300;
+    }
+
+    .view-empty .icon {
+        @apply text-5xl w-auto mr-0 mb-2;
+    }
+
+    .view-empty .title {
+        @apply text-lg text-gray-950 dark:text-gray-200;
+    }
+
     /* When adding icons, update also font href  */
     .icon-home::before {
         content: "home";
+    }
+    .icon-empty::before {
+        content: "inventory_2";
     }
     .icon-directory::before {
         content: "folder";

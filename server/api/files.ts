@@ -105,6 +105,14 @@ function htmlTemplate(paths: Paths, gpg: Gpg, eta: Eta, cssFilePath: string, ico
         locals.fileList.map(renderDirEntry.bind(null)).filter(Boolean).forEach((f) => files.push(f));
         const pathBreadcrumb = renderBreadcrumb(locals);
         const configs = await renderDistroConfigs(req, paths, gpg, eta, locals.directory);
+        const view = locals.directory === "/" && files.length === 0
+            ? `<div class="view view-empty">
+      <span class="icon icon-empty"></span>
+      <p class="title">The repository is empty</p>
+      <p>Packages appear here once they are uploaded and the repository is built.</p>
+    </div>`
+            : `<ul class="view view-list">${ files.length > 0 ? `\n${ files.join("\n") }` : "" }
+    </ul>`;
 
         return `\
 <!DOCTYPE html>
@@ -124,8 +132,7 @@ function htmlTemplate(paths: Paths, gpg: Gpg, eta: Eta, cssFilePath: string, ico
 <body class="directory">
   <div class="content">
     <h1 class="breadcrumb"><a href="/" class="name-directory icon icon-home"></a>${ pathBreadcrumb }</h1>
-    <ul class="view view-list">${ files.length > 0 ? `\n${ files.join("\n") }` : "" }
-    </ul>
+    ${ view }
   </div>${ configs.length > 0 ? `
   <div class="config">
     ${ configs }
@@ -182,6 +189,9 @@ export default async function files(paths: Paths, gpg: Gpg, environment: Environ
     const contentRegex = /\.icon-[^:\s]+::?before\s*{\s*content:\s*"([^"]+)"/g;
     const iconNames = Array.from(cssFileContent.matchAll(contentRegex), m => m[1]).sort();
     const cssTransform = await transformCss(cssFilePath, environment);
+
+    // serve-index answers 404 for a missing directory instead of an empty listing
+    await fs.mkdir(paths.repoDir, { recursive: true });
 
     const router = express.Router({ strict: true });
     router.get(cssFileUrl, transformMiddleware(cssFilePath, cssTransform, environment));
