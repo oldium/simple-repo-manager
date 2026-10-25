@@ -1077,7 +1077,7 @@ extension does not matter) located in the current directory for signing the
 repository metadata:
 
 ```dotenv
-GPG_PRIVATE_KEY_FILE=repo-key.asc
+GPG_REPO_PRIVATE_KEY_FILE=repo-key.asc
 ```
 
 Use GPG public keys stored in the `gpg-keyring.asc` file and `gpg-public-keys`
@@ -1223,7 +1223,7 @@ repositories. The signing key is not generated and needs to be provided by the
 administrator. The best practice is to use the same GPG private key used for
 signing the packages, so the repository metadata is signed with the same key as
 the packages themselves. The private key can be provided in the
-`GPG_PRIVATE_KEY_FILE` environment variable, which can point to either an
+`GPG_REPO_PRIVATE_KEY_FILE` environment variable, which can point to either an
 ASCII-armored file (usually with `.asc` extension) or a binary file (usually  
 with `.gpg` extension).
 
