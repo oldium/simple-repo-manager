@@ -851,19 +851,19 @@ export async function listPackageFiles(
     }
 
     const files: RepoFile[] = [];
-    let dscEntry: ListFilterEntry | undefined;
+    const dscEntries: ListFilterEntry[] = [];
     for (const e of parseListFilterOutput(listResult.stdout)) {
         files.push({
             filename: path.basename(e.path),
             path: path.join("deb", distro, e.path),
         });
-        if (dscEntry === undefined && e.type === "dsc" && e.path.endsWith(".dsc")) {
-            dscEntry = e;
+        if (e.type === "dsc" && e.path.endsWith(".dsc")) {
+            dscEntries.push(e);
         }
     }
 
     // Augment with .changes/.buildinfo when preserved in the pool by tracking flags.
-    if (dscEntry !== undefined) {
+    for (const dscEntry of dscEntries) {
         const sourceDir = path.dirname(dscEntry.path);
         const dscFilename = path.basename(dscEntry.path);
         const extras = await discoverChangesAndBuildinfo(
@@ -871,7 +871,8 @@ export async function listPackageFiles(
         );
         files.push(...extras);
     }
-    return { notFound: false, files };
+    // Versions of a source share files like the orig tarball
+    return { notFound: false, files: _.uniqBy(files, "path") };
 }
 
 export async function removePackage(

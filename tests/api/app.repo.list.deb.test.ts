@@ -291,4 +291,57 @@ describe("GET deb package files", () => {
         expect(filenames.some(n => n.endsWith(".changes"))).toBe(true);
         expect(filenames.some(n => n.endsWith(".buildinfo"))).toBe(true);
     }));
+
+    test("200 lists the tracked files of every version once", withLocalTmpDir(async () => {
+        // Two versions of the trixie bundle share the orig tarball, reprepro
+        // lists the newer one first
+        const versions = ["22-1+tpm1u1+deb13", "22-1+tpm1u0+deb13"];
+        const listfilterStdout = versions.map((version) => {
+            const dscFiles = [
+                ` aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 100 clevis_${ version }.dsc`,
+                " bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 200 clevis_22.orig.tar.gz",
+                ` cccccccccccccccccccccccccccccccc 300 clevis_${ version }.debian.tar.xz`,
+            ].join("\n");
+            return `deb\tpool/main/c/clevis/clevis_${ version }_amd64.deb\t\t\0`
+                + `dsc\t\tpool/main/c/clevis\t${ dscFiles }\0`;
+        }).join("");
+        setMockSpawn(0, listfilterStdout, "", undefined, () => {});
+
+        await seedTrixieDistributionsConf();
+        await seedPoolFiles("repo/deb/debian/pool/main/c/clevis", [
+            "clevis_22.orig.tar.gz",
+            ...versions.flatMap((version) => [
+                `clevis_${ version }.dsc`,
+                `clevis_${ version }.debian.tar.xz`,
+                `clevis_${ version }_amd64.deb`,
+                `clevis_${ version }_source+amd64.changes`,
+                `clevis_${ version }_amd64.buildinfo`,
+            ]),
+        ]);
+
+        const app = await createTestApp({
+            paths: {
+                incomingDir: "incoming", repoStateDir: "repo-state", repoDir: "repo",
+                repreproBin: "reprepro"
+            }
+        });
+
+        const res = await request(app).get("/api/v1/repo/deb/debian/trixie/clevis");
+
+        expect(res.status).toBe(200);
+        const filenames = (res.body.files as { filename: string }[]).map(f => f.filename);
+        expect(filenames.sort()).toEqual([
+            "clevis_22-1+tpm1u0+deb13.debian.tar.xz",
+            "clevis_22-1+tpm1u0+deb13.dsc",
+            "clevis_22-1+tpm1u0+deb13_amd64.buildinfo",
+            "clevis_22-1+tpm1u0+deb13_amd64.deb",
+            "clevis_22-1+tpm1u0+deb13_source+amd64.changes",
+            "clevis_22-1+tpm1u1+deb13.debian.tar.xz",
+            "clevis_22-1+tpm1u1+deb13.dsc",
+            "clevis_22-1+tpm1u1+deb13_amd64.buildinfo",
+            "clevis_22-1+tpm1u1+deb13_amd64.deb",
+            "clevis_22-1+tpm1u1+deb13_source+amd64.changes",
+            "clevis_22.orig.tar.gz",
+        ]);
+    }));
 });
