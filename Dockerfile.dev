@@ -1,7 +1,7 @@
 # syntax=devthefuture/dockerfile-x
 #  See https://codeberg.org/devthefuture/dockerfile-x
 
-FROM mcr.microsoft.com/devcontainers/typescript-node:24-trixie
+FROM mcr.microsoft.com/devcontainers/typescript-node:26-trixie
 
 COPY --from=./Dockerfile#repo-tools /*.deb /tools/
 

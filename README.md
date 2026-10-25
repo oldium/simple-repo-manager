@@ -45,9 +45,9 @@ manual changes might be lost, see details [below](#repository-management-api).
 
 ## Quick Start
 
-This project was developed and tested with [Node.js][nodejs] version 24 and a
-patched version of [npm][npm]. The project requires the following software to be
-fully operational (but starts without them as well):
+This project was developed and tested with [Node.js][nodejs] version 26 and
+[npm][npm]. The project requires the following software to be fully operational
+(but starts without them as well):
 
 * 🎩 [createrepo_c][createrepo_c] version 1.2.0 or higher, older versions have
   not been tested. Required for RedHat-like repositories.

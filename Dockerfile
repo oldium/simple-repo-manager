@@ -1,4 +1,4 @@
-FROM node:24-trixie-slim AS initial
+FROM node:26-trixie-slim AS initial
 
 WORKDIR /build
 
@@ -32,7 +32,7 @@ RUN npm run test
 # Build the application
 RUN npm run build
 
-FROM node:24-trixie-slim AS repo-tools-build
+FROM node:26-trixie-slim AS repo-tools-build
 
 WORKDIR /build
 
@@ -58,7 +58,7 @@ FROM scratch AS repo-tools
 
 COPY --from=repo-tools-build /build/*.deb /
 
-FROM node:24-trixie-slim AS app-base
+FROM node:26-trixie-slim AS app-base
 
 RUN NPM_CONFIG_UPDATE_NOTIFIER=false npm install -g npm@latest
 
