@@ -1451,7 +1451,8 @@ sudo chown 1000:1000 data
 
 When running as a different user, change the owner to that user and use a
 bind-mounted directory, because a new named volume would be owned by
-`1000:1000`.
+`1000:1000`. When the application cannot access the data directories or the
+mounted files at start-up, it stops and logs their owner and mode.
 
 [tini]: https://github.com/krallin/tini
 

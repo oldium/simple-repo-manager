@@ -8,6 +8,7 @@ import logger from "./logger.ts";
 import fsExtra from "fs-extra";
 import proxyAddr from "proxy-addr";
 import { execOpt } from "./exec.ts";
+import { Access, requireAccess } from "./fs.ts";
 import { parseHumanJsonArray, parseHumanJsonObject } from "./json.ts";
 
 export type Certificate = { cert: Buffer; key: Buffer } | { cert?: undefined; key?: undefined };
@@ -150,6 +151,21 @@ const gpg: Gpg = {
     gpgPublicKeysDir,
 }
 
+await requireAccess("Incoming directory", incomingDir, Access.Creatable);
+await requireAccess("Repository state directory", repoStateDir, Access.Creatable);
+await requireAccess("Repository directory", repoDir, Access.Creatable);
+for (const [name, path] of [
+    ["Templates directory", templateDir],
+    ["GPG repository private key file", gpgRepoPrivateKeyFile],
+    ["GPG public keys file", gpgPublicKeysFile],
+    ["GPG public keys directory", gpgPublicKeysDir],
+] as const) {
+    // Missing ones keep their optional handling
+    if (path && await fsExtra.pathExists(path)) {
+        await requireAccess(name, path, Access.ReadOnly);
+    }
+}
+
 const trustProxyArray = process.env.TRUST_PROXY?.trim().split(",").map((ip) => ip.trim()).filter(Boolean);
 const trustProxy = !_.isEmpty(trustProxyArray) ? proxyAddr.compile(trustProxyArray) : undefined;
 
@@ -282,6 +298,10 @@ if (withHttps && environment !== "production"
     }
     await fs.writeFile(process.env.HTTPS_KEY_FILE!, pems.private);
     await fs.writeFile(process.env.HTTPS_CERT_FILE!, pems.cert);
+}
+if (withHttps) {
+    await requireAccess("HTTPS key file", process.env.HTTPS_KEY_FILE!, Access.ReadOnly);
+    await requireAccess("HTTPS certificate file", process.env.HTTPS_CERT_FILE!, Access.ReadOnly);
 }
 const httpsCertificate: Certificate =
     withHttps

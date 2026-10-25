@@ -1,9 +1,60 @@
 import osPath from "path";
 import fsExtra from "fs-extra";
+import { constants, type Stats } from "fs";
+import fs from "fs/promises";
 import { Socket } from "node:net";
 import crypto from "crypto";
 import logger from "./logger.ts";
 import { glob } from "glob";
+
+export const Access = {
+    ReadOnly: 0,
+    Writable: 1,
+    // Missing when only a parent like data/ is mounted, then the nearest existing parent must be writable
+    Creatable: 2,
+} as const;
+export type Access = typeof Access[keyof typeof Access];
+
+/** Returns why the process cannot access the path, undefined when it can */
+export async function checkAccess(name: string, path: string, access: Access): Promise<string | undefined> {
+    const absolutePath = osPath.resolve(path);
+    if (access === Access.Creatable) {
+        let existing = absolutePath;
+        while (!await fsExtra.pathExists(existing) && osPath.dirname(existing) !== existing) {
+            existing = osPath.dirname(existing);
+        }
+        return existing === absolutePath
+            ? checkAccess(name, absolutePath, Access.Writable)
+            : checkAccess(`${ name } ${ absolutePath } cannot be created, directory`, existing, Access.Writable);
+    }
+    const writable = access === Access.Writable;
+    let stats: Stats | undefined;
+    try {
+        stats = await fs.stat(absolutePath);
+        await fs.access(absolutePath,
+            constants.R_OK | (writable ? constants.W_OK : 0) | (stats.isDirectory() ? constants.X_OK : 0));
+        return undefined;
+    } catch (err) {
+        const identity = process.getuid && process.getgid
+            ? `UID ${ process.getuid() }, GID ${ process.getgid() }`
+            : "the current user";
+        const owner = stats
+            ? ` (owner ${ stats.uid }:${ stats.gid }, mode ${ (stats.mode & 0o7777).toString(8).padStart(4, "0") })`
+            : "";
+        const reason = (err as NodeJS.ErrnoException).code ?? String(err);
+        return `${ name } ${ absolutePath } is not ${ writable ? "writable" : "readable" } for ${ identity }${ owner }: ${
+            reason }`;
+    }
+}
+
+// Ownership mismatches of mounted volumes are the usual start-up failure, so report owner and mode
+export async function requireAccess(name: string, path: string, access: Access): Promise<void> {
+    const error = await checkAccess(name, path, access);
+    if (error) {
+        logger.error(error);
+        process.exit(1);
+    }
+}
 
 /**
  * Moves a temporary file to its final incoming directory.

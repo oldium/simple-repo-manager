@@ -461,12 +461,18 @@ describe("Test environment variables and config.ts", () => {
 
         mockExecution(0, "stdout data", "", undefined);
 
+        const { default: logger } = await import("../../server/lib/logger.ts");
+        const errorSpy = jest.spyOn(logger, "error").mockReturnValue(logger);
+        const exitSpy = jest.spyOn(process, "exit").mockImplementation((code) => {
+            throw new Error(`process.exit(${ code })`);
+        });
         try {
-            await import("../../server/lib/config.ts");
-            fail("Should have thrown an error");
-        } catch (err) {
-            expect(err).toBeInstanceOf(Error);
-            expect((err as Error).code).toEqual("ENOENT");
+            await expect(import("../../server/lib/config.ts")).rejects.toThrow("process.exit(1)");
+            expect(errorSpy).toHaveBeenCalledWith(
+                expect.stringMatching(/^HTTPS key file .*key\.pem is not readable for .*: ENOENT$/));
+        } finally {
+            exitSpy.mockRestore();
+            errorSpy.mockRestore();
         }
     }));
 
