@@ -53,13 +53,8 @@ export function getUriNoQuery(req: Request, path?: string): string {
     const trustFn = req.app.get('trust proxy fn');
     if (!trustFn(req.socket.remoteAddress, 0)) {
         proto = req.protocol;
-        if (!hasPort(req.host)
-            && ((proto === "http" && req.socket.localPort !== 80)
-                || (proto === "https" && req.socket.localPort !== 443))) {
-            hostPort = `${ req.host }:${ req.socket.localPort }`;
-        } else {
-            hostPort = req.host;
-        }
+        // A missing port means the default one, the published port may differ from ours
+        hostPort = req.host;
         baseUrl = "";
     } else {
         proto = req.protocol;
