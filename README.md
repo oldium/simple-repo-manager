@@ -1023,6 +1023,15 @@ HTTPS_KEY_FILE=certs/key.pem
 HTTPS_CERT_FILE=certs/cert.pem
 ```
 
+Public URL `https://repo.example.com` for the absolute URLs in the installation
+instructions and in the API responses. Without it, the URLs are built from the
+`Host` header sent by the client, which anybody can forge. `X-Forwarded-*`
+headers from trusted proxies (see `TRUST_PROXY`) still override it:
+
+```dotenv
+PUBLIC_URL=https://repo.example.com
+```
+
 The `/api/v1/*` API (uploads, repository management, removal, MCP) is
 protected by a stack of IP allowlisting plus HTTP Basic or Bearer
 authentication, configured through the following environment variables:

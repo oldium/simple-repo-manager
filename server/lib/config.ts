@@ -30,6 +30,7 @@ export type AppConfig = {
     gpg: Gpg,
     upload: UploadOptions,
     instanceLabel?: string,
+    publicUrl?: URL,
 }
 
 export type Security = {
@@ -242,12 +243,25 @@ const upload: UploadOptions = {
 
 const instanceLabel = process.env.INSTANCE_LABEL?.trim() || undefined;
 
+const publicUrlEnv = process.env.PUBLIC_URL?.trim();
+let publicUrl: URL | undefined = undefined;
+if (publicUrlEnv) {
+    publicUrl = URL.parse(publicUrlEnv) ?? undefined;
+    if (!publicUrl || !["http:", "https:"].includes(publicUrl.protocol) || publicUrl.search || publicUrl.hash
+        || publicUrl.username || publicUrl.password) {
+        console.error(`PUBLIC_URL must be an http or https URL without credentials, query and fragment: ${
+            publicUrlEnv }`);
+        process.exit(1);
+    }
+}
+
 const app: AppConfig = {
     security,
     paths,
     gpg,
     upload,
     instanceLabel,
+    publicUrl,
 };
 
 const listenDefaultHosts = environment === "production" ? null : "localhost";

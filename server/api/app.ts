@@ -36,6 +36,9 @@ export default async function createApp(config: AppConfig, environment: Environm
     if (config.security.trustProxy) {
         app.set("trust proxy", config.security.trustProxy);
     }
+    if (config.publicUrl) {
+        app.set("public url", config.publicUrl);
+    }
 
     app.use(loggingMiddlewares());
 

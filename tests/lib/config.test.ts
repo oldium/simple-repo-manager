@@ -476,6 +476,36 @@ describe("Test environment variables and config.ts", () => {
         }
     }));
 
+    test("Check public URL configuration", withLocalTmpDir(async () => {
+        process.env.NODE_ENV = "production";
+        process.env.PUBLIC_URL = "https://repo.example.com/packages";
+
+        mockExecution(0, "stdout data", "", undefined);
+
+        const { default: config } = await import("../../server/lib/config.ts");
+
+        expect(config.app.publicUrl?.href).toEqual("https://repo.example.com/packages");
+    }));
+
+    test("Check that invalid public URL stops the server", withLocalTmpDir(async () => {
+        process.env.NODE_ENV = "production";
+        process.env.PUBLIC_URL = "https://repo.example.com/?query";
+
+        mockExecution(0, "stdout data", "", undefined);
+
+        const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+        const exitSpy = jest.spyOn(process, "exit").mockImplementation((code) => {
+            throw new Error(`process.exit(${ code })`);
+        });
+        try {
+            await expect(import("../../server/lib/config.ts")).rejects.toThrow("process.exit(1)");
+            expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/^PUBLIC_URL must be .*\?query$/));
+        } finally {
+            exitSpy.mockRestore();
+            errorSpy.mockRestore();
+        }
+    }));
+
     test("Check that host name is translated to IP", withLocalTmpDir(async () => {
         process.env.NODE_ENV = "production";
         process.env.HTTP_HOST = "one.example.com, two.example.com";

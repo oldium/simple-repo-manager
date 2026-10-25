@@ -44,33 +44,32 @@ function hasPort(host: string) {
 }
 
 export function getUriNoQuery(req: Request, path?: string): string {
-    let proto: string;
-    let hostPort: string;
-    let baseUrl: string;
-
     const resolvePath = path ?? req.originalUrl;
 
-    const trustFn = req.app.get('trust proxy fn');
-    if (!trustFn(req.socket.remoteAddress, 0)) {
-        proto = req.protocol;
-        // A missing port means the default one, the published port may differ from ours
-        hostPort = req.host;
-        baseUrl = "";
-    } else {
-        proto = req.protocol;
-        const host = req.host;
+    const publicUrl: URL | undefined = req.app.get("public url");
+    const trusted: boolean = req.app.get('trust proxy fn')(req.socket.remoteAddress, 0);
+    // The public URL replaces the untrusted Host, headers of a trusted proxy override it
+    const forwarded = (header: string) => trusted && req.headers[header] !== undefined;
+
+    const proto = !publicUrl || forwarded("x-forwarded-proto") ? req.protocol : publicUrl.protocol.slice(0, -1);
+    // A Host without a port means the default port, the published port may differ from ours
+    let hostPort = !publicUrl || forwarded("x-forwarded-host") ? req.host : publicUrl.host;
+    let baseUrl = publicUrl?.pathname ?? "";
+    if (trusted) {
         let port = req.headers["x-forwarded-port"];
         if (port && port.indexOf(',') !== -1) {
             port = port.substring(0, port.indexOf(',')).trimEnd();
         }
-        if (!hasPort(host) && port !== undefined && ((proto === "http" && port !== "80") || (proto === "https" && port !== "443"))) {
-            hostPort = `${ host }:${ port }`;
-        } else {
-            hostPort = host
+        if (!hasPort(hostPort) && port !== undefined && ((proto === "http" && port !== "80") || (proto === "https" && port !== "443"))) {
+            hostPort = `${ hostPort }:${ port }`;
         }
-        baseUrl = req.headers["x-forwarded-path"] ?? "";
+        baseUrl = req.headers["x-forwarded-path"] ?? baseUrl;
     }
     const fullPath = joinPath(baseUrl, resolvePath);
     const url = new URL(`${ proto }://${ hostPort }${ fullPath }`);
     return `${ url.origin }${ url.pathname }`;
+}
+
+export function getHostname(req: Request): string {
+    return new URL(getUriNoQuery(req, "/")).hostname;
 }
