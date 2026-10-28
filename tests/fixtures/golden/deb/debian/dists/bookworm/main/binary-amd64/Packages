@@ -1,0 +1,15 @@
+Package: srm-gz
+Version: 0.1-1
+Architecture: amd64
+Maintainer: Simple Repo Manager <srm@example.com>
+Installed-Size: 8
+Priority: optional
+Section: misc
+Filename: pool/main/s/srm-gz/srm-gz_0.1-1_amd64.deb
+Size: 706
+SHA512: 096f0a2b4696644ae86afb134b98b482739fb4a132ed81e7caccfc9ed5e349d432b3d126f2ca26a06784b5c3403d5be8445b8d23bfadb169d340988c6650a6ea
+SHA256: ccd468c83cc75be845863e15da38707ae717bc4bc2c27c37f4f02d84b6008180
+SHA1: 749d98d21ac758d9ec9a82fd6a7b7c8c5da675c1
+MD5sum: faca180a472a490160bdfb6f3ce33119
+Description: Gzip-compressed script
+

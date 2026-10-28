@@ -1,0 +1,38 @@
+Format: 1.8
+Date: Wed, 28 Oct 2026 10:00:00 +0000
+Source: srm-hello
+Binary: srm-hello srm-hello-doc
+Architecture: source all amd64
+Version: 1.0-1
+Distribution: trixie
+Urgency: medium
+Maintainer: Simple Repo Manager <srm@example.com>
+Changed-By: Simple Repo Manager <srm@example.com>
+Description:
+ srm-hello  - Hello script
+ srm-hello-doc - Hello script documentation
+Changes:
+ srm-hello (1.0-1) trixie; urgency=medium
+ .
+   * Initial release.
+Checksums-Sha1:
+ 06770359baee85702e82525b0db9fae253bbaa70 882 srm-hello_1.0-1.dsc
+ 86d7855c7654130232bafa58a1145511660f5666 207 srm-hello_1.0.orig.tar.gz
+ dba3389a0e3e4f32675e3de9e3a0362f4752d32b 1016 srm-hello_1.0-1.debian.tar.xz
+ c24cf64bd0eb7dbf0d1e5ac617c7db81d958a51d 828 srm-hello-doc_1.0-1_all.deb
+ 0566ec588af32769878056298570b82570f1f9ac 2813 srm-hello_1.0-1_amd64.buildinfo
+ aaccdf701ff10adb05f371ad3b8a7e58945a0d9c 796 srm-hello_1.0-1_amd64.deb
+Checksums-Sha256:
+ 11fe6e120ea429aa915a84315655d96f88693721ecea504757aa471ab4e3d3db 882 srm-hello_1.0-1.dsc
+ 100eef9101cda6638eab211e57c90f95b3ebbef9442dee06d762537059c6f88c 207 srm-hello_1.0.orig.tar.gz
+ 90849774772ac5380e2c03c97fa327572d3a5e1c218f31c80b967fc55c77414f 1016 srm-hello_1.0-1.debian.tar.xz
+ b83923314576754e512ad376587e24c9c93f5ef05509b8a37dd9e24211f9de49 828 srm-hello-doc_1.0-1_all.deb
+ 7a4382d5162d2fb53e8bc816f6c2865ae0632d38ab6e22e82a3aff99a2b81d4a 2813 srm-hello_1.0-1_amd64.buildinfo
+ 5daa4230a1c3acd1e6e584a2a9b5300905fa778d036e622f98efdd0ac7cc99a1 796 srm-hello_1.0-1_amd64.deb
+Files:
+ 3672f207cfb6f756944f2a0394d56f00 882 utils optional srm-hello_1.0-1.dsc
+ e089e9fcd5c1d0c4cc34ae95017c1944 207 utils optional srm-hello_1.0.orig.tar.gz
+ 0fbe1fe4220b80367844cbdca255ca73 1016 utils optional srm-hello_1.0-1.debian.tar.xz
+ 85509572fb787388d22e614e8ba115cb 828 doc optional srm-hello-doc_1.0-1_all.deb
+ b998df086a7daab6121906b0292f8b41 2813 utils optional srm-hello_1.0-1_amd64.buildinfo
+ 77c703626d33db3573f3833b18d7e2e5 796 utils optional srm-hello_1.0-1_amd64.deb

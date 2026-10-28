@@ -1,0 +1,38 @@
+Format: 1.8
+Date: Wed, 28 Oct 2026 10:00:00 +0000
+Source: srm-zst
+Binary: srm-zst
+Built-For-Profiles: noudeb
+Architecture: source amd64
+Version: 2:3.0-1
+Distribution: noble
+Urgency: medium
+Maintainer: Simple Repo Manager <srm@example.com>
+Changed-By: Simple Repo Manager <srm@example.com>
+Description:
+ srm-zst    - Zstd-compressed script
+Changes:
+ srm-zst (2:3.0-1) noble; urgency=medium
+ .
+   * Initial release.
+Checksums-Sha1:
+ f49b548a79105b17015ad051ee86758a3c83e058 721 srm-zst_3.0-1.dsc
+ 2b298b77235ec85af8c3430b11a062abe3689a2e 236 srm-zst_3.0.orig.tar.xz
+ d7d1f0b15f33302582919324d76cff96f688bef8 1044 srm-zst_3.0-1.debian.tar.xz
+ c66be56ba9cc0a9ce68690ef1b9f0ca653ae9ab9 668 srm-zst-dbgsym_3.0-1_amd64.ddeb
+ 249c726d57ea79456a6244fad06f2f76d5166f34 3190 srm-zst_3.0-1_amd64.buildinfo
+ f5640cb63632baa2c6e672a93a3634902f36507b 598 srm-zst_3.0-1_amd64.deb
+Checksums-Sha256:
+ 83bbd663ce5fd1d7f6393fcdc49fdb295eeae89dcb58672240fdb1cffc87dd47 721 srm-zst_3.0-1.dsc
+ e54a563378076c7511c14e585e43f433d35bd9d24e3a7e42351ff63369edf7c5 236 srm-zst_3.0.orig.tar.xz
+ d7e3546f1bac1cf58dd9041d338a8c2ad4a5f3084caeaf3d2a8dd02e200ce726 1044 srm-zst_3.0-1.debian.tar.xz
+ fb95acab68527a6abaab7ec22747a93c5165005a3586a419f79ef9f5a53cbb63 668 srm-zst-dbgsym_3.0-1_amd64.ddeb
+ bd1f735a78ba1583877838e157eb0124217f7e289a31fd4a4bb78735e5778fdf 3190 srm-zst_3.0-1_amd64.buildinfo
+ 9b63af1f60042d436b95bf0f3bea1cb5a0775cb3394184c75abb9d76a308a0fa 598 srm-zst_3.0-1_amd64.deb
+Files:
+ 09a1c494600d64650df566a95ea5cedc 721 utils standard srm-zst_3.0-1.dsc
+ 44c76d75d93e2e6395e0d430cb978c70 236 utils standard srm-zst_3.0.orig.tar.xz
+ 39fa46241fe17ab396409b83f91e6aed 1044 utils standard srm-zst_3.0-1.debian.tar.xz
+ 98df2ac96c93f400734fbb1cff8c5985 668 debug optional srm-zst-dbgsym_3.0-1_amd64.ddeb
+ 080abc42c6ff396d1a0be34bda2e4ba6 3190 utils standard srm-zst_3.0-1_amd64.buildinfo
+ 1f3103d60b28d328501a04ffb89c5c09 598 utils standard srm-zst_3.0-1_amd64.deb

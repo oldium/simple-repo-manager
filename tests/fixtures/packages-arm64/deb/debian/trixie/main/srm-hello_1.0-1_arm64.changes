@@ -1,0 +1,25 @@
+Format: 1.8
+Date: Wed, 28 Oct 2026 10:00:00 +0000
+Source: srm-hello
+Binary: srm-hello
+Architecture: arm64
+Version: 1.0-1
+Distribution: trixie
+Urgency: medium
+Maintainer: Simple Repo Manager <srm@example.com>
+Changed-By: Simple Repo Manager <srm@example.com>
+Description:
+ srm-hello  - Hello script
+Changes:
+ srm-hello (1.0-1) trixie; urgency=medium
+ .
+   * Initial release.
+Checksums-Sha1:
+ 0a6d1a7d111ac10f31024dbef3e41295c609415c 2336 srm-hello_1.0-1_arm64.buildinfo
+ ef4a64f35dc196d063844e3f3bea351177219e84 796 srm-hello_1.0-1_arm64.deb
+Checksums-Sha256:
+ ae7431d2805bd2e9e8aa6c09fda057d5aba6c287e5e0453dcb8546ac38f965dc 2336 srm-hello_1.0-1_arm64.buildinfo
+ 4418b835a5b2611526d97538b09305611494200d4488b0784102ff158931413b 796 srm-hello_1.0-1_arm64.deb
+Files:
+ 334abfaca55718baa6c80d422a1eea3f 2336 utils optional srm-hello_1.0-1_arm64.buildinfo
+ 571d54faf00d65d19ee20cb82463415e 796 utils optional srm-hello_1.0-1_arm64.deb

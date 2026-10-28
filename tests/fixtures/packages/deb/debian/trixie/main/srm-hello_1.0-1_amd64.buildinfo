@@ -1,0 +1,84 @@
+Format: 1.0
+Source: srm-hello
+Binary: srm-hello srm-hello-doc
+Architecture: all amd64 source
+Version: 1.0-1
+Checksums-Md5:
+ 3672f207cfb6f756944f2a0394d56f00 882 srm-hello_1.0-1.dsc
+ 85509572fb787388d22e614e8ba115cb 828 srm-hello-doc_1.0-1_all.deb
+ 77c703626d33db3573f3833b18d7e2e5 796 srm-hello_1.0-1_amd64.deb
+Checksums-Sha1:
+ 06770359baee85702e82525b0db9fae253bbaa70 882 srm-hello_1.0-1.dsc
+ c24cf64bd0eb7dbf0d1e5ac617c7db81d958a51d 828 srm-hello-doc_1.0-1_all.deb
+ aaccdf701ff10adb05f371ad3b8a7e58945a0d9c 796 srm-hello_1.0-1_amd64.deb
+Checksums-Sha256:
+ 11fe6e120ea429aa915a84315655d96f88693721ecea504757aa471ab4e3d3db 882 srm-hello_1.0-1.dsc
+ b83923314576754e512ad376587e24c9c93f5ef05509b8a37dd9e24211f9de49 828 srm-hello-doc_1.0-1_all.deb
+ 5daa4230a1c3acd1e6e584a2a9b5300905fa778d036e622f98efdd0ac7cc99a1 796 srm-hello_1.0-1_amd64.deb
+Build-Origin: Debian
+Build-Architecture: amd64
+Build-Date: Wed, 28 Oct 2026 22:40:45 +0000
+Build-Path: /build/hello/srm-hello-1.0
+Installed-Build-Depends:
+ base-files (= 13.8+deb13u7),
+ base-passwd (= 3.6.7),
+ bash (= 5.2.37-2+b10),
+ bsdutils (= 1:2.41.5-0+deb13u1),
+ coreutils (= 9.7-3),
+ dash (= 0.5.12-12),
+ debconf (= 1.5.91),
+ debianutils (= 5.23.2),
+ diffutils (= 1:3.10-4),
+ dpkg (= 1.22.22),
+ findutils (= 4.10.0-3),
+ gcc-14-base (= 14.2.0-19),
+ grep (= 3.11-4),
+ gzip (= 1.13-1+deb13u1),
+ hostname (= 3.25),
+ init-system-helpers (= 1.69~deb13u1),
+ libacl1 (= 2.3.2-2+b1),
+ libattr1 (= 1:2.5.2-3),
+ libaudit-common (= 1:4.0.2-2+deb13u1),
+ libaudit1 (= 1:4.0.2-2+deb13u1),
+ libblkid1 (= 2.41.5-0+deb13u1),
+ libbz2-1.0 (= 1.0.8-6),
+ libc-bin (= 2.41-12+deb13u4),
+ libc6 (= 2.41-12+deb13u4),
+ libcap-ng0 (= 0.8.5-4+b1),
+ libcap2 (= 1:2.75-10+deb13u1+b3),
+ libcrypt1 (= 1:4.4.38-1),
+ libdb5.3t64 (= 5.3.28+dfsg2-9),
+ libdebconfclient0 (= 0.280),
+ libgcc-s1 (= 14.2.0-19),
+ libgmp10 (= 2:6.3.0+dfsg-3),
+ liblastlog2-2 (= 2.41.5-0+deb13u1),
+ liblzma5 (= 5.8.1-1+deb13u2),
+ libmd0 (= 1.1.0-2+b1),
+ libmount1 (= 2.41.5-0+deb13u1),
+ libpam-modules (= 1.7.0-5),
+ libpam-modules-bin (= 1.7.0-5),
+ libpam-runtime (= 1.7.0-5),
+ libpam0g (= 1.7.0-5),
+ libpcre2-8-0 (= 10.46-1~deb13u3),
+ libselinux1 (= 3.8.1-1),
+ libsmartcols1 (= 2.41.5-0+deb13u1),
+ libsqlite3-0 (= 3.46.1-7+deb13u2),
+ libssl3t64 (= 3.5.7-1~deb13u3),
+ libsystemd0 (= 257.13-1~deb13u1),
+ libtinfo6 (= 6.5+20250216-2),
+ libudev1 (= 257.13-1~deb13u1),
+ libuuid1 (= 2.41.5-0+deb13u1),
+ libzstd1 (= 1.5.7+dfsg-1),
+ mawk (= 1.3.4.20250131-1),
+ ncurses-base (= 6.5+20250216-2),
+ ncurses-bin (= 6.5+20250216-2),
+ openssl-provider-legacy (= 3.5.7-1~deb13u3),
+ perl-base (= 5.40.1-6+deb13u1),
+ sed (= 4.9-2+deb13u1),
+ sysvinit-utils (= 3.14-4),
+ tar (= 1.35+dfsg-3.1),
+ util-linux (= 2.41.5-0+deb13u1),
+ zlib1g (= 1:1.3.dfsg+really1.3.1-1+b1)
+Environment:
+ DEB_BUILD_OPTIONS="parallel=12"
+ SOURCE_DATE_EPOCH="1793181600"

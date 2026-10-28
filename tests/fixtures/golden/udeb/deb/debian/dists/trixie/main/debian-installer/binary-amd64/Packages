@@ -1,0 +1,16 @@
+Package: srm-hello-udeb
+Source: srm-hello
+Version: 1.0-1
+Architecture: amd64
+Maintainer: Simple Repo Manager <srm@example.com>
+Installed-Size: 5
+Priority: optional
+Section: debian-installer
+Filename: pool/main/s/srm-hello/srm-hello-udeb_1.0-1_amd64.udeb
+Size: 804
+SHA512: 42da69efd3bf135cd376fa5bbec7b9270183cba92a353890a4646a88d9576b2af6c4ceefdd9d0f2330f894a18938633957aa8ed509e21cf5751234ace7aa7432
+SHA256: 7a35b079da125a4f3bf7520148453f1c1fda8d122455b89936920fea35777b7f
+SHA1: 4bcafd6665baec4fd2474d95f7c1e3af64d5ae82
+MD5sum: 42177fae88a4066cdca376c44c197896
+Description: Hello script for the installer
+

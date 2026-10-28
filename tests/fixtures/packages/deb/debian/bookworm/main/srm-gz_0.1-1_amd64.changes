@@ -1,0 +1,34 @@
+Format: 1.8
+Date: Wed, 28 Oct 2026 10:00:00 +0000
+Source: srm-gz
+Binary: srm-gz
+Architecture: source amd64
+Version: 0.1-1
+Distribution: bookworm
+Urgency: low
+Maintainer: Simple Repo Manager <srm@example.com>
+Changed-By: Simple Repo Manager <srm@example.com>
+Description:
+ srm-gz     - Gzip-compressed script
+Changes:
+ srm-gz (0.1-1) bookworm; urgency=low
+ .
+   * Initial release.
+Checksums-Sha1:
+ 3d6300c8c4336d3d562dc43ea850e515fb026743 706 srm-gz_0.1-1.dsc
+ 38cd524bded3a4745fcc52e79970cdc6306ae5a4 194 srm-gz_0.1.orig.tar.gz
+ 0870e3b4692ca37b264e7380f30a571f8f9eac20 746 srm-gz_0.1-1.debian.tar.gz
+ 1c87688a46c7166153bbd5c1d4aeb967020003bd 2527 srm-gz_0.1-1_amd64.buildinfo
+ 749d98d21ac758d9ec9a82fd6a7b7c8c5da675c1 706 srm-gz_0.1-1_amd64.deb
+Checksums-Sha256:
+ 76f8190f94350ed664762d27b49633fc0b44ad308308dfe56c0f0c3d3715369c 706 srm-gz_0.1-1.dsc
+ 616699c7ca1f0938db7180e36af63b008998dbd97522d27a4c3944cfd499626e 194 srm-gz_0.1.orig.tar.gz
+ f1a1f40c783c48aed310db2f7ebae320b82f7e7fbe20fb33a5bdbae7d4a552ee 746 srm-gz_0.1-1.debian.tar.gz
+ 1e2e586f56fbc1df3fb6e542eebb7a21bdcfe94a2e44b94b348d1c1be3d0b570 2527 srm-gz_0.1-1_amd64.buildinfo
+ ccd468c83cc75be845863e15da38707ae717bc4bc2c27c37f4f02d84b6008180 706 srm-gz_0.1-1_amd64.deb
+Files:
+ 5ae3ffbaf5b9b3eaad7a3043d3163434 706 misc optional srm-gz_0.1-1.dsc
+ 84f4b8104040758a14c9ac51be2e471c 194 misc optional srm-gz_0.1.orig.tar.gz
+ a60246cfa7f4f1af220d836c0cb16add 746 misc optional srm-gz_0.1-1.debian.tar.gz
+ 914e5b30c524c7dddc8a318b7d4dbf5b 2527 misc optional srm-gz_0.1-1_amd64.buildinfo
+ faca180a472a490160bdfb6f3ce33119 706 misc optional srm-gz_0.1-1_amd64.deb

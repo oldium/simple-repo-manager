@@ -52,3 +52,6 @@ env
 /templates
 !/templates/deb.eta.html
 !/templates/rpm.eta.html
+
+# Superpowers harness docs (specs, plans) — kept on disk locally, not in tree
+docs/superpowers/

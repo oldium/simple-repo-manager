@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<metadata xmlns="http://linux.duke.edu/metadata/common" xmlns:rpm="http://linux.duke.edu/metadata/rpm" packages="3">
+<package type="rpm">
+  <name>srm-hello</name>
+  <arch>src</arch>
+  <version epoch="0" ver="1.0" rel="1.fc42"/>
+  <checksum type="sha256" pkgid="YES">e83359151db3772e290b9dcbdf5b00a866734f4a46802bee345de726168d8932</checksum>
+  <summary>Hello script</summary>
+  <description>Hello script.</description>
+  <packager></packager>
+  <url>https://example.com/srm-hello</url>
+  <time file="1793227310" build="1793181600"/>
+  <size package="9605" installed="2003" archive="2628"/>
+  <location href="Packages/s/srm-hello-1.0-1.fc42.src.rpm"/>
+  <format>
+    <rpm:license>MIT</rpm:license>
+    <rpm:vendor></rpm:vendor>
+    <rpm:group>Unspecified</rpm:group>
+    <rpm:buildhost>srm.example.com</rpm:buildhost>
+    <rpm:sourcerpm></rpm:sourcerpm>
+    <rpm:header-range start="4504" end="8764"/>
+    <rpm:provides>
+      <rpm:entry name="srm-hello" flags="EQ" epoch="0" ver="1.0" rel="1.fc42"/>
+      <rpm:entry name="srm-hello-doc" flags="EQ" epoch="0" ver="1.0" rel="1.fc42"/>
+    </rpm:provides>
+  </format>
+</package>
+<package type="rpm">
+  <name>srm-hello</name>
+  <arch>x86_64</arch>
+  <version epoch="0" ver="1.0" rel="1.fc42"/>
+  <checksum type="sha256" pkgid="YES">61e567b284edbd4fb77e82eca221865c32e795a7dc3bdfd354a7bf8794359fef</checksum>
+  <summary>Hello script</summary>
+  <description>Hello script.</description>
+  <packager></packager>
+  <url>https://example.com/srm-hello</url>
+  <time file="1793227310" build="1793181600"/>
+  <size package="8046" installed="40" archive="432"/>
+  <location href="Packages/s/srm-hello-1.0-1.fc42.x86_64.rpm"/>
+  <format>
+    <rpm:license>MIT</rpm:license>
+    <rpm:vendor></rpm:vendor>
+    <rpm:group>Unspecified</rpm:group>
+    <rpm:buildhost>srm.example.com</rpm:buildhost>
+    <rpm:sourcerpm>srm-hello-1.0-1.fc42.src.rpm</rpm:sourcerpm>
+    <rpm:header-range start="4504" end="7901"/>
+    <rpm:provides>
+      <rpm:entry name="config(srm-hello)" flags="EQ" epoch="0" ver="1.0" rel="1.fc42"/>
+      <rpm:entry name="srm-greeter" flags="EQ" epoch="0" ver="0.9"/>
+      <rpm:entry name="srm-hello" flags="EQ" epoch="0" ver="1.0" rel="1.fc42"/>
+      <rpm:entry name="srm-hello(x86-64)" flags="EQ" epoch="0" ver="1.0" rel="1.fc42"/>
+    </rpm:provides>
+    <rpm:requires>
+      <rpm:entry name="/usr/bin/sh"/>
+      <rpm:entry name="bash"/>
+      <rpm:entry name="coreutils"/>
+      <rpm:entry name="shadow-utils" pre="1"/>
+    </rpm:requires>
+    <rpm:obsoletes>
+      <rpm:entry name="srm-greet" flags="LT" epoch="0" ver="0.9"/>
+    </rpm:obsoletes>
+    <rpm:recommends>
+      <rpm:entry name="srm-hello-doc" flags="EQ" epoch="0" ver="1.0" rel="1.fc42"/>
+    </rpm:recommends>
+    <file>/etc/srm-hello.conf</file>
+    <file>/usr/bin/srm-hello</file>
+  </format>
+</package>
+<package type="rpm">
+  <name>srm-hello-doc</name>
+  <arch>noarch</arch>
+  <version epoch="0" ver="1.0" rel="1.fc42"/>
+  <checksum type="sha256" pkgid="YES">8cf4d8fbdff2892a505e1a9111ccbff7a5bb72082f17e255922cef6abaf1fb5e</checksum>
+  <summary>Hello script documentation</summary>
+  <description>Hello script documentation.</description>
+  <packager></packager>
+  <url>https://example.com/srm-hello</url>
+  <time file="1793227310" build="1793181600"/>
+  <size package="7396" installed="24" archive="296"/>
+  <location href="Packages/s/srm-hello-doc-1.0-1.fc42.noarch.rpm"/>
+  <format>
+    <rpm:license>MIT</rpm:license>
+    <rpm:vendor></rpm:vendor>
+    <rpm:group>Unspecified</rpm:group>
+    <rpm:buildhost>srm.example.com</rpm:buildhost>
+    <rpm:sourcerpm>srm-hello-1.0-1.fc42.src.rpm</rpm:sourcerpm>
+    <rpm:header-range start="4504" end="7273"/>
+    <rpm:provides>
+      <rpm:entry name="srm-hello-doc" flags="EQ" epoch="0" ver="1.0" rel="1.fc42"/>
+    </rpm:provides>
+  </format>
+</package>
+</metadata>

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<filelists xmlns="http://linux.duke.edu/metadata/filelists" packages="3">
+<package pkgid="e83359151db3772e290b9dcbdf5b00a866734f4a46802bee345de726168d8932" name="srm-hello" arch="src">
+  <version epoch="0" ver="1.0" rel="1.fc42"/>
+  <file>README</file>
+  <file>srm-hello</file>
+  <file>srm-hello.conf</file>
+  <file>srm-hello.spec</file>
+</package>
+<package pkgid="61e567b284edbd4fb77e82eca221865c32e795a7dc3bdfd354a7bf8794359fef" name="srm-hello" arch="x86_64">
+  <version epoch="0" ver="1.0" rel="1.fc42"/>
+  <file>/etc/srm-hello.conf</file>
+  <file>/usr/bin/srm-hello</file>
+  <file type="ghost">/var/log/srm-hello.log</file>
+</package>
+<package pkgid="8cf4d8fbdff2892a505e1a9111ccbff7a5bb72082f17e255922cef6abaf1fb5e" name="srm-hello-doc" arch="noarch">
+  <version epoch="0" ver="1.0" rel="1.fc42"/>
+  <file>/usr/share/doc/srm-hello-doc/README</file>
+</package>
+</filelists>

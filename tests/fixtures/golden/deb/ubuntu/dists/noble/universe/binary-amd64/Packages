@@ -1,0 +1,16 @@
+Package: srm-zst
+Version: 2:3.0-1
+Architecture: amd64
+Maintainer: Simple Repo Manager <srm@example.com>
+Installed-Size: 5
+Depends: bash (>= 5)
+Priority: standard
+Section: utils
+Filename: pool/universe/s/srm-zst/srm-zst_3.0-1_amd64.deb
+Size: 598
+SHA512: e5b41622b263aedc9033439384b8b91a6392586f731400efef987ff71af61e88ccdf0317e24ba07c6f7ba69361ba2d58b3cd5c453d8fd7968c87c326b68ce310
+SHA256: 9b63af1f60042d436b95bf0f3bea1cb5a0775cb3394184c75abb9d76a308a0fa
+SHA1: f5640cb63632baa2c6e672a93a3634902f36507b
+MD5sum: 1f3103d60b28d328501a04ffb89c5c09
+Description: Zstd-compressed script
+

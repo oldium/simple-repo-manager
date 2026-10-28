@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<otherdata xmlns="http://linux.duke.edu/metadata/other" packages="3">
+<package pkgid="e83359151db3772e290b9dcbdf5b00a866734f4a46802bee345de726168d8932" name="srm-hello" arch="src">
+  <version epoch="0" ver="1.0" rel="1.fc42"/>
+  <changelog author="SRM &lt;srm@example.com&gt; - 0.3-1" date="1740830400">- Change 3</changelog>
+  <changelog author="SRM &lt;srm@example.com&gt; - 0.4-1" date="1743508800">- Change 4</changelog>
+  <changelog author="SRM &lt;srm@example.com&gt; - 0.5-1" date="1746100800">- Change 5</changelog>
+  <changelog author="SRM &lt;srm@example.com&gt; - 0.6-1" date="1748779200">- Change 6</changelog>
+  <changelog author="SRM &lt;srm@example.com&gt; - 0.7-1" date="1751371200">- Change 7</changelog>
+  <changelog author="SRM &lt;srm@example.com&gt; - 0.8-1" date="1754049600">- Change 8</changelog>
+  <changelog author="SRM &lt;srm@example.com&gt; - 0.9-1" date="1756728000">- Change 9</changelog>
+  <changelog author="SRM &lt;srm@example.com&gt; - 0.10-1" date="1759320000">- Change 10</changelog>
+  <changelog author="SRM &lt;srm@example.com&gt; - 0.11-1" date="1761998400">- Change 11</changelog>
+  <changelog author="SRM &lt;srm@example.com&gt; - 1.0-1" date="1764590400">- Change 12</changelog>
+</package>
+<package pkgid="61e567b284edbd4fb77e82eca221865c32e795a7dc3bdfd354a7bf8794359fef" name="srm-hello" arch="x86_64">
+  <version epoch="0" ver="1.0" rel="1.fc42"/>
+  <changelog author="SRM &lt;srm@example.com&gt; - 0.3-1" date="1740830400">- Change 3</changelog>
+  <changelog author="SRM &lt;srm@example.com&gt; - 0.4-1" date="1743508800">- Change 4</changelog>
+  <changelog author="SRM &lt;srm@example.com&gt; - 0.5-1" date="1746100800">- Change 5</changelog>
+  <changelog author="SRM &lt;srm@example.com&gt; - 0.6-1" date="1748779200">- Change 6</changelog>
+  <changelog author="SRM &lt;srm@example.com&gt; - 0.7-1" date="1751371200">- Change 7</changelog>
+  <changelog author="SRM &lt;srm@example.com&gt; - 0.8-1" date="1754049600">- Change 8</changelog>
+  <changelog author="SRM &lt;srm@example.com&gt; - 0.9-1" date="1756728000">- Change 9</changelog>
+  <changelog author="SRM &lt;srm@example.com&gt; - 0.10-1" date="1759320000">- Change 10</changelog>
+  <changelog author="SRM &lt;srm@example.com&gt; - 0.11-1" date="1761998400">- Change 11</changelog>
+  <changelog author="SRM &lt;srm@example.com&gt; - 1.0-1" date="1764590400">- Change 12</changelog>
+</package>
+<package pkgid="8cf4d8fbdff2892a505e1a9111ccbff7a5bb72082f17e255922cef6abaf1fb5e" name="srm-hello-doc" arch="noarch">
+  <version epoch="0" ver="1.0" rel="1.fc42"/>
+  <changelog author="SRM &lt;srm@example.com&gt; - 0.3-1" date="1740830400">- Change 3</changelog>
+  <changelog author="SRM &lt;srm@example.com&gt; - 0.4-1" date="1743508800">- Change 4</changelog>
+  <changelog author="SRM &lt;srm@example.com&gt; - 0.5-1" date="1746100800">- Change 5</changelog>
+  <changelog author="SRM &lt;srm@example.com&gt; - 0.6-1" date="1748779200">- Change 6</changelog>
+  <changelog author="SRM &lt;srm@example.com&gt; - 0.7-1" date="1751371200">- Change 7</changelog>
+  <changelog author="SRM &lt;srm@example.com&gt; - 0.8-1" date="1754049600">- Change 8</changelog>
+  <changelog author="SRM &lt;srm@example.com&gt; - 0.9-1" date="1756728000">- Change 9</changelog>
+  <changelog author="SRM &lt;srm@example.com&gt; - 0.10-1" date="1759320000">- Change 10</changelog>
+  <changelog author="SRM &lt;srm@example.com&gt; - 0.11-1" date="1761998400">- Change 11</changelog>
+  <changelog author="SRM &lt;srm@example.com&gt; - 1.0-1" date="1764590400">- Change 12</changelog>
+</package>
+</otherdata>

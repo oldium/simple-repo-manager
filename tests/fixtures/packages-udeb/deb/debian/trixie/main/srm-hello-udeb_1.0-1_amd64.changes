@@ -1,0 +1,26 @@
+Format: 1.8
+Date: Wed, 28 Oct 2026 10:00:00 +0000
+Source: srm-hello
+Binary: srm-hello-udeb
+Built-For-Profiles: udeb
+Architecture: amd64
+Version: 1.0-1
+Distribution: trixie
+Urgency: medium
+Maintainer: Simple Repo Manager <srm@example.com>
+Changed-By: Simple Repo Manager <srm@example.com>
+Description:
+ srm-hello-udeb - Hello script for the installer (udeb)
+Changes:
+ srm-hello (1.0-1) trixie; urgency=medium
+ .
+   * Initial release.
+Checksums-Sha1:
+ b2a6f0b1d66e604685fa20f6ab17fe7f528180c8 2386 srm-hello-udeb_1.0-1_amd64.buildinfo
+ 4bcafd6665baec4fd2474d95f7c1e3af64d5ae82 804 srm-hello-udeb_1.0-1_amd64.udeb
+Checksums-Sha256:
+ 57d8d57969e46497e43fbc782d5100ddd2e341b32741c24e147caa814ba2cda7 2386 srm-hello-udeb_1.0-1_amd64.buildinfo
+ 7a35b079da125a4f3bf7520148453f1c1fda8d122455b89936920fea35777b7f 804 srm-hello-udeb_1.0-1_amd64.udeb
+Files:
+ 738d514d42a3d8ef1d493821528f710e 2386 utils optional srm-hello-udeb_1.0-1_amd64.buildinfo
+ 42177fae88a4066cdca376c44c197896 804 debian-installer optional srm-hello-udeb_1.0-1_amd64.udeb

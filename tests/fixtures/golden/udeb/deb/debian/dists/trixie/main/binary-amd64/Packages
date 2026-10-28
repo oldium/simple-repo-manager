@@ -1,0 +1,32 @@
+Package: srm-hello
+Version: 1.0-1
+Architecture: amd64
+Maintainer: Simple Repo Manager <srm@example.com>
+Installed-Size: 5
+Depends: srm-hello-doc (>= 1.0-1)
+Priority: optional
+Section: utils
+Filename: pool/main/s/srm-hello/srm-hello_1.0-1_amd64.deb
+Size: 796
+SHA512: 288cf0d66164faa8ff98392744824c98d30c3bf17ea44bf7ba9b6b6ea5f0153faa863b1f16cf8e6282ee8f3986432ee6416c8604724efe980ee3b6d07d6069f6
+SHA256: 5daa4230a1c3acd1e6e584a2a9b5300905fa778d036e622f98efdd0ac7cc99a1
+SHA1: aaccdf701ff10adb05f371ad3b8a7e58945a0d9c
+MD5sum: 77c703626d33db3573f3833b18d7e2e5
+Description: Hello script
+
+Package: srm-hello-doc
+Source: srm-hello
+Version: 1.0-1
+Architecture: all
+Maintainer: Simple Repo Manager <srm@example.com>
+Installed-Size: 7
+Priority: optional
+Section: doc
+Filename: pool/main/s/srm-hello/srm-hello-doc_1.0-1_all.deb
+Size: 828
+SHA512: 0e3b3f51405bbf7f623e52ed094e1260dce0b4832b61e37fc394622b95cff917e5d2fbb9540bfcf9f577f9690eaff3356e3ad01ad1fbdddc836cff941fc433d2
+SHA256: b83923314576754e512ad376587e24c9c93f5ef05509b8a37dd9e24211f9de49
+SHA1: c24cf64bd0eb7dbf0d1e5ac617c7db81d958a51d
+MD5sum: 85509572fb787388d22e614e8ba115cb
+Description: Hello script documentation
+
