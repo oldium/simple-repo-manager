@@ -1,12 +1,7 @@
-# syntax=devthefuture/dockerfile-x
-#  See https://codeberg.org/devthefuture/dockerfile-x
-
 FROM mcr.microsoft.com/devcontainers/typescript-node:26-trixie
 
-COPY --from=./Dockerfile#repo-tools /*.deb /tools/
-
 RUN apt update \
- && DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends rnp createrepo-c /tools/*.deb \
+ && DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends sqlite3 \
  && rm -rf /var/lib/apt/lists/*
 
 RUN NPM_CONFIG_UPDATE_NOTIFIER=false npm install -g npm@latest

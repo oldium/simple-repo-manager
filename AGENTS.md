@@ -3,13 +3,16 @@
 This project ships a deb/rpm repository manager. Most behaviours are
 easiest to verify end-to-end against a running instance rather than via
 mocks. This file tells future agents how to drive the system through its
-public surfaces (REST + MCP), how to drop into the container for
-free-form `reprepro` / `createrepo_c` experiments, and how the on-disk
-state under `./data/` is laid out.
+public surfaces (REST + MCP), how to inspect and rebuild the repository
+database, and how the on-disk state under `./data/` is laid out.
 
 ## Test packages
 
-This repo does **not** ship test packages. When the user asks you to run
+Apart from the small synthetic fixtures under `tests/fixtures/packages/`
+(`deb/debian/bookworm`, `deb/debian/trixie`, `deb/ubuntu/noble`,
+`rpm/fedora/42`), `tests/fixtures/packages-arm64/` (a binary-only arm64
+upload) and `tests/fixtures/packages-udeb/`, this repo does **not** ship
+test packages. When the user asks you to run
 end-to-end tests, ask them where their test packages are unless they've
 already told you. A typical answer is a directory tree shaped like the
 upload paths the server accepts:
@@ -36,13 +39,12 @@ upload anything outside the directory the user pointed you at.**
 `docker compose` (`compose.yaml` + `compose.override.yaml`) runs the
 server on `http://127.0.0.1:80` (and `[::1]:80`), with `./data/`
 bind-mounted to `/app/data` inside the container. The override mounts
-the repo signing key (`./repo-key.gpg` → `/app/repo-key.gpg`) and the
-public keyring asset (`./archive-keyring.asc` → `/app/archive-keyring.asc`)
-read-only.
+the repo signing key (`./repo-key.gpg` → `/app/repo-key.gpg`) read-only;
+the server derives the published public keyrings from it.
 
 `./data/` holds **all** mutable server state — incoming uploads, the
-generated repository tree, and the per-distribution `reprepro` config —
-and is safe to wipe between runs:
+generated repository tree, and the repository database
+`repo-state/repo.db` — and is safe to wipe between runs:
 
 ```bash
 docker compose down
@@ -51,7 +53,11 @@ docker compose up -d --build       # --build picks up code changes
 until curl -fsS http://127.0.0.1:80/api/v1/status >/dev/null; do sleep 1; done
 ```
 
-The server recreates the missing dirs. Rebuild the image
+The server recreates the missing dirs. Wiping only `./data/repo-state`
+while `./data/repo/deb` or `./data/repo/rpm` exists makes the next start
+rebuild the database from the tree (see
+[Rebuilding the database](#rebuilding-the-database)).
+Rebuild the image
 (`--build`) any time you change `server/`, `tsconfig.json`, etc. — the
 container runs the baked-in `dist/`, not source.
 
@@ -63,9 +69,9 @@ step.
 
 The intended round-trip is **upload via REST, then import via MCP**.
 REST uploads are the only entry that produces correctly-staged files in
-`./data/incoming/staging/`; the MCP `import_repository` tool drives the
-reprepro / createrepo_c side and returns rich per-file status which the
-plain `POST /api/v1/repo/import` REST endpoint does not.
+`./data/incoming/staging/`; the MCP `import_repository` tool runs the
+import and returns rich per-file status which the plain
+`POST /api/v1/repo/import` REST endpoint does not.
 
 ### Upload (REST, multipart POST)
 
@@ -125,57 +131,81 @@ A small helper for tallying responses:
 })'
 ```
 
-## Free-form experiments inside the container
+## Inspecting the repository database
 
-The image carries `reprepro` (5.4.x) and `createrepo_c`. To run them by
-hand against the same on-disk state the server uses:
+All repository state lives in `data/repo-state/repo.db` (SQLite, WAL);
+the published tree under `data/repo/` is generated from it. The runtime
+image has no `sqlite3` CLI, the devcontainer (`Dockerfile.dev`) has.
+Open the database read-only, the server is its only writer:
 
 ```bash
-docker compose exec simple-repo-manager bash
-
-# inside the container:
-cd /app
-ls data/repo-state/                    # one dir per deb distribution
-ls data/repo-state/deb-<distro>/conf/  # distributions, incoming, override
-
-# reprepro takes its conf via --confdir; the project uses one conf dir
-# per distribution under data/repo-state/deb-<distro>/conf/.
-reprepro --confdir +b/data/repo-state/deb-<distro>/conf list <release>
-reprepro --confdir +b/data/repo-state/deb-<distro>/conf listfilter <release> \
-  '$Source (== <source-name>)'
-reprepro --confdir +b/data/repo-state/deb-<distro>/conf processincoming default
-
-# rpm side: createrepo_c rewrites repodata for one (distro, release).
-createrepo_c --update data/repo/rpm/<distro>/<release>
+sqlite3 -readonly data/repo-state/repo.db
 ```
+
+```sql
+.tables
+SELECT format, distro, name FROM releases;
+SELECT component, source, version FROM deb_sources WHERE source = '<source-name>';
+SELECT kind, package, version, architecture FROM deb_binaries WHERE source = '<source-name>';
+SELECT filename, source_name, source_version FROM rpm_packages WHERE source_name = '<source-name>';
+-- files waiting for the hourly GC, removed_at in Unix seconds
+SELECT path, removed_at FROM pool_files WHERE removed_at IS NOT NULL;
+```
+
+The schema is in `server/backend/db.ts`.
 
 Notes:
 
-- `+b/` is reprepro's "basedir-relative" prefix and matches what the
-  server passes when invoking it. Absolute paths also work.
-- The signing script (`scripts/sign.sh`) is referenced from the
-  generated `distributions` file; rebuilds via `processincoming` will
-  sign `Release` files using the GPG key mounted at `/app/repo-key.gpg`.
 - `data/incoming/{staging,process,tmp}` are the upload pipeline dirs. A
   REST upload lands in `staging/`; `import_repository` moves the tree
-  to `process/` and runs the indexers from there.
+  to `process/` and imports from there. Skipped and failed files stay
+  in `process/`; every later import, and the next start, retries them.
+- `data/repo-state/shadow/` holds uncompressed copies of the published
+  indexes, `data/repo-state/tmp/` temporary files.
 
-## Behaviour notes (config-derived, fixture-independent)
+## Rebuilding the database
 
-`distributions` is generated with `Limit: 0` (unlimited per-package
-versions kept) and `Tracking: minimal includechanges includebuildinfos`.
-Under that config:
+`--rebuild` rebuilds `repo.db` from the published tree before the server
+starts serving. A missing `repo.db` while `data/repo/deb` or
+`data/repo/rpm` exists triggers the same rebuild at start (the one-time
+migration from 2.x).
+Any problem — an unreadable package, a checksum mismatch, a missing
+file — is logged and aborts the start, with nothing on disk changed.
+
+```bash
+docker compose stop
+docker compose run --rm simple-repo-manager \
+  node --enable-source-maps ./dist/server.js --rebuild
+# it keeps serving after the rebuild: Ctrl+C, then
+docker compose up -d
+```
+
+## Behaviour notes (fixture-independent)
+
+Every uploaded version stays published, and each Debian upload keeps
+its `.changes` and `.buildinfo` in the source's pool directory.
 
 - A full `dput` bundle drains the staging dir → every file `"ok"`.
-- A directory with files but **no `.changes`** is never visited by
-  reprepro (it is `.changes`-driven) → those files come back `"skipped"`.
-- A `.changes` that references files that aren't present → reprepro
-  errors → `"failed"` with a correlation id.
+- A directory with files but **no `.changes`** is never visited (Debian
+  import is `.changes`-driven) → those files come back `"skipped"`.
+- A `.changes` that references files that aren't present → `"failed"`;
+  its files stay in `data/incoming/process/` and later imports retry
+  them.
 - A directory with a complete bundle plus an extra file not referenced
   by any `.changes` → bundle files `"ok"`, extra file `"skipped"`. (Hard
   to reach via REST because of upload-time filename validation.)
 
-The only `"skipped"` reason emitted is "no .changes file references it".
+`"skipped"` reasons:
+
+- Debian: "no .changes file references it", with "; <file> could not
+  be parsed" appended when a `.changes` in that directory is unreadable.
+- RPM: "not an .rpm file" and "not in a <distro>/<release> directory".
+
+`"failed"` reasons carry the correlation id of the server log lines:
+`import failed, correlation id=<cid>: <cause>` for validation errors
+(missing or mismatching files, a release not in `Distribution:`, a
+conflicting overwrite), only `import failed, correlation id=<cid>` for
+unexpected errors, whose cause is in the log only.
 
 ## Common test loop
 

@@ -20,52 +20,24 @@ RUN npm ci
 
 # Copy application files
 COPY --chmod=u=rw,go=r . .
-RUN find . -mindepth 1 -maxdepth 1 -type d ! -name node_modules -exec chmod -R ugo+X {} + \
- && chmod ugo+x ./scripts/*
+RUN find . -mindepth 1 -maxdepth 1 -type d ! -name node_modules -exec chmod -R ugo+X {} +
 
 # Run linter
 RUN npm run lint
 
-# Run tests
-RUN npm run test
+# Run tests, silent so that their report fits the build log
+RUN npm run test -- --silent
 
 # Build the application
 RUN npm run build
-
-# Package builds need a plain Debian, the DHI dev image has no default dpkg vendor
-FROM debian:trixie-slim AS repo-tools-build
-
-WORKDIR /build
-
-# Build latest reprepro and createrepo-c packages
-
-RUN apt update \
- && DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends ca-certificates build-essential devscripts debhelper equivs \
- && echo "deb https://deb.debian.org/debian experimental main\ndeb-src https://deb.debian.org/debian experimental main" >> /etc/apt/sources.list \
- && apt update \
- && DEBIAN_FRONTEND=noninteractive apt -t experimental source reprepro \
- && rm -f /etc/apt/sources.list \
- && rm -rf /var/lib/apt/lists/*
-
-RUN apt update \
- && cd reprepro-* \
- && DEBIAN_FRONTEND=noninteractive mk-build-deps -irt'apt --no-install-recommends -yV' debian/control \
- && dpkg-buildpackage -us -uc \
- && dpkg-buildpackage -Tclean \
- && rm -rf /var/lib/apt/lists/*
-
-FROM scratch AS repo-tools
-
-COPY --from=repo-tools-build /build/*.deb /
 
 FROM dhi.io/node:26-debian13 AS runtime
 
 FROM dhi.io/node:26-debian13-dev AS runtime-tools
 
-# Unpack the tools and the shell with the packages they need on top of the
-# runtime image, which has no package manager to run maintainer scripts
-RUN --mount=type=bind,from=repo-tools,target=/tools \
-    --mount=type=bind,from=runtime,source=/var/lib/dpkg,target=/runtime-dpkg <<'EOF'
+# Unpack the shell and the troubleshooting tools with the packages they need on
+# top of the runtime image, which has no package manager to run maintainer scripts
+RUN --mount=type=bind,from=runtime,source=/var/lib/dpkg,target=/runtime-dpkg <<'EOF'
 set -eo pipefail
 apt-get update
 mkdir -p /debs/partial /rootfs/var/lib/dpkg/status.d /rootfs/var/lib/dpkg/info
@@ -73,16 +45,16 @@ mkdir -p /debs/partial /rootfs/var/lib/dpkg/status.d /rootfs/var/lib/dpkg/info
 grep -vE '^(Pre-)?Depends:' /runtime-dpkg/status > /tmp/runtime-status
 apt-get install -y --no-install-recommends --download-only \
     -o Dir::State::status=/tmp/runtime-status -o Dir::Cache::archives=/debs \
-    bash busybox zstd rpm2cpio tini createrepo-c rpm-common rnp /tools/reprepro_*.deb
+    bash busybox zstd rpm2cpio tini
 for link in bin lib lib64 sbin; do mkdir -p "/rootfs/usr/$link"; ln -s "usr/$link" "/rootfs/$link"; done
-for deb in /debs/*.deb /tools/reprepro_*.deb; do
+for deb in /debs/*.deb; do
     pkg=$(dpkg-deb -f "$deb" Package)
     [ ! -e "/runtime-dpkg/status.d/$pkg" ] || continue
     dpkg-deb --fsys-tarfile "$deb" | tar -xv -C /rootfs --keep-directory-symlink \
         | sed -e 's,^\.,,' -e '/^\/$/d' > "/rootfs/var/lib/dpkg/info/$pkg.list"
     dpkg-deb -f "$deb" > "/rootfs/var/lib/dpkg/status.d/$pkg"
 done
-# Dependencies like passwd ship setuid helpers, nothing here may raise privileges
+# Dependencies may ship setuid helpers, nothing here may raise privileges
 find /rootfs -type f -perm /6000 -exec chmod ug-s {} +
 # Standard BusyBox links without package management, packaged tools take precedence
 /rootfs/usr/bin/busybox --list-full | grep -vE '/dpkg(-deb)?$' | while read -r applet; do
@@ -99,13 +71,9 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Writable for any user, gpg creates its home only when named .gnupg
-ENV GNUPGHOME=/tmp/.gnupg
-
 COPY --from=initial /build/package*.json ./
 COPY --from=initial /build/node_modules ./node_modules/
 COPY --from=builder /build/dist ./dist/
-COPY --from=builder /build/scripts ./scripts/
 
 USER 1000:1000
 

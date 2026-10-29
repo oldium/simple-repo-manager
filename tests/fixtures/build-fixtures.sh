@@ -2,7 +2,8 @@
 # Build the synthetic fixture packages and capture what reprepro and
 # createrepo_c publish for them. Run from the repository root:
 #   bash tests/fixtures/build-fixtures.sh
-# Needs Docker (debian:trixie, ubuntu:noble, fedora:42) and the compose stack.
+# Needs Docker (debian:trixie, ubuntu:noble, fedora:42) and the compose stack
+# built from tag v2.2.0: the goldens are reprepro/createrepo_c's own output.
 set -euo pipefail
 
 [[ -f compose.yaml ]] || { echo "run from the repository root" >&2; exit 1; }
