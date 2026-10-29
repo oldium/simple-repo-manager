@@ -13,7 +13,8 @@ class NaiveLock {
         const moves = this.moves;
         moves.add(promise);
         if (this.execPromise) {
-            await this.execPromise;
+            // The exec's failure is its callers' business; the move still runs, and its entry must be released
+            await this.execPromise.catch(() => undefined);
         }
 
         try {
@@ -26,10 +27,13 @@ class NaiveLock {
 
     public async forExecOnce<T>(fn: RequestFn<T>): Promise<T> {
         const { promise: execPromise, resolve: execResolve, reject: execReject } = Promise.withResolvers<T>();
+        // The caller gets the error thrown below; nobody need observe it on the exec promise itself
+        void execPromise.catch(() => undefined);
 
         const waitExecPromise = this.waitExec(execPromise);
         if (waitExecPromise) {
-            await waitExecPromise;
+            // The previous exec's failure is its callers' business; this one still runs
+            await waitExecPromise.catch(() => undefined);
             assert(this.execPromise === execPromise);
         }
 

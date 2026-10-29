@@ -303,4 +303,65 @@ describe('Test naive locking strategy', () => {
         expect(await exec3Seq).toEqual([6, 2]);
         expect(await exec4Seq).toEqual([6, 2]);
     });
+
+    test('A failed exec rejects its caller only, with no unhandled rejection, and the next exec runs', async () => {
+        const unhandled: unknown[] = [];
+        const onUnhandled = (reason: unknown): void => { unhandled.push(reason); };
+        process.on("unhandledRejection", onUnhandled);
+        try {
+            await expect(lock.forExecOnce(async () => { throw new Error("exec failed"); })).rejects.toThrow("exec failed");
+            // Node reports unhandled rejections once the microtasks have drained
+            await new Promise(resolve => setTimeout(resolve, 0));
+            expect(unhandled).toEqual([]);
+
+            expect(await lock.forExecOnce(async () => "next")).toBe("next");
+        } finally {
+            process.off("unhandledRejection", onUnhandled);
+        }
+    });
+
+    test('A waiter queued behind a failed exec runs its own fn, a coalesced caller shares it, a later call runs again', async () => {
+        const { promise: exec1Promise, resolve: exec1Resolve } = Promise.withResolvers<void>();
+        const { promise: exec2Promise, resolve: exec2Resolve } = Promise.withResolvers<void>();
+
+        const exec1Seq = lock.forExecOnce(async () => {
+            await exec1Promise;
+            throw new Error("exec1 failed");
+        });
+        const exec2Seq = lock.forExecOnce(async () => {
+            await exec2Promise;
+            return "exec2";
+        });
+        const exec3Seq = lock.forExecOnce(async () => "exec3");
+
+        exec1Resolve();
+        await expect(exec1Seq).rejects.toThrow("exec1 failed");
+        exec2Resolve();
+
+        expect(await exec2Seq).toBe("exec2");
+        expect(await exec3Seq).toBe("exec2");
+        expect(await lock.forExecOnce(async () => "exec4")).toBe("exec4");
+    });
+
+    test('A move arriving during an exec that fails still runs, and the next exec waits for it', async () => {
+        let counter = 0;
+        const { promise: exec1Promise, resolve: exec1Resolve } = Promise.withResolvers<void>();
+        const { promise: movePromise, resolve: moveResolve } = Promise.withResolvers<void>();
+
+        const exec1Seq = lock.forExecOnce(async () => {
+            await exec1Promise;
+            throw new Error("exec1 failed");
+        });
+        const moveSeq = lock.forMove(async () => {
+            await movePromise;
+            return ++counter;
+        });
+        exec1Resolve();
+        await expect(exec1Seq).rejects.toThrow("exec1 failed");
+        const exec2Seq = lock.forExecOnce(async () => ++counter);
+        moveResolve();
+
+        expect(await moveSeq).toBe(1);
+        expect(await exec2Seq).toBe(2);
+    });
 });
