@@ -89,6 +89,7 @@
     "untildify": "^6.0.0",
     "winston": "^3.19.0",
     "with-local-tmp-dir": "^7.0.1",
+    "xz-decompress": "0.2.3",
     "zod": "^4.6.7"
   },
   "allowScripts": {

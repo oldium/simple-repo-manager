@@ -7,6 +7,7 @@ import osPath from "path";
 import fsExtra from "fs-extra/esm";
 import fs from "fs/promises";
 import type { Server } from "node:http";
+import { closeBackends } from "../server/backend/registry.ts";
 
 export function withLocalTmpDir<T>(what: TmpDirCallback<T>) {
     return async () => {
@@ -16,7 +17,18 @@ export function withLocalTmpDir<T>(what: TmpDirCallback<T>) {
         // bind-mount syscalls (Docker Desktop for Windows).
         const dir = process.env.TEST_TMP_DIR ?? "tmp";
         await fsExtra.ensureDir(dir);
-        return withLocalTmpDirFunc({ unsafeCleanup: true, dir }, what);
+        return withLocalTmpDirFunc({ unsafeCleanup: true, dir }, async () => {
+            // Windows cannot delete an open SQLite file; a failing test keeps its own error
+            let result: Awaited<T>;
+            try {
+                result = await what();
+            } catch (err) {
+                await closeBackends(process.cwd()).catch(() => undefined);
+                throw err;
+            }
+            await closeBackends(process.cwd());
+            return result;
+        });
     }
 }
 
@@ -135,6 +147,38 @@ export async function waitForAssertion<T>(
     }
     // Let the final assertion's error surface to the caller.
     return await assertion();
+}
+
+export function tarEntry(name: string, body: string, type = "0"): Buffer {
+    const header = Buffer.alloc(512);
+    header.write(name);
+    header.write(`${ body.length.toString(8).padStart(11, "0") }\0`, 124);
+    header.write(" ".repeat(8), 148);
+    header.write(type, 156);
+    header.write(`${ header.reduce((sum, byte) => sum + byte, 0).toString(8).padStart(6, "0") }\0 `, 148);
+    return Buffer.concat([header, Buffer.from(body), Buffer.alloc((512 - body.length % 512) % 512)]);
+}
+
+export function tarBytes(...entries: Buffer[]): Buffer {
+    return Buffer.concat([...entries, Buffer.alloc(1024)]);
+}
+
+/** An uncompressed .deb with this control member, for metadata no packaging tool would write */
+export function debWithControlTar(controlTar: Buffer): Buffer {
+    const parts = [Buffer.from("!<arch>\n")];
+    for (const [name, body] of [["debian-binary", Buffer.from("2.0\n")], ["control.tar", controlTar], ["data.tar", tarBytes(tarEntry("./usr/bin/x", "x"))]] as const) {
+        const header = Buffer.alloc(60, " ");
+        header.write(name, 0, "latin1");
+        header.write(String(body.length), 48, "latin1");
+        header.write("`\n", 58, "latin1");
+        parts.push(header, body);
+    }
+    return Buffer.concat(parts);
+}
+
+export function debWithControl(fields: Record<string, string>): Buffer {
+    const control = Object.entries(fields).map(([name, value]) => `${ name }: ${ value }\n`).join("");
+    return debWithControlTar(tarBytes(tarEntry("./control", control)));
 }
 
 export async function createFiles(files: Record<string, string | undefined>) {

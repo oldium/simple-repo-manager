@@ -74,7 +74,7 @@ describe("Test of files reading API", () => {
         // noinspection SpellCheckingInspection
         await createFiles({
             "repo/deb/debian/dists/bookworm/Release": "Version: 1.0",
-            "repo/rpm/centos/10/repodata/repomd.xml": "<repomd/>",
+            "repo/rpm/centos/10/repodata/old-primary.xml": "<metadata/>",
         });
 
         const app = await createTestApp({
@@ -88,9 +88,9 @@ describe("Test of files reading API", () => {
         expect(res1.text).toBe("Version: 1.0");
 
         // noinspection SpellCheckingInspection
-        const res2 = await request(app).get("/rpm/centos/10/repodata/repomd.xml");
+        const res2 = await request(app).get("/rpm/centos/10/repodata/old-primary.xml");
         expect(res2.status).toBe(200);
-        expect(res2.text).toBe("<repomd/>");
+        expect(res2.text).toBe("<metadata/>");
     }));
 
     test("Check that directories starting with dots are ignored", withLocalTmpDir(async () => {
