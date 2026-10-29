@@ -57,6 +57,7 @@ export type UploadOptions = {
     allowedIps?: IpCheckFn,
     basicAuth?: string[],
     bearerAuth?: string[],
+    publicRead: boolean,
     sizeLimit?: number,
     postField: string,
 }
@@ -168,6 +169,9 @@ if (_.isEmpty(bearerAuth)) {
     bearerAuth = undefined;
 }
 
+const publicReadEnv = process.env.API_PUBLIC_READ?.trim();
+const publicRead = publicReadEnv === "true" || publicReadEnv === "1";
+
 const sizeLimitEnv = process.env.UPLOAD_SIZE_LIMIT?.trim();
 const sizeLimit = sizeLimitEnv ? parseInt(sizeLimitEnv) : undefined;
 const postField = (process.env.UPLOAD_POST_FIELD && process.env.UPLOAD_POST_FIELD.trim()) || 'package';
@@ -182,6 +186,7 @@ const upload: UploadOptions = {
     allowedIps,
     basicAuth,
     bearerAuth,
+    publicRead,
     sizeLimit,
     postField,
 };

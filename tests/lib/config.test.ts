@@ -242,6 +242,42 @@ describe("Test environment variables and config.ts", () => {
         expect(config.app.upload.allowedIps!("192.168.2.1")).toBeFalse();
     }));
 
+    test("API_PUBLIC_READ=true enables public reads", withLocalTmpDir(async () => {
+        process.env.NODE_ENV = "production";
+        process.env.API_PUBLIC_READ = "true";
+
+        const { default: config } = await import("../../server/lib/config.ts");
+
+        expect(config.app.upload.publicRead).toBeTrue();
+    }));
+
+    test("API_PUBLIC_READ=1 enables public reads", withLocalTmpDir(async () => {
+        process.env.NODE_ENV = "production";
+        process.env.API_PUBLIC_READ = "1";
+
+        const { default: config } = await import("../../server/lib/config.ts");
+
+        expect(config.app.upload.publicRead).toBeTrue();
+    }));
+
+    test("Public reads are off when API_PUBLIC_READ is not set", withLocalTmpDir(async () => {
+        process.env.NODE_ENV = "production";
+        delete process.env.API_PUBLIC_READ;
+
+        const { default: config } = await import("../../server/lib/config.ts");
+
+        expect(config.app.upload.publicRead).toBeFalse();
+    }));
+
+    test("Other API_PUBLIC_READ values keep public reads off", withLocalTmpDir(async () => {
+        process.env.NODE_ENV = "production";
+        process.env.API_PUBLIC_READ = "yes";
+
+        const { default: config } = await import("../../server/lib/config.ts");
+
+        expect(config.app.upload.publicRead).toBeFalse();
+    }));
+
     test("Check upload size limit configuration", withLocalTmpDir(async () => {
         process.env.NODE_ENV = "production";
         process.env.UPLOAD_SIZE_LIMIT = "1000";

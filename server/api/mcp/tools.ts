@@ -6,10 +6,21 @@ import { errorResult, successResult, type ToolResult } from "./mappers.ts";
 import { getUriNoQuery } from "../../lib/req.ts";
 import logger from "../../lib/logger.ts";
 import { mimeTypeFor } from "../../lib/mime.ts";
+import { MAX_PAGE_SIZE } from "../../backend/paging.ts";
 
 export interface EnabledBackends {
     deb: boolean;
     rpm: boolean;
+}
+
+const pageSchema = {
+    limit: z.number().int().min(1).max(MAX_PAGE_SIZE)
+        .describe(`Maximum number of results, 1 to ${ MAX_PAGE_SIZE }. Omit for the largest page.`).optional(),
+    cursor: z.string().min(1).describe("nextCursor of the previous page, to get the next one.").optional(),
+};
+
+function moreResults(nextCursor: string | undefined): string {
+    return nextCursor === undefined ? "" : " More results follow; pass nextCursor as cursor to get them.";
 }
 
 function withLogging<Args extends unknown[], R extends ToolResult<object | undefined>>(
@@ -34,7 +45,8 @@ export function registerTools(
     server: McpServer,
     service: RepoService,
     req: Request,
-    enabled: EnabledBackends
+    enabled: EnabledBackends,
+    writeAllowed: boolean
 ) {
     // Always-available status probe.
     server.registerTool("server_status", {
@@ -98,18 +110,72 @@ export function registerTools(
             distribution: z.string().min(1).describe("Distribution name filter. Omit to match any.").optional(),
             release: z.string().min(1).describe("Release name filter. Omit to match any.").optional(),
             source: z.string().min(1).describe("Source package name filter. Omit to return every source.").optional(),
+            ...pageSchema,
         },
-    }, withLogging("list_source_packages", async (input) => {
+    }, withLogging("list_source_packages", async ({ limit, cursor, ...filter }) => {
         try {
-            const packages = (await service.listSourcePackages(input)).items;
+            const { items: packages, nextCursor } = await service.listSourcePackages(filter, { limit, cursor });
             return successResult(
-                `Found ${ packages.length } source package${ packages.length === 1 ? "" : "s" }.`,
-                { packages }
+                `Found ${ packages.length } source package${ packages.length === 1 ? "" : "s" }.${ moreResults(nextCursor) }`,
+                { packages, nextCursor }
             );
         } catch (err) {
             return errorResult(err);
         }
     }));
+
+    server.registerTool("list_package_files", {
+        title: "List package files",
+        description: "List files belonging to a source package across one "
+            + "or many (format, distribution, release) triples. For deb, "
+            + "results include the .dsc, source tarballs, binary .deb / "
+            + ".ddeb / .udeb, and — when present — the .changes and "
+            + ".buildinfo needed to reconstruct an uploadable bundle. For "
+            + "rpm, results include all binaries and the .src.rpm when "
+            + "present. Each result includes a direct HTTPS download URL "
+            + "that can be fetched without authentication.",
+        inputSchema: {
+            format: formatEnum.describe("Repository format filter. Omit to include all enabled backends.").optional(),
+            distribution: z.string().min(1).describe("Distribution name filter. Omit to match any.").optional(),
+            release: z.string().min(1).describe("Release name filter. Omit to match any.").optional(),
+            source: z.string().min(1).describe("Source package name."),
+            version: z.string().min(1).describe("Specific version to list. Omit to list every version.").optional(),
+            ...pageSchema,
+        },
+    }, withLogging("list_package_files", async ({ limit, cursor, ...filter }) => {
+        try {
+            const { files, touchedTargets, nextCursor } = await service.listPackageFiles(filter, { limit, cursor });
+
+            const fileEntries = files.map((f) => ({
+                filename: f.filename,
+                path: f.path,
+                downloadUrl: getUriNoQuery(req, "/" + f.path),
+                method: "GET" as const,
+            }));
+
+            const resourceLinks = files.map((f) => ({
+                type: "resource_link" as const,
+                uri: getUriNoQuery(req, "/" + f.path),
+                name: f.filename,
+                mimeType: mimeTypeFor(f.filename),
+            }));
+
+            const text = files.length === 0
+                ? `No packages matched ${ filter.source }.`
+                : `Found ${ files.length } file(s) across ${ touchedTargets } release(s). `
+                + `GET each downloadUrl to fetch; the pool is served without authentication.${ moreResults(nextCursor) }`;
+
+            return {
+                isError: false,
+                content: [{ type: "text" as const, text }, ...resourceLinks],
+                structuredContent: { files: fileEntries, touchedTargets, nextCursor },
+            };
+        } catch (err) {
+            return errorResult(err);
+        }
+    }));
+
+    if (!writeAllowed) return;
 
     server.registerTool("prepare_upload", {
         title: "Prepare upload",
@@ -119,10 +185,9 @@ export function registerTools(
             + "(source .dsc, source tarballs, binary .deb / .ddeb / .udeb, "
             + "and .buildinfo). Partial bundles remain staged and are "
             + 'reported as skipped on import until the matching .changes is '
-            + "uploaded. **For rpm format:** upload the .src.rpm alongside "
-            + "binary .rpm files — without the source RPM, the source-"
-            + "indexed APIs (list_package_files, remove_package) cannot "
-            + "enumerate or remove the binaries.",
+            + "uploaded. **For rpm format:** binary .rpm files are listed "
+            + "and removed by their source package, with or without the "
+            + ".src.rpm.",
         inputSchema: {
             format: formatEnum.describe("Repository format the uploaded files target."),
             distribution: z.string().min(1).describe("Distribution name (e.g. 'debian', 'fedora')."),
@@ -180,9 +245,8 @@ export function registerTools(
             + "**Debian imports are .changes-driven:** staged directories "
             + "without a .changes are skipped (reported with "
             + "status: \"skipped\"); upload the missing .changes and call "
-            + "again to complete them. **RPM imports** process every file, "
-            + "but binaries without their .src.rpm won't be reachable by "
-            + "list_package_files / remove_package. Returns {ok, files} "
+            + "again to complete them. **RPM imports** process every file. "
+            + "Returns {ok, files} "
             + "where each file entry carries filename, path, status "
             + "(ok/skipped/failed) and optional reason.",
         inputSchema: {},
@@ -213,6 +277,9 @@ export function registerTools(
             release: z.string().min(1).describe("Release name filter. Omit to match any.").optional(),
             source: z.string().min(1).describe("Source package name to remove."),
             version: z.string().min(1).describe("Specific version to remove. Omit to remove every version.").optional(),
+            immediate: z.boolean().default(false).describe("Delete files no longer referenced right after "
+                + "republishing, instead of after a one-day grace period. Clients still on the previous indexes "
+                + "may then get 404s."),
         },
     }, withLogging("remove_package", async (input) => {
         try {
@@ -221,57 +288,6 @@ export function registerTools(
                 ? `No packages matched ${ input.source }.`
                 : `Removed ${ result.files.length } file(s) across ${ result.touchedTargets } release(s).`;
             return successResult(msg, { files: result.files, touchedTargets: result.touchedTargets });
-        } catch (err) {
-            return errorResult(err);
-        }
-    }));
-
-    server.registerTool("list_package_files", {
-        title: "List package files",
-        description: "List files belonging to a source package across one "
-            + "or many (format, distribution, release) triples. For deb, "
-            + "results include the .dsc, source tarballs, binary .deb / "
-            + ".ddeb / .udeb, and — when present — the .changes and "
-            + ".buildinfo needed to reconstruct an uploadable bundle. For "
-            + "rpm, results include the .src.rpm and all its binaries. "
-            + "Each result includes a direct HTTPS download URL that can "
-            + "be fetched without authentication. Use remove_package to "
-            + "delete instead.",
-        inputSchema: {
-            format: formatEnum.describe("Repository format filter. Omit to include all enabled backends.").optional(),
-            distribution: z.string().min(1).describe("Distribution name filter. Omit to match any.").optional(),
-            release: z.string().min(1).describe("Release name filter. Omit to match any.").optional(),
-            source: z.string().min(1).describe("Source package name."),
-            version: z.string().min(1).describe("Specific version to list. Omit to list every version.").optional(),
-        },
-    }, withLogging("list_package_files", async (input) => {
-        try {
-            const { files, touchedTargets } = await service.listPackageFiles(input);
-
-            const fileEntries = files.map((f) => ({
-                filename: f.filename,
-                path: f.path,
-                downloadUrl: getUriNoQuery(req, "/" + f.path),
-                method: "GET" as const,
-            }));
-
-            const resourceLinks = files.map((f) => ({
-                type: "resource_link" as const,
-                uri: getUriNoQuery(req, "/" + f.path),
-                name: f.filename,
-                mimeType: mimeTypeFor(f.filename),
-            }));
-
-            const text = files.length === 0
-                ? `No packages matched ${ input.source }.`
-                : `Found ${ files.length } file(s) across ${ touchedTargets } release(s). `
-                + `GET each downloadUrl to fetch; the pool is served without authentication.`;
-
-            return {
-                isError: false,
-                content: [{ type: "text" as const, text }, ...resourceLinks],
-                structuredContent: { files: fileEntries, touchedTargets },
-            };
         } catch (err) {
             return errorResult(err);
         }

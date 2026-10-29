@@ -7,12 +7,15 @@ import type { AppConfig } from "../../lib/config.ts";
 import { RepoService } from "../../lib/repo-service.ts";
 import { registerTools } from "./tools.ts";
 import logger from "../../lib/logger.ts";
+import { writeGateRefusal } from "../../lib/auth.ts";
 
 const pkg = createRequire(import.meta.url)("../../../package.json") as { version: string };
 
 export default function mcpRouter(config: AppConfig) {
     const router = express.Router({ strict: true });
     const service = new RepoService(config.paths, config.gpg, config.upload);
+    const { allowedIps, basicAuth, bearerAuth } = config.upload;
+    const writeRefusal = writeGateRefusal(allowedIps, basicAuth, bearerAuth);
 
     router.get("/", (_req, res) => {
         res.setHeader("Allow", "POST");
@@ -20,6 +23,12 @@ export default function mcpRouter(config: AppConfig) {
     });
 
     router.post("/", express.json(), async (req: Request, res: Response) => {
+        const refusal = writeRefusal(req);
+        const writeAllowed = refusal === undefined;
+        // Presented credentials are valid here (invalid ones got 401), so only the allowlist downgrades them
+        if (refusal === "ip") {
+            logger.info(`Client ${ req.ip } gets only the MCP read tools: IP not in the allowlist`);
+        }
         const enabled = {
             deb: config.upload.enabledApi.deb,
             rpm: config.upload.enabledApi.rpm,
@@ -29,11 +38,12 @@ export default function mcpRouter(config: AppConfig) {
         if (enabled.rpm) parts.push("rpm");
         const enabledLabel = parts.length === 0 ? "none" : parts.join(", ");
 
+        const actions = writeAllowed ? "list, upload, import, and remove" : "list";
         const baseInstructions =
             parts.length === 2
-                ? "Use these tools to list, upload, import, and remove deb and rpm packages from the configured repositories."
+                ? `Use these tools to ${ actions } deb and rpm packages from the configured repositories.`
                 : parts.length === 1
-                    ? `Use these tools to list, upload, import, and remove ${ parts[0] } packages. The ${ parts[0] === "deb" ? "rpm" : "deb" } backend is disabled in the current server configuration.`
+                    ? `Use these tools to ${ actions } ${ parts[0] } packages. The ${ parts[0] === "deb" ? "rpm" : "deb" } backend is disabled in the current server configuration.`
                     : "No repository backends are enabled on this server. Both deb and rpm are disabled in the current configuration. Call server_status to confirm, then ask an administrator to enable at least one backend and restart the server.";
 
         const { instanceLabel } = config;
@@ -58,7 +68,7 @@ export default function mcpRouter(config: AppConfig) {
             instructions,
         });
 
-        registerTools(server, service, req, enabled);
+        registerTools(server, service, req, enabled, writeAllowed);
 
         const transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: undefined,

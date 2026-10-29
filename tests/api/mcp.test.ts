@@ -6,13 +6,68 @@ import { fileURLToPath } from "url";
 import { jest } from "@jest/globals";
 
 import createTestApp from "../testapp.ts";
-import { uploadFileByPost, withLocalTmpDir } from "../utils.ts";
+import { poolRemovedAt, servedStatuses, uploadFileByPost, withLocalTmpDir } from "../utils.ts";
+import { fixtureNames, importedApp } from "../fixture-upload.ts";
 import logger from "../../server/lib/logger.ts";
 
 const RPM_FIXTURES = fileURLToPath(new URL("../fixtures/packages/rpm/fedora/42/", import.meta.url));
+const BASIC = ["upload:pw"];
+const BEARER = ["token-abc"];
+const AUTH = "Bearer token-abc";
+const READ_TOOLS = ["list_package_files", "list_repositories", "list_source_packages", "server_status"];
+const ALL_TOOLS = [
+    "import_repository",
+    "list_package_files",
+    "list_repositories",
+    "list_source_packages",
+    "prepare_upload",
+    "remove_package",
+    "server_status",
+];
+const INITIALIZE = {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "test", version: "1.0" },
+};
 
 function jsonRpc(method: string, params: Record<string, unknown> = {}, id = 1) {
     return { jsonrpc: "2.0", id, method, params };
+}
+
+function mcpPost(app: Application, method: string, params: Record<string, unknown> = {}) {
+    return request(app)
+        .post("/api/v1/mcp")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .send(jsonRpc(method, params));
+}
+
+function toolNames(response: request.Response): string[] {
+    expect(response.status).toBe(200);
+    return response.body.result.tools.map((t: { name: string }) => t.name).sort();
+}
+
+async function callTool(app: Application, name: string, args: Record<string, unknown>) {
+    const response = await mcpPost(app, "tools/call", { name, arguments: args });
+    expect(response.status).toBe(200);
+    return response.body.result;
+}
+
+/** Calls a list tool with limit 1 until no nextCursor comes back; returns the structured pages */
+async function listByPage(app: Application, name: string, args: Record<string, unknown>, maxPages: number) {
+    const pages = [];
+    let cursor: string | undefined;
+    do {
+        const result = await callTool(app, name, { ...args, limit: 1, cursor });
+        expect(result.isError).toBeFalsy();
+        pages.push(result.structuredContent);
+        cursor = result.structuredContent.nextCursor;
+    } while (cursor !== undefined && pages.length <= maxPages);
+    return pages;
+}
+
+async function poolPaths(dir: string, poolDir: string): Promise<string[]> {
+    return (await fixtureNames(`packages/${ dir }`)).map(name => `${ poolDir }/${ name }`);
 }
 
 /** Uploads the rpm fixture bundle through the REST API and imports it through MCP; returns its file names */
@@ -518,5 +573,234 @@ describe("MCP server", () => {
         expect(response.status).toBe(200);
         const names = response.body.result.tools.map((t: { name: string }) => t.name);
         expect(names).not.toContain("list_package_files");
+    }));
+});
+
+describe("MCP tools by access", () => {
+    test("Anonymous tools/list shows only server_status and the three list tools when publicRead is on", withLocalTmpDir(async () => {
+        const app = await createTestApp({ upload: { publicRead: true, bearerAuth: BEARER } });
+
+        const response = await mcpPost(app, "tools/list");
+
+        expect(toolNames(response)).toEqual(READ_TOOLS);
+        expect(JSON.stringify(response.body.result.tools)).not.toMatch(/prepare_upload|import_repository|remove_package/);
+    }));
+
+    test("Authenticated tools/list shows all seven tools", withLocalTmpDir(async () => {
+        for (const publicRead of [true, false]) {
+            const app = await createTestApp({ upload: { publicRead, basicAuth: BASIC, bearerAuth: BEARER } });
+
+            expect(toolNames(await mcpPost(app, "tools/list").set("Authorization", AUTH))).toEqual(ALL_TOOLS);
+            expect(toolNames(await mcpPost(app, "tools/list").auth("upload", "pw", { type: "basic" }))).toEqual(ALL_TOOLS);
+        }
+    }));
+
+    test("Invalid credentials get 401 rather than the read tools when publicRead is on", withLocalTmpDir(async () => {
+        const app = await createTestApp({ upload: { publicRead: true, bearerAuth: BEARER } });
+
+        const response = await mcpPost(app, "tools/list").set("Authorization", "Bearer wrong");
+
+        expect(response.status).toBe(401);
+        expect(response.headers["www-authenticate"]).toBe('Basic realm="API", Bearer realm="API"');
+    }));
+
+    test("The IP allowlist keeps the write tools from other callers when publicRead is on", withLocalTmpDir(async () => {
+        const denied = await createTestApp({ upload: { publicRead: true, allowedIps: () => false } });
+        expect(toolNames(await mcpPost(denied, "tools/list"))).toEqual(READ_TOOLS);
+
+        const deniedWithToken = await createTestApp({ upload: { publicRead: true, allowedIps: () => false, bearerAuth: BEARER } });
+        expect(toolNames(await mcpPost(deniedWithToken, "tools/list").set("Authorization", AUTH))).toEqual(READ_TOOLS);
+
+        const allowed = await createTestApp({ upload: { publicRead: true, allowedIps: () => true } });
+        expect(toolNames(await mcpPost(allowed, "tools/list"))).toEqual(ALL_TOOLS);
+
+        const allowedWithCredentials = await createTestApp({ upload: { publicRead: true, allowedIps: () => true, bearerAuth: BEARER } });
+        expect(toolNames(await mcpPost(allowedWithCredentials, "tools/list"))).toEqual(READ_TOOLS);
+    }));
+
+    test("The read-only tool set is logged when the allowlist refuses writes, also for valid credentials", withLocalTmpDir(async () => {
+        const infoSpy = jest.spyOn(logger, "info");
+        const downgrades = () => infoSpy.mock.calls.map(c => String(c[0])).filter(m => m.includes("gets only the MCP read tools"));
+        const app = await createTestApp({ upload: { publicRead: true, bearerAuth: BEARER } });
+        const denied = await createTestApp({ upload: { publicRead: true, allowedIps: () => false, bearerAuth: BEARER } });
+
+        expect(toolNames(await mcpPost(app, "tools/list"))).toEqual(READ_TOOLS);
+        expect(downgrades()).toEqual([]);
+
+        expect(toolNames(await mcpPost(denied, "tools/list").set("Authorization", AUTH))).toEqual(READ_TOOLS);
+        expect(toolNames(await mcpPost(denied, "tools/list"))).toEqual(READ_TOOLS);
+        expect(downgrades()).toEqual([
+            expect.stringMatching(/: IP not in the allowlist$/),
+            expect.stringMatching(/: IP not in the allowlist$/),
+        ]);
+    }));
+
+    test("A JSON-RPC batch with an anonymous remove_package call removes nothing", withLocalTmpDir(async () => {
+        await importedApp("packages/rpm");
+        const paths = await poolPaths("rpm/fedora/42", "rpm/fedora/42/Packages/s/srm-hello");
+        const app = await createTestApp({ upload: { publicRead: true, bearerAuth: BEARER } });
+
+        const response = await request(app)
+            .post("/api/v1/mcp")
+            .set("Content-Type", "application/json")
+            .set("Accept", "application/json, text/event-stream")
+            .send([
+                jsonRpc("tools/list", {}, 1),
+                jsonRpc("tools/call", { name: "remove_package", arguments: { source: "srm-hello", immediate: true } }, 2),
+            ]);
+
+        expect(response.status).toBe(200);
+        const byId = Object.fromEntries(response.body.map((r: { id: number }) => [r.id, r]));
+        expect(byId[1].result.tools.map((t: { name: string }) => t.name).sort()).toEqual(READ_TOOLS);
+        expect(byId[2].result.isError).toBe(true);
+        expect(byId[2].result.content[0].text).toContain("Tool remove_package not found");
+        expect(await servedStatuses(app, paths)).toEqual(paths.map(() => 200));
+        expect(poolRemovedAt()).toEqual(Object.fromEntries(paths.map(p => [p, null])));
+    }));
+
+    test.each([
+        ["malformed", 400, "application/json", "{", expect.any(String)],
+        ["oversized", 413, "application/json", JSON.stringify(jsonRpc("tools/list", { padding: "x".repeat(200 * 1024) })),
+            "request entity too large"],
+        ["koi8-r", 415, "application/json; charset=koi8-r", JSON.stringify(jsonRpc("tools/list")), 'unsupported charset "KOI8-R"'],
+    ])("An anonymous %s MCP body gets %i with one warning and no error log", (_kind, status, contentType, body, message) => withLocalTmpDir(async () => {
+        const app = await createTestApp({ upload: { publicRead: true, bearerAuth: BEARER } });
+        const warnSpy = jest.spyOn(logger, "warn").mockReturnValue(logger);
+        const errorSpy = jest.spyOn(logger, "error").mockReturnValue(logger);
+        try {
+            const response = await request(app)
+                .post("/api/v1/mcp")
+                .set("Content-Type", contentType)
+                .set("Accept", "application/json, text/event-stream")
+                .send(body);
+
+            expect(response.status).toBe(status);
+            expect(response.body).toEqual({ correlation: { id: expect.any(String) }, message });
+            expect(warnSpy.mock.calls).toEqual([[expect.stringContaining("sent an invalid request")]]);
+            expect(errorSpy).not.toHaveBeenCalled();
+        } finally {
+            warnSpy.mockRestore();
+            errorSpy.mockRestore();
+        }
+    })());
+
+    test("Anonymous calls to write tools fail as unknown tools when publicRead is on", withLocalTmpDir(async () => {
+        await importedApp("packages/rpm");
+        const paths = await poolPaths("rpm/fedora/42", "rpm/fedora/42/Packages/s/srm-hello");
+        const app = await createTestApp({ upload: { publicRead: true, bearerAuth: BEARER } });
+
+        const calls: [string, Record<string, unknown>][] = [
+            ["remove_package", { source: "srm-hello", immediate: true }],
+            ["import_repository", {}],
+            ["prepare_upload", { format: "rpm", distribution: "fedora", release: "42", filenames: "x.rpm" }],
+        ];
+        for (const [name, args] of calls) {
+            const result = await callTool(app, name, args);
+            expect(result.isError).toBe(true);
+            expect(result.content).toEqual([{ type: "text", text: expect.stringContaining(`Tool ${ name } not found`) }]);
+        }
+
+        expect(await servedStatuses(app, paths)).toEqual(paths.map(() => 200));
+        expect(poolRemovedAt()).toEqual(Object.fromEntries(paths.map(p => [p, null])));
+    }));
+
+    test("initialize instructions follow the registered tool set", withLocalTmpDir(async () => {
+        const app = await createTestApp({ upload: { publicRead: true, bearerAuth: BEARER } });
+
+        const anonymous = await mcpPost(app, "initialize", INITIALIZE);
+        const authenticated = await mcpPost(app, "initialize", INITIALIZE).set("Authorization", AUTH);
+
+        expect(anonymous.body.result.instructions)
+            .toBe("Use these tools to list deb and rpm packages from the configured repositories.");
+        expect(authenticated.body.result.instructions)
+            .toBe("Use these tools to list, upload, import, and remove deb and rpm packages from the configured repositories.");
+
+        const debOnly = await createTestApp({ upload: { publicRead: true, bearerAuth: BEARER, enabledApi: { rpm: false } } });
+        expect((await mcpPost(debOnly, "initialize", INITIALIZE)).body.result.instructions)
+            .toBe("Use these tools to list deb packages. The rpm backend is disabled in the current server configuration.");
+    }));
+});
+
+describe("MCP paging and removal modes", () => {
+    const SOURCES = [
+        { format: "deb", distribution: "debian", release: "bookworm", source: "srm-gz", version: "0.1-1" },
+        { format: "deb", distribution: "debian", release: "trixie", source: "srm-hello", version: "1.0-1" },
+        { format: "deb", distribution: "ubuntu", release: "noble", source: "srm-zst", version: "2:3.0-1" },
+        { format: "rpm", distribution: "fedora", release: "42", source: "srm-hello", version: "1.0-1.fc42" },
+    ];
+
+    test("list_source_packages pages with nextCursor", withLocalTmpDir(async () => {
+        const app = await importedApp("packages");
+
+        const unpaged = await callTool(app, "list_source_packages", {});
+        expect(unpaged.structuredContent).toEqual({ packages: SOURCES });
+        expect(unpaged.content[0].text).toBe("Found 4 source packages.");
+        expect((await callTool(app, "list_source_packages", { limit: 1 })).content[0].text)
+            .toBe("Found 1 source package. More results follow; pass nextCursor as cursor to get them.");
+
+        const pages = await listByPage(app, "list_source_packages", {}, SOURCES.length);
+        expect(pages.map(p => p.packages)).toEqual(SOURCES.map(s => [s]));
+        expect(pages.slice(0, -1).map(p => typeof p.nextCursor)).toEqual(SOURCES.slice(1).map(() => "string"));
+        expect(pages.at(-1)).not.toHaveProperty("nextCursor");
+    }));
+
+    test("list_package_files pages with nextCursor", withLocalTmpDir(async () => {
+        const app = await importedApp("packages");
+
+        const unpaged = (await callTool(app, "list_package_files", { source: "srm-hello" })).structuredContent;
+        expect(unpaged).not.toHaveProperty("nextCursor");
+        const paths = unpaged.files.map((f: { path: string }) => f.path);
+        expect(paths.length).toBeGreaterThan(1);
+
+        const pages = await listByPage(app, "list_package_files", { source: "srm-hello" }, paths.length);
+        expect(pages.map(p => p.files.map((f: { path: string }) => f.path))).toEqual(paths.map((p: string) => [p]));
+        expect(pages.map(p => p.touchedTargets)).toEqual(paths.map(() => 1));
+        expect(pages.at(-1)).not.toHaveProperty("nextCursor");
+    }));
+
+    test.each([
+        ["list_source_packages", {}],
+        ["list_package_files", { source: "srm-hello" }],
+    ])("%s rejects a limit outside 1 to 1000 and an invalid cursor", (name, args) => withLocalTmpDir(async () => {
+        const app = await createTestApp();
+
+        for (const limit of [0, 1001, 1.5]) {
+            const result = await callTool(app, name, { ...args, limit });
+            expect(result.isError).toBe(true);
+            expect(result.content[0].text).toMatch(/Input validation error.*limit/s);
+        }
+        const result = await callTool(app, name, { ...args, cursor: "bogus" });
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toBe("Invalid argument: Invalid cursor");
+    })());
+
+    test("remove_package immediate removes files at once", withLocalTmpDir(async () => {
+        const app = await importedApp("packages/deb/debian");
+        const hello = await poolPaths("deb/debian/trixie/main", "deb/debian/pool/main/s/srm-hello");
+        const gz = await poolPaths("deb/debian/bookworm/main", "deb/debian/pool/main/s/srm-gz");
+
+        const result = await callTool(app, "remove_package", {
+            format: "deb", distribution: "debian", release: "trixie", source: "srm-hello", immediate: true,
+        });
+
+        expect(result.isError).toBe(false);
+        expect(result.structuredContent.files.map((f: { path: string }) => f.path).sort()).toEqual(hello);
+        expect(await servedStatuses(app, hello)).toEqual(hello.map(() => 404));
+        expect(await servedStatuses(app, gz)).toEqual(gz.map(() => 200));
+    }));
+
+    test("remove_package keeps files for garbage collection by default", withLocalTmpDir(async () => {
+        const app = await importedApp("packages/deb/debian");
+        const hello = await poolPaths("deb/debian/trixie/main", "deb/debian/pool/main/s/srm-hello");
+
+        const result = await callTool(app, "remove_package", {
+            format: "deb", distribution: "debian", release: "trixie", source: "srm-hello",
+        });
+
+        expect(result.isError).toBe(false);
+        expect(result.structuredContent.files.map((f: { path: string }) => f.path).sort()).toEqual(hello);
+        expect(await servedStatuses(app, hello)).toEqual(hello.map(() => 200));
+        const removedAt = poolRemovedAt();
+        expect(hello.map(p => typeof removedAt[p])).toEqual(hello.map(() => "number"));
     }));
 });

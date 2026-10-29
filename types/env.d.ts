@@ -58,6 +58,7 @@ declare namespace NodeJS {
         API_ALLOWED_IPS?: string;
         API_BASIC_AUTH?: string;
         API_BEARER_AUTH?: string;
+        API_PUBLIC_READ?: string;
 
         UPLOAD_ALLOWED_IPS?: string;
         UPLOAD_BASIC_AUTH?: string;

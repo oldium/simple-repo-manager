@@ -2,7 +2,7 @@ import type { Request, Response } from "express";
 import express from "express";
 import post from "./post.ts";
 import put from "./put.ts";
-import authMiddleware from "../../lib/auth.ts";
+import { writeAuthMiddleware } from "../../lib/auth.ts";
 import { enablingMiddleware } from "../../lib/req.ts";
 import type { AppConfig } from "../../lib/config.ts";
 import { sendErrorResponse } from "../../lib/res.ts";
@@ -28,7 +28,7 @@ export default function router(config: AppConfig) {
 
     router.use(logResponseMiddleware());
 
-    const auth = authMiddleware(config.upload.allowedIps, config.upload.basicAuth, config.upload.bearerAuth);
+    const auth = writeAuthMiddleware(config.upload.allowedIps, config.upload.basicAuth, config.upload.bearerAuth);
     if (auth.length > 0) {
         router.use(...auth);
     }

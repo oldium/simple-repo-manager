@@ -18,7 +18,7 @@ const DEB_SOURCE = { ...DEB_REF, source: "srm-hello", version: "1.0-1" };
 const RPM_SOURCE = { ...RPM_REF, source: "srm-hello", version: "1.0-1.fc42" };
 
 function service(enabledApi: EnabledApi = { deb: true, rpm: true }, sizeLimit?: number): RepoService {
-    return new RepoService(PATHS, {}, { enabledApi, postField: "package", sizeLimit });
+    return new RepoService(PATHS, {}, { enabledApi, publicRead: false, postField: "package", sizeLimit });
 }
 
 function osJoin(...posix: string[]): string {
