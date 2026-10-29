@@ -50,31 +50,6 @@ describe('Test RedHat file upload', () => {
         expect(fs.readdirSync(osPath.join('incoming', 'tmp'))).toHaveLength(0);
     }));
 
-    test('Check that POST with unavailable createrepo_c tool fails', withLocalTmpDir(async () => {
-        const app = await createTestApp({
-            paths: {
-                incomingDir: "incoming",
-                createrepoScript: null,
-            },
-            upload: {
-                enabledApi: {
-                    rpm: false
-                }
-            }
-        });
-
-        const contentFile = Buffer.from('Hello World');
-        const res = await uploadFileByPost(app, '/api/v1/upload/rpm/fedora/41', [{ name: 'test.rpm', content: contentFile }]);
-
-        expect(res.status).toBe(503);
-        expect(res.headers["retry-after"]).toBeUndefined();
-        expect(res.body.message).toEqual(expect.any(String));
-
-        const expectedFilePath = osPath.join('incoming', 'staging', 'rpm', 'fedora', '41', 'test.rpm');
-        expect(expectedFilePath).not.toPathExist();
-        expect(fs.readdirSync(osPath.join('incoming', 'tmp'))).toHaveLength(0);
-    }));
-
     test('Check that POST with invalid RedHat-related file extension fails', withLocalTmpDir(async () => {
         const app = await createTestApp({
             paths: {
@@ -186,32 +161,6 @@ describe('Test RedHat file upload', () => {
         const expectedFilePath = osPath.join('incoming', 'staging', 'rpm', 'fedora', '41', 'test.put.rpm');
         expect(expectedFilePath).toPathExist();
         expect(fs.readFileSync(expectedFilePath)).toEqual(testContent);
-        expect(fs.readdirSync(osPath.join('incoming', 'tmp'))).toHaveLength(0);
-    }));
-
-    test('Check that PUT upload with unavailable createrepo_c tool fails', withLocalTmpDir(async () => {
-        const app = await createTestApp({
-            paths: {
-                incomingDir: "incoming",
-                createrepoScript: null,
-            },
-            upload: {
-                enabledApi: {
-                    rpm: false
-                }
-            }
-        });
-
-        const testContent = Buffer.from('Test content for PUT method');
-        const testFilePath = '/api/v1/upload/rpm/fedora/41/test.put.rpm';
-
-        const res = await uploadFileByPut(app, testFilePath, testContent);
-        expect(res.status).toBe(503);
-        expect(res.headers["retry-after"]).toBeUndefined();
-        expect(res.body.message).toEqual(expect.any(String));
-
-        const expectedFilePath = osPath.join('incoming', 'staging', 'rpm', 'fedora', '41', 'test.put.rpm');
-        expect(expectedFilePath).not.toPathExist();
         expect(fs.readdirSync(osPath.join('incoming', 'tmp'))).toHaveLength(0);
     }));
 

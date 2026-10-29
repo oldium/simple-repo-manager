@@ -9,15 +9,13 @@ afterEach(() => {
 })
 
 describe('Test repository API', () => {
-    test('Check that repo endpoint is unavailable when the tools are unavailable', withLocalTmpDir(async () => {
+    test('Check that repo endpoint is unavailable when both formats are disabled', withLocalTmpDir(async () => {
         const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp({
             paths: {
                 incomingDir: "incoming",
                 repoStateDir: "repo-state",
                 repoDir: "repo",
-                repreproBin: null,
-                createrepoScript: null,
             },
             upload: {
                 enabledApi: {

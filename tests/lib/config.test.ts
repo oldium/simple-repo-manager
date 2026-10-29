@@ -1,8 +1,6 @@
 import { createFiles, withLocalTmpDir } from "../utils.ts";
 import { jest } from "@jest/globals";
-import osPath from "path";
 import dns from "node:dns/promises";
-import { mockExecution, spawnMock } from "../mocks.ts";
 
 const env = { ...process.env };
 
@@ -15,20 +13,12 @@ describe("Test environment variables and config.ts", () => {
     test("Check production defaults", withLocalTmpDir(async () => {
         process.env.NODE_ENV = "production";
 
-        mockExecution(0, "stdout data", "", undefined);
-
         const { default: config } = await import("../../server/lib/config.ts");
 
         expect(config.environment).toEqual("production");
         expect(config.app.paths.incomingDir).toEqual("data/incoming");
         expect(config.app.paths.repoStateDir).toEqual("data/repo-state");
         expect(config.app.paths.repoDir).toEqual("data/repo");
-        expect(config.app.paths.signScript).not.toBeDefined();
-        expect(config.app.paths.createrepoScript).toEqual(osPath.join("scripts", "createrepo.sh"));
-        expect(config.app.paths.repreproBin).toEqual("reprepro");
-        expect(config.app.gpg.gpgBin).toEqual("gpg");
-        expect(config.app.gpg.gpgPublicKeysFile).not.toBeDefined();
-        expect(config.app.gpg.gpgPublicKeysDir).not.toBeDefined();
         expect(config.app.gpg.gpgRepoPrivateKeyFile).not.toBeDefined();
         expect(config.app.upload.enabledApi.deb).toEqual(true);
         expect(config.app.upload.enabledApi.rpm).toEqual(true);
@@ -49,13 +39,7 @@ describe("Test environment variables and config.ts", () => {
         process.env.INCOMING_DIR = "~/incoming";
         process.env.REPO_STATE_DIR = "~/repo-state";
         process.env.REPO_DIR = "~/repo";
-        process.env.GPG_BIN = "~/gpg";
         process.env.GPG_REPO_PRIVATE_KEY_FILE = "~/private.key";
-        process.env.GPG_PUBLIC_KEYS_FILE = "~/public.key";
-        process.env.GPG_PUBLIC_KEYS_DIR = "~/public-keys";
-        process.env.SIGN_SCRIPT = "~/sign.sh";
-        process.env.CREATEREPO_SCRIPT = "~/createrepo.sh";
-        process.env.REPREPRO_BIN = "~/reprepro";
 
         await createFiles({
             "home/private.key": "",
@@ -66,27 +50,17 @@ describe("Test environment variables and config.ts", () => {
             default: jest.fn((path: string) => path.replace(/^~/, "home")),
         }));
 
-        mockExecution(0, "stdout data", "", undefined);
-
         const { default: config } = await import("../../server/lib/config.ts");
 
         expect(config.environment).toEqual("production");
         expect(config.app.paths.incomingDir).toEqual("home/incoming");
         expect(config.app.paths.repoStateDir).toEqual("home/repo-state");
         expect(config.app.paths.repoDir).toEqual("home/repo");
-        expect(config.app.gpg.gpgBin).toEqual("home/gpg");
         expect(config.app.gpg.gpgRepoPrivateKeyFile).toEqual("home/private.key");
-        expect(config.app.gpg.gpgPublicKeysFile).toEqual("home/public.key");
-        expect(config.app.gpg.gpgPublicKeysDir).toEqual("home/public-keys");
-        expect(config.app.paths.signScript).toEqual("home/sign.sh");
-        expect(config.app.paths.createrepoScript).toEqual("home/createrepo.sh");
-        expect(config.app.paths.repreproBin).toEqual("home/reprepro");
     }));
 
     test("Check that environment is set correctly", withLocalTmpDir(async () => {
         process.env.NODE_ENV = "development";
-
-        mockExecution(0, "stdout data", "", undefined);
 
         const { default: config } = await import("../../server/lib/config.ts");
         expect(config.environment).toEqual("development");
@@ -97,13 +71,6 @@ describe("Test environment variables and config.ts", () => {
         process.env.INCOMING_DIR = "custom/incoming";
         process.env.REPO_STATE_DIR = "custom/repo-state";
         process.env.REPO_DIR = "custom/repo";
-        process.env.CREATEREPO_SCRIPT = "custom/createrepo.sh";
-        process.env.REPREPRO_BIN = "custom/reprepro";
-        process.env.GPG_BIN = "custom/gpg";
-        process.env.GPG_PUBLIC_KEYS_FILE = "custom/public.key";
-        process.env.GPG_PUBLIC_KEYS_DIR = "custom/public-keys";
-
-        mockExecution(0, "stdout data", "", undefined);
 
         const { default: config } = await import("../../server/lib/config.ts");
 
@@ -111,141 +78,31 @@ describe("Test environment variables and config.ts", () => {
         expect(config.app.paths.incomingDir).toEqual("custom/incoming");
         expect(config.app.paths.repoStateDir).toEqual("custom/repo-state");
         expect(config.app.paths.repoDir).toEqual("custom/repo");
-        expect(config.app.paths.createrepoScript).toEqual("custom/createrepo.sh");
-        expect(config.app.paths.repreproBin).toEqual("custom/reprepro");
-        expect(config.app.gpg.gpgBin).toEqual("custom/gpg");
-        expect(config.app.gpg.gpgPublicKeysFile).toEqual("custom/public.key");
-        expect(config.app.gpg.gpgPublicKeysDir).toEqual("custom/public-keys");
     }));
 
-    test("Check private key and sign script configuration", withLocalTmpDir(async () => {
+    test("Legacy tool variables only warn", withLocalTmpDir(async () => {
         process.env.NODE_ENV = "production";
-        process.env.GPG_REPO_PRIVATE_KEY_FILE = "custom/private.key";
-        process.env.SIGN_SCRIPT = "custom/sign.sh";
+        for (const name of ["REPREPRO_BIN", "CREATEREPO_SCRIPT", "GPG_BIN", "SIGN_SCRIPT", "GPG_PUBLIC_KEYS_FILE",
+            "GPG_PUBLIC_KEYS_DIR", "GNUPGHOME"]) {
+            delete process.env[name];
+        }
+        process.env.REPREPRO_BIN = "custom/bin";
+        process.env.GNUPGHOME = "custom/gnupg";
 
-        await createFiles({
-            "custom/private.key": "",
-        })
-
-        mockExecution(0, "stdout data", "", undefined);
-
+        const { default: logger } = await import("../../server/lib/logger.ts");
+        const warnSpy = jest.spyOn(logger, "warn");
         const { default: config } = await import("../../server/lib/config.ts");
 
-        expect(config.environment).toEqual("production");
-        expect(config.app.gpg.gpgRepoPrivateKeyFile).toEqual("custom/private.key");
-        expect(config.app.paths.signScript).toEqual("custom/sign.sh");
-    }));
-
-    test("Check private key and default sign script configuration", withLocalTmpDir(async () => {
-        process.env.NODE_ENV = "production";
-        process.env.GPG_REPO_PRIVATE_KEY_FILE = "custom/private.key";
-
-        await createFiles({
-            "custom/private.key": "",
-        })
-
-        mockExecution(0, "stdout data", "", undefined);
-
-        const { default: config } = await import("../../server/lib/config.ts");
-
-        expect(config.environment).toEqual("production");
-        expect(config.app.gpg.gpgRepoPrivateKeyFile).toEqual("custom/private.key");
-        expect(config.app.paths.signScript).toEqual(osPath.join("scripts", "sign.sh"));
-    }));
-
-    test("Check unset createrepo wrapper script handling", withLocalTmpDir(async () => {
-        process.env.NODE_ENV = "production";
-        process.env.CREATEREPO_SCRIPT = "";
-
-        mockExecution(0, "stdout data", "", undefined);
-
-        const { default: config } = await import("../../server/lib/config.ts");
-
-        expect(config.environment).toEqual("production");
-        expect(config.app.paths.createrepoScript).toBeNil();
-        expect(config.app.upload.enabledApi.rpm).toBeFalse();
-        expect(config.app.paths.repreproBin).toEqual("reprepro");
-        expect(config.app.upload.enabledApi.deb).toBeTrue();
-    }));
-
-    test("Check missing createrepo wrapper script handling", withLocalTmpDir(async () => {
-        process.env.NODE_ENV = "production";
-        process.env.CREATEREPO_SCRIPT = "custom/createrepo.sh";
-
-        const spawn = mockExecution(0, "stdout data", "", undefined);
-        spawn.mockImplementationOnce(spawnMock(1, "", "not found", undefined));
-
-        const { default: config } = await import("../../server/lib/config.ts");
-
-        expect(config.environment).toEqual("production");
-        expect(config.app.paths.createrepoScript).toBeNil();
-        expect(config.app.upload.enabledApi.rpm).toBeFalse();
-    }));
-
-    test("Check unset reprepro bin handling", withLocalTmpDir(async () => {
-        process.env.NODE_ENV = "production";
-        process.env.REPREPRO_BIN = "";
-
-        mockExecution(0, "stdout data", "", undefined);
-
-        const { default: config } = await import("../../server/lib/config.ts");
-
-        expect(config.environment).toEqual("production");
-        expect(config.app.paths.createrepoScript).toEqual(osPath.join("scripts", "createrepo.sh"));
-        expect(config.app.upload.enabledApi.rpm).toBeTrue();
-        expect(config.app.paths.repreproBin).toBeNil();
-        expect(config.app.upload.enabledApi.deb).toBeFalse();
-    }));
-
-    test("Check missing reprepro bin handling", withLocalTmpDir(async () => {
-        process.env.NODE_ENV = "production";
-        process.env.REPREPRO_BIN = "custom/reprepro";
-
-        const spawn = mockExecution(0, "stdout data", "", undefined);
-        spawn.mockImplementationOnce(spawnMock(0, "", "stdout data", undefined));
-        spawn.mockImplementationOnce(spawnMock(1, "", "not found", undefined));
-
-        const { default: config } = await import("../../server/lib/config.ts");
-
-        expect(config.environment).toEqual("production");
-        expect(config.app.paths.createrepoScript).toEqual(osPath.join("scripts", "createrepo.sh"));
-        expect(config.app.upload.enabledApi.rpm).toBeTrue();
-        expect(config.app.paths.repreproBin).toBeNil();
-        expect(config.app.upload.enabledApi.deb).toBeFalse();
-    }));
-
-    test("Check unset gpg bin handling", withLocalTmpDir(async () => {
-        process.env.NODE_ENV = "production";
-        process.env.GPG_BIN = "";
-
-        mockExecution(0, "stdout data", "", undefined);
-
-        const { default: config } = await import("../../server/lib/config.ts");
-
-        expect(config.environment).toEqual("production");
-        expect(config.app.gpg.gpgBin).toBeNil();
-    }));
-
-    test("Check missing gpg bin handling", withLocalTmpDir(async () => {
-        process.env.NODE_ENV = "production";
-        process.env.GPG_BIN = "custom/gpg";
-
-        const spawn = mockExecution(0, "stdout data", "", undefined);
-        spawn.mockImplementationOnce(spawnMock(0, "", "stdout data", undefined));
-        spawn.mockImplementationOnce(spawnMock(0, "", "stdout data", undefined));
-        spawn.mockImplementationOnce(spawnMock(1, "", "not found", undefined));
-
-        const { default: config } = await import("../../server/lib/config.ts");
-
-        expect(config.environment).toEqual("production");
-        expect(config.app.gpg.gpgBin).toBeNil();
+        expect(warnSpy.mock.calls.map(([message]) => message)).toEqual([
+            "Deprecated REPREPRO_BIN is set but no longer used; please remove it from the environment",
+            "Deprecated GNUPGHOME is set but no longer used; please remove it from the environment",
+        ]);
+        expect(config.app.upload.enabledApi).toEqual({ deb: true, rpm: true });
     }));
 
     test("Check trusted proxy IP for single address", withLocalTmpDir(async () => {
         process.env.NODE_ENV = "production";
         process.env.TRUST_PROXY = "127.1.2.3";
-
-        mockExecution(0, "stdout data", "", undefined);
 
         const { default: config } = await import("../../server/lib/config.ts");
 
@@ -258,8 +115,6 @@ describe("Test environment variables and config.ts", () => {
     test("Check trusted proxy IP for multiple addresses", withLocalTmpDir(async () => {
         process.env.NODE_ENV = "production";
         process.env.TRUST_PROXY = "127.1.2.3,192.168.1.0/24";
-
-        mockExecution(0, "stdout data", "", undefined);
 
         const { default: config } = await import("../../server/lib/config.ts");
 
@@ -275,8 +130,6 @@ describe("Test environment variables and config.ts", () => {
         process.env.NODE_ENV = "production";
         process.env.UPLOAD_BASIC_AUTH = "user1:pass1";
 
-        mockExecution(0, "stdout data", "", undefined);
-
         const { default: config } = await import("../../server/lib/config.ts");
 
         expect(config.environment).toEqual("production");
@@ -287,8 +140,6 @@ describe("Test environment variables and config.ts", () => {
     test("Check basic auth multiple credentials parsing", withLocalTmpDir(async () => {
         process.env.NODE_ENV = "production";
         process.env.UPLOAD_BASIC_AUTH = "user1:pass1,user2:pass2";
-
-        mockExecution(0, "stdout data", "", undefined);
 
         const { default: config } = await import("../../server/lib/config.ts");
 
@@ -301,8 +152,6 @@ describe("Test environment variables and config.ts", () => {
         process.env.NODE_ENV = "production";
         process.env.UPLOAD_BASIC_AUTH = " user1:pass1 , user2:pass2, user3:pass me ";
 
-        mockExecution(0, "stdout data", "", undefined);
-
         const { default: config } = await import("../../server/lib/config.ts");
 
         expect(config.environment).toEqual("production");
@@ -314,8 +163,6 @@ describe("Test environment variables and config.ts", () => {
         process.env.NODE_ENV = "production";
         process.env.UPLOAD_BASIC_AUTH = ",";
 
-        mockExecution(0, "stdout data", "", undefined);
-
         const { default: config } = await import("../../server/lib/config.ts");
 
         expect(config.environment).toEqual("production");
@@ -325,8 +172,6 @@ describe("Test environment variables and config.ts", () => {
     test("Check basic auth dictionary-like multiple credentials parsing", withLocalTmpDir(async () => {
         process.env.NODE_ENV = "production";
         process.env.UPLOAD_BASIC_AUTH = "{user1:pass1, user2:pass2}";
-
-        mockExecution(0, "stdout data", "", undefined);
 
         const { default: config } = await import("../../server/lib/config.ts");
 
@@ -338,8 +183,6 @@ describe("Test environment variables and config.ts", () => {
     test("Check basic auth dictionary-like parsing with errors", withLocalTmpDir(async () => {
         process.env.NODE_ENV = "production";
         process.env.UPLOAD_BASIC_AUTH = '{upload:"my \\"secret:,password\\\\;", "upload 2":"other password", upload 3: third password}';
-
-        mockExecution(0, "stdout data", "", undefined);
 
         const { default: config } = await import("../../server/lib/config.ts");
 
@@ -356,8 +199,6 @@ describe("Test environment variables and config.ts", () => {
         process.env.NODE_ENV = "production";
         process.env.UPLOAD_BASIC_AUTH = '{user1:"pass with \\"specials:@#$%^&*()[]", "user 2": pass2}';
 
-        mockExecution(0, "stdout data", "", undefined);
-
         const { default: config } = await import("../../server/lib/config.ts");
 
         expect(config.environment).toEqual("production");
@@ -369,8 +210,6 @@ describe("Test environment variables and config.ts", () => {
         process.env.NODE_ENV = "production";
         process.env.UPLOAD_BASIC_AUTH = "{}";
 
-        mockExecution(0, "stdout data", "", undefined);
-
         const { default: config } = await import("../../server/lib/config.ts");
 
         expect(config.environment).toEqual("production");
@@ -380,8 +219,6 @@ describe("Test environment variables and config.ts", () => {
     test("Check allowed IPs for single address", withLocalTmpDir(async () => {
         process.env.NODE_ENV = "production";
         process.env.UPLOAD_ALLOWED_IPS = "127.1.2.3";
-
-        mockExecution(0, "stdout data", "", undefined);
 
         const { default: config } = await import("../../server/lib/config.ts");
 
@@ -394,8 +231,6 @@ describe("Test environment variables and config.ts", () => {
     test("Check allowed IPs for multiple addresses", withLocalTmpDir(async () => {
         process.env.NODE_ENV = "production";
         process.env.UPLOAD_ALLOWED_IPS = "127.1.2.3,192.168.1.0/24";
-
-        mockExecution(0, "stdout data", "", undefined);
 
         const { default: config } = await import("../../server/lib/config.ts");
 
@@ -411,8 +246,6 @@ describe("Test environment variables and config.ts", () => {
         process.env.NODE_ENV = "production";
         process.env.UPLOAD_SIZE_LIMIT = "1000";
 
-        mockExecution(0, "stdout data", "", undefined);
-
         const { default: config } = await import("../../server/lib/config.ts");
 
         expect(config.environment).toEqual("production");
@@ -422,8 +255,6 @@ describe("Test environment variables and config.ts", () => {
     test("Check upload post field configuration", withLocalTmpDir(async () => {
         process.env.NODE_ENV = "production";
         process.env.UPLOAD_POST_FIELD = "custom-field";
-
-        mockExecution(0, "stdout data", "", undefined);
 
         const { default: config } = await import("../../server/lib/config.ts");
 
@@ -443,8 +274,6 @@ describe("Test environment variables and config.ts", () => {
             }))
         }));
 
-        mockExecution(0, "stdout data", "", undefined);
-
         const { default: config } = await import("../../server/lib/config.ts");
 
         expect(config.environment).toEqual("development");
@@ -458,8 +287,6 @@ describe("Test environment variables and config.ts", () => {
         process.env.NODE_ENV = "production";
         process.env.HTTPS_CERT_FILE = "certs/cert.pem";
         process.env.HTTPS_KEY_FILE = "certs/key.pem";
-
-        mockExecution(0, "stdout data", "", undefined);
 
         const { default: logger } = await import("../../server/lib/logger.ts");
         const errorSpy = jest.spyOn(logger, "error").mockReturnValue(logger);
@@ -480,8 +307,6 @@ describe("Test environment variables and config.ts", () => {
         process.env.NODE_ENV = "production";
         process.env.PUBLIC_URL = "https://repo.example.com/packages";
 
-        mockExecution(0, "stdout data", "", undefined);
-
         const { default: config } = await import("../../server/lib/config.ts");
 
         expect(config.app.publicUrl?.href).toEqual("https://repo.example.com/packages");
@@ -490,8 +315,6 @@ describe("Test environment variables and config.ts", () => {
     test("Check that invalid public URL stops the server", withLocalTmpDir(async () => {
         process.env.NODE_ENV = "production";
         process.env.PUBLIC_URL = "https://repo.example.com/?query";
-
-        mockExecution(0, "stdout data", "", undefined);
 
         const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
         const exitSpy = jest.spyOn(process, "exit").mockImplementation((code) => {
@@ -510,8 +333,6 @@ describe("Test environment variables and config.ts", () => {
         process.env.NODE_ENV = "production";
         process.env.HTTP_HOST = "one.example.com, two.example.com";
         process.env.HTTP_PORT = "80, 8080";
-
-        mockExecution(0, "stdout data", "", undefined);
 
         // @ts-expect-error one particular implementation
         jest.spyOn(dns, "lookup").mockImplementation((hostname: string) => {
@@ -536,8 +357,6 @@ describe("Test environment variables and config.ts", () => {
         process.env.NODE_ENV = "production";
         delete process.env.INSTANCE_LABEL;
 
-        mockExecution(0, "stdout data", "", undefined);
-
         const { default: config } = await import("../../server/lib/config.ts");
 
         expect(config.app.instanceLabel).toBeUndefined();
@@ -546,8 +365,6 @@ describe("Test environment variables and config.ts", () => {
     test("instanceLabel is parsed from INSTANCE_LABEL", withLocalTmpDir(async () => {
         process.env.NODE_ENV = "production";
         process.env.INSTANCE_LABEL = "Home repository";
-
-        mockExecution(0, "stdout data", "", undefined);
 
         const { default: config } = await import("../../server/lib/config.ts");
 
@@ -558,8 +375,6 @@ describe("Test environment variables and config.ts", () => {
         process.env.NODE_ENV = "production";
         process.env.INSTANCE_LABEL = "  Home repository  ";
 
-        mockExecution(0, "stdout data", "", undefined);
-
         const { default: config } = await import("../../server/lib/config.ts");
 
         expect(config.app.instanceLabel).toEqual("Home repository");
@@ -568,8 +383,6 @@ describe("Test environment variables and config.ts", () => {
     test("instanceLabel is undefined when INSTANCE_LABEL is whitespace only", withLocalTmpDir(async () => {
         process.env.NODE_ENV = "production";
         process.env.INSTANCE_LABEL = "   ";
-
-        mockExecution(0, "stdout data", "", undefined);
 
         const { default: config } = await import("../../server/lib/config.ts");
 

@@ -1,24 +1,87 @@
 import type { ErrorRequestHandler, NextFunction, Request, RequestHandler, Response } from "express";
 import express from "express";
+import fs from "node:fs";
 import fsExtra from "fs-extra";
-import { move, tempName } from "../../lib/fs.ts";
-import type { Multer, StorageEngine } from "multer";
+import { pipeline } from "node:stream";
+import { tempName } from "../../lib/fs.ts";
+import type { ErrorCode, Multer, StorageEngine } from "multer";
 import multer from "multer";
 import type { Paths, UploadOptions } from "../../lib/config.ts";
 import osPath from "node:path";
 import path from "node:path/posix";
 import { validateDistro, validateFilename } from "../../lib/validations.ts";
 import logger from "../../lib/logger.ts";
-import lock from "../../lib/lock.ts";
 import type { FileResponse } from "../../lib/res.ts";
 import { sendErrorResponse, sendUploadResponse } from "../../lib/res.ts";
 import { ensureAsyncContext } from "../../lib/req.ts";
+import type { Digests } from "../../backend/hash.ts";
+import { hashingTransform } from "../../backend/hash.ts";
+import { stageUpload } from "./stage.ts";
 
 interface PostRequestParams {
     distro: string;
     release: string;
     component?: string;
     subcomponent?: string;
+}
+
+type UploadedFile = Express.Multer.File & { digests: Digests };
+
+/** Writes each file to the temp directory, hashing it on the way; sets path, size and digests on the file */
+class HashingDiskStorage implements StorageEngine {
+    private readonly tmpDir: string;
+    /** Write streams still open: _removeFile waits for the descriptor, Windows refuses to unlink an open file */
+    private readonly openStreams = new WeakMap<Express.Multer.File, fs.WriteStream>();
+
+    constructor(tmpDir: string) {
+        this.tmpDir = tmpDir;
+    }
+
+    _handleFile(req: Request, file: Express.Multer.File, cb: (error?: unknown, info?: Partial<UploadedFile>) => void): void {
+        const safeOriginalName = osPath.basename(file.originalname).replace(/[^a-zA-Z0-9_.-]/g, '');
+        const tempPath = osPath.join(this.tmpDir, tempName(req.socket, safeOriginalName));
+        if (file.stream.destroyed) {
+            // A multer 2.5 code, not yet in @types/multer 2.3
+            cb(new multer.MulterError("STREAM_DESTROYED" as ErrorCode));
+            return;
+        }
+        const outStream = fs.createWriteStream(tempPath);
+        // multer removes an aborted upload only when the file already has its path
+        file.path = tempPath;
+        this.openStreams.set(file, outStream);
+        outStream.once('close', () => this.openStreams.delete(file));
+
+        let digests: Digests | undefined = undefined;
+        pipeline(file.stream, hashingTransform(d => { digests = d; }), outStream, err => {
+            if (err) {
+                fs.rm(tempPath, { force: true }, rmErr => {
+                    if (rmErr) {
+                        logger.warn(`Failed to remove temporary file ${ tempPath }:`, { err: rmErr });
+                    }
+                    cb(err);
+                });
+            } else {
+                cb(null, { path: tempPath, size: outStream.bytesWritten, digests });
+            }
+        });
+    }
+
+    _removeFile(_req: Request, file: Express.Multer.File, cb: (error: Error | null) => void): void {
+        const unlink = () => fs.rm(file.path, { force: true }, cb);
+        const outStream = this.openStreams.get(file);
+        if (outStream === undefined || outStream.closed) {
+            unlink();
+            return;
+        }
+        const onReleased = () => {
+            outStream.off('close', onReleased);
+            outStream.off('error', onReleased);
+            unlink();
+        };
+        outStream.once('close', onReleased);
+        outStream.once('error', onReleased);
+        outStream.destroy();
+    }
 }
 
 class PostHandler {
@@ -29,23 +92,7 @@ class PostHandler {
 
     constructor(paths: Paths, upload: UploadOptions) {
         this.paths = paths;
-        this.storage = multer.diskStorage({
-            destination: (_req, _file, cb) => {
-                // Always save to the central temp directory first
-                cb(null, osPath.join(paths.incomingDir, 'tmp'));
-            },
-            filename: (req, file, cb) => {
-                try {
-                    // Sanitize original filename
-                    const safeOriginalName = osPath.basename(file.originalname).replace(/[^a-zA-Z0-9_.-]/g, '');
-                    const tempFilename = tempName(req.socket, safeOriginalName);
-                    cb(null, tempFilename);
-                } catch (err: unknown) {
-                    logger.error("Error during temporary filename generation:", { err });
-                    cb(err instanceof Error ? err : new Error(String(err)), ''); // Pass error to multer
-                }
-            }
-        });
+        this.storage = new HashingDiskStorage(osPath.join(paths.incomingDir, 'tmp'));
 
         this.postField = upload.postField;
 
@@ -102,7 +149,7 @@ class PostHandler {
         res: Response
     ): Promise<void> {
         const { distro, release, component, subcomponent } = req.params;
-        const files = req.files as Express.Multer.File[] | undefined;
+        const files = req.files as UploadedFile[] | undefined;
 
         if (!files || files.length === 0) {
             sendErrorResponse(res, 400, `No files uploaded, expected field name "${ this.postField }"`);
@@ -138,9 +185,10 @@ class PostHandler {
             const targetDir = osPath.join(this.paths.incomingDir, 'staging', type, ...distroComponents);
             const targetPath = osPath.join(targetDir, originalFilename);
 
+            const relPath = path.join(type, ...distroComponents, originalFilename);
             const filePath: Omit<FileResponse, "status"> = {
                 filename: originalFilename,
-                path: path.join(type, ...distroComponents, originalFilename)
+                path: relPath
             };
 
             try {
@@ -151,7 +199,7 @@ class PostHandler {
                     status = 'failed';
                     await fsExtra.remove(tempPath);
                 } else {
-                    await lock.forMove(async () => await move(tempPath, targetDir, targetPath));
+                    await stageUpload({ tempPath, targetDir, targetPath, relPath, repoStateDir: this.paths.repoStateDir, digests: file.digests });
                     status = 'ok';
                 }
                 fileResponses.push({ ...filePath, status });

@@ -1,16 +1,36 @@
 import request from "supertest";
-import fsExtra from "fs-extra/esm";
+import type { Application } from "express";
 import fs from "node:fs/promises";
 import osPath from "path";
-import zlib from "node:zlib";
+import { fileURLToPath } from "url";
 import { jest } from "@jest/globals";
 
 import createTestApp from "../testapp.ts";
-import { withLocalTmpDir } from "../utils.ts";
+import { uploadFileByPost, withLocalTmpDir } from "../utils.ts";
 import logger from "../../server/lib/logger.ts";
+
+const RPM_FIXTURES = fileURLToPath(new URL("../fixtures/packages/rpm/fedora/42/", import.meta.url));
 
 function jsonRpc(method: string, params: Record<string, unknown> = {}, id = 1) {
     return { jsonrpc: "2.0", id, method, params };
+}
+
+/** Uploads the rpm fixture bundle through the REST API and imports it through MCP; returns its file names */
+async function importRpmFixtures(app: Application): Promise<string[]> {
+    const names = (await fs.readdir(RPM_FIXTURES)).sort();
+    const files = await Promise.all(names.map(async name => ({ name, content: await fs.readFile(osPath.join(RPM_FIXTURES, name)) })));
+    expect((await uploadFileByPost(app, "/api/v1/upload/rpm/fedora/42", files)).status).toBe(201);
+    const response = await request(app)
+        .post("/api/v1/mcp")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .send(jsonRpc("tools/call", { name: "import_repository", arguments: {} }));
+    expect(response.status).toBe(200);
+    const result = response.body.result.structuredContent;
+    expect(result.ok).toBe(true);
+    expect(result.files.map((f: { path: string; status: string }) => `${ f.path } ${ f.status }`).sort())
+        .toEqual(names.map(name => `rpm/fedora/42/${ name } ok`));
+    return names;
 }
 
 describe("MCP server", () => {
@@ -115,21 +135,9 @@ describe("MCP server", () => {
         expect(isRpcError || isToolError).toBe(true);
     }));
 
-    test("list_repositories enumerates rpm trees", withLocalTmpDir(async () => {
-        const root = osPath.join("repo", "rpm", "fedora", "40");
-        await fsExtra.ensureDir(osPath.join(root, "repodata"));
-        await fs.writeFile(
-            osPath.join(root, "repodata", "repomd.xml"),
-            `<?xml version="1.0"?><repomd><data type="primary"><location href="repodata/hash-primary.xml.zst"/></data></repomd>`
-        );
-        await fs.writeFile(
-            osPath.join(root, "repodata", "hash-primary.xml.zst"),
-            zlib.zstdCompressSync(Buffer.from(
-                `<?xml version="1.0" encoding="UTF-8"?>\n<metadata xmlns="http://linux.duke.edu/metadata/common" xmlns:rpm="http://linux.duke.edu/metadata/rpm" packages="0"></metadata>\n`,
-                "utf8"
-            ))
-        );
+    test("list_repositories lists the imported rpm repository", withLocalTmpDir(async () => {
         const app = await createTestApp();
+        await importRpmFixtures(app);
         const response = await request(app)
             .post("/api/v1/mcp")
             .set("Content-Type", "application/json")
@@ -138,7 +146,7 @@ describe("MCP server", () => {
         expect(response.status).toBe(200);
         const result = response.body.result;
         expect(result.structuredContent.repositories).toEqual([
-            { format: "rpm", distribution: "fedora", release: "40" },
+            { format: "rpm", distribution: "fedora", release: "42" },
         ]);
     }));
 
@@ -406,26 +414,8 @@ describe("MCP server", () => {
     }));
 
     test("list_package_files returns resource_link blocks with https download URIs (rpm)", withLocalTmpDir(async () => {
-        jest.resetModules();
-        const actual = await import("../../server/lib/rpm-metadata.ts");
-        jest.unstable_mockModule("../../server/lib/rpm-metadata.ts", () => ({
-            __esModule: true,
-            ...actual,
-            streamPackages: jest.fn(async function* () {
-                yield { name: "clevis", arch: "src", ver: "21", rel: "1",
-                    href: "Packages/c/clevis-21-1.src.rpm", sourcerpm: "" };
-                yield { name: "clevis", arch: "x86_64", ver: "21", rel: "1",
-                    href: "Packages/c/clevis-21-1.x86_64.rpm",
-                    sourcerpm: "clevis-21-1.src.rpm" };
-            }),
-        }));
-        jest.resetModules();
-        await fsExtra.ensureDir(osPath.join("repo", "rpm", "fedora", "40", "repodata"));
-        await fs.writeFile(
-            osPath.join("repo", "rpm", "fedora", "40", "repodata", "repomd.xml"),
-            `<?xml version="1.0"?><repomd/>`);
-        const createTestApp = (await import("../testapp.ts")).default;
         const app = await createTestApp();
+        const names = await importRpmFixtures(app);
         const response = await request(app)
             .post("/api/v1/mcp")
             .set("Content-Type", "application/json")
@@ -433,18 +423,19 @@ describe("MCP server", () => {
             .set("Authorization", "Bearer test-token")
             .send(jsonRpc("tools/call", {
                 name: "list_package_files",
-                arguments: { format: "rpm", source: "clevis" },
+                arguments: { format: "rpm", source: "srm-hello" },
             }));
         expect(response.status).toBe(200);
         expect(response.body.result.isError).toBeFalsy();
 
         const { files, touchedTargets } = response.body.result.structuredContent;
         expect(touchedTargets).toBe(1);
+        expect(files).toHaveLength(names.length);
         expect(files).toEqual(expect.arrayContaining([
             expect.objectContaining({
-                filename: "clevis-21-1.src.rpm",
-                path: "rpm/fedora/40/Packages/c/clevis-21-1.src.rpm",
-                downloadUrl: expect.stringMatching(/^https?:\/\/.+\/rpm\/fedora\/40\/Packages\/c\/clevis-21-1\.src\.rpm$/),
+                filename: "srm-hello-1.0-1.fc42.src.rpm",
+                path: "rpm/fedora/42/Packages/s/srm-hello/srm-hello-1.0-1.fc42.src.rpm",
+                downloadUrl: expect.stringMatching(/^https?:\/\/.+\/rpm\/fedora\/42\/Packages\/s\/srm-hello\/srm-hello-1\.0-1\.fc42\.src\.rpm$/),
                 method: "GET",
             }),
         ]));
@@ -458,11 +449,11 @@ describe("MCP server", () => {
             (c: { type: string }) => c.type === "resource_link"
         );
         expect(links.length).toBe(files.length);
-        const srcLink = links.find((l: { name: string }) => l.name === "clevis-21-1.src.rpm");
-        expect(srcLink.uri).toMatch(/^https?:\/\/.+\/rpm\/fedora\/40\/Packages\/c\/clevis-21-1\.src\.rpm$/);
+        const srcLink = links.find((l: { name: string }) => l.name === "srm-hello-1.0-1.fc42.src.rpm");
+        expect(srcLink.uri).toMatch(/^https?:\/\/.+\/rpm\/fedora\/42\/Packages\/s\/srm-hello\/srm-hello-1\.0-1\.fc42\.src\.rpm$/);
         expect(srcLink.mimeType).toBe("application/x-rpm");
 
-        const binLink = links.find((l: { name: string }) => l.name === "clevis-21-1.x86_64.rpm");
+        const binLink = links.find((l: { name: string }) => l.name === "srm-hello-1.0-1.fc42.x86_64.rpm");
         expect(binLink.mimeType).toBe("application/x-rpm");
     }));
 

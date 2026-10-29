@@ -7,7 +7,6 @@ import untildify from "untildify";
 import logger from "./logger.ts";
 import fsExtra from "fs-extra";
 import proxyAddr from "proxy-addr";
-import { execOpt } from "./exec.ts";
 import { Access, requireAccess } from "./fs.ts";
 import { parseHumanJsonArray, parseHumanJsonObject } from "./json.ts";
 
@@ -38,10 +37,7 @@ export type Security = {
 }
 
 export type Gpg = {
-    gpgBin?: string | null,
     gpgRepoPrivateKeyFile?: string,
-    gpgPublicKeysFile?: string,
-    gpgPublicKeysDir?: string,
 }
 
 export type Paths = {
@@ -49,9 +45,6 @@ export type Paths = {
     repoStateDir: string,
     repoDir: string,
     templateDir?: string,
-    signScript?: string,
-    createrepoScript?: string | null,
-    repreproBin?: string | null,
 }
 
 export type EnabledApi = {
@@ -88,50 +81,10 @@ const repoDir = process.env.REPO_DIR ? untildify(process.env.REPO_DIR) : 'data/r
 const templateDir = process.env.TEMPLATES_DIR ? untildify(process.env.TEMPLATES_DIR) : undefined;
 const gpgRepoPrivateKeyFile = process.env.GPG_REPO_PRIVATE_KEY_FILE ? untildify(process.env.GPG_REPO_PRIVATE_KEY_FILE) :
     undefined;
-const gpgPublicKeysFile = process.env.GPG_PUBLIC_KEYS_FILE ? untildify(process.env.GPG_PUBLIC_KEYS_FILE) : undefined;
-const gpgPublicKeysDir = process.env.GPG_PUBLIC_KEYS_DIR ? untildify(process.env.GPG_PUBLIC_KEYS_DIR) : undefined;
-const signScript = (gpgRepoPrivateKeyFile && await fsExtra.pathExists(gpgRepoPrivateKeyFile)) ?
-    (process.env.SIGN_SCRIPT ? untildify(process.env.SIGN_SCRIPT) : osPath.join('scripts', 'sign.sh')) :
-    undefined;
-let createrepoScript: string | undefined | null = process.env.CREATEREPO_SCRIPT !== undefined ?
-    (process.env.CREATEREPO_SCRIPT ? untildify(process.env.CREATEREPO_SCRIPT) : undefined) :
-    osPath.join('scripts', 'createrepo.sh');
-let repreproBin: string | undefined | null = process.env.REPREPRO_BIN !== undefined ?
-    (process.env.REPREPRO_BIN ? untildify(process.env.REPREPRO_BIN) : undefined) :
-    "reprepro";
-let gpgBin: string | undefined | null = process.env.GPG_BIN !== undefined ?
-    (process.env.GPG_BIN ? untildify(process.env.GPG_BIN) : undefined) :
-    "gpg";
-
-if (createrepoScript || repreproBin) {
-    logger.debug("Checking existence of repository tools")
-    if (createrepoScript) {
-        if ((await execOpt({ errorAsWarn: true }, createrepoScript, "--version")).result !== "success") {
-            logger.warn("No usable createrepo_c tool found");
-            createrepoScript = null;
-        }
-    }
-    if (repreproBin) {
-        if ((await execOpt({
-            errorAsWarn: true,
-            levelFn: (stdio: string, message: string) => {
-                switch (stdio) {
-                    case "stderr":
-                        return message.includes("reprepro version") ? "info" : "warn";
-                    default:
-                        return "info";
-                }
-            }
-        }, repreproBin, "--version")).result !== "success") {
-            logger.warn("No usable reprepro tool found");
-            repreproBin = null;
-        }
-    }
-}
-if (gpgBin) {
-    if ((await execOpt({ errorAsWarn: true }, gpgBin, "--version")).result !== "success") {
-        logger.warn("No usable gpg tool found");
-        gpgBin = null;
+for (const name of ["REPREPRO_BIN", "CREATEREPO_SCRIPT", "GPG_BIN", "SIGN_SCRIPT", "GPG_PUBLIC_KEYS_FILE",
+    "GPG_PUBLIC_KEYS_DIR", "GNUPGHOME"] as const) {
+    if (process.env[name] !== undefined) {
+        logger.warn(`Deprecated ${ name } is set but no longer used; please remove it from the environment`);
     }
 }
 
@@ -140,16 +93,10 @@ const paths: Paths = {
     repoStateDir,
     repoDir,
     templateDir,
-    signScript,
-    createrepoScript,
-    repreproBin,
 };
 
 const gpg: Gpg = {
-    gpgBin,
     gpgRepoPrivateKeyFile,
-    gpgPublicKeysFile,
-    gpgPublicKeysDir,
 }
 
 await requireAccess("Incoming directory", incomingDir, Access.Creatable);
@@ -158,8 +105,6 @@ await requireAccess("Repository directory", repoDir, Access.Creatable);
 for (const [name, path] of [
     ["Templates directory", templateDir],
     ["GPG repository private key file", gpgRepoPrivateKeyFile],
-    ["GPG public keys file", gpgPublicKeysFile],
-    ["GPG public keys directory", gpgPublicKeysDir],
 ] as const) {
     // Missing ones keep their optional handling
     if (path && await fsExtra.pathExists(path)) {
@@ -228,8 +173,8 @@ const sizeLimit = sizeLimitEnv ? parseInt(sizeLimitEnv) : undefined;
 const postField = (process.env.UPLOAD_POST_FIELD && process.env.UPLOAD_POST_FIELD.trim()) || 'package';
 
 const enabledApi = {
-    deb: !!repreproBin || environment === "development",
-    rpm: !!createrepoScript || environment === "development",
+    deb: true,
+    rpm: true,
 }
 
 const upload: UploadOptions = {

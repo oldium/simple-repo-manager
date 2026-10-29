@@ -30,9 +30,9 @@ export type ListFileResponse = {
 };
 
 export function sendListResponse(res: Response, status: number, message: string,
-    files: ListFileResponse[], touchedTargets: number) {
+    files: ListFileResponse[], touchedTargets: number, nextCursor?: string) {
     res.status(status).json({
-        ...getResponseCorrelationId(status), message, files, touchedTargets,
+        ...getResponseCorrelationId(status), message, files, touchedTargets, nextCursor,
     });
 }
 

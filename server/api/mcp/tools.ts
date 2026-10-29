@@ -101,7 +101,7 @@ export function registerTools(
         },
     }, withLogging("list_source_packages", async (input) => {
         try {
-            const packages = await service.listSourcePackages(input);
+            const packages = (await service.listSourcePackages(input)).items;
             return successResult(
                 `Found ${ packages.length } source package${ packages.length === 1 ? "" : "s" }.`,
                 { packages }

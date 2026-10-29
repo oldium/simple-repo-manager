@@ -1,11 +1,25 @@
 // noinspection DuplicatedCode,JSJQueryEfficiency
 
-import { createFiles, sendRawHttp, withLocalTmpDir } from "../utils.ts";
+import { createFiles, sendRawHttp, uploadFileByPost, withLocalTmpDir } from "../utils.ts";
 import createTestApp from "../testapp.ts";
 import request from "supertest";
 import * as cheerio from "cheerio";
 import dedent from "dedent";
 import net from "net";
+import type { Application } from "express";
+import fs from "node:fs/promises";
+import osPath from "path";
+import { fileURLToPath } from "url";
+import { jest } from "@jest/globals";
+import logger from "../../server/lib/logger.ts";
+
+const FIXTURES = fileURLToPath(new URL("../fixtures/packages/", import.meta.url));
+
+async function uploadBundle(app: Application, dir: string, target = dir) {
+    const names = await fs.readdir(osPath.join(FIXTURES, dir));
+    const files = await Promise.all(names.map(async name => ({ name, content: await fs.readFile(osPath.join(FIXTURES, dir, name)) })));
+    expect((await uploadFileByPost(app, `/api/v1/upload/${ target }`, files)).status).toBe(201);
+}
 
 describe("Test of files reading API", () => {
     test("Check that directories are read correctly", withLocalTmpDir(async () => {
@@ -43,6 +57,48 @@ describe("Test of files reading API", () => {
         const $ = cheerio.load(res.text);
         expect($('li')).toHaveLength(0);
         expect($('.view-empty .title').text()).toBe("The repository is empty");
+    }));
+
+    test("Home page lists configs for imported fixtures", withLocalTmpDir(async () => {
+        const app = await createTestApp({
+            paths: {
+                repoDir: "repo",
+            }
+        });
+        await uploadBundle(app, "deb/debian/trixie/main");
+        await uploadBundle(app, "deb/debian/trixie/main", "deb/debian/trixie/main/sub");
+        await uploadBundle(app, "rpm/fedora/42");
+        expect((await request(app).post("/api/v1/repo/import")).status).toBe(200);
+
+        const res = await request(app).get("/");
+        expect(res.status).toBe(200);
+
+        const $ = cheerio.load(res.text);
+        expect($('a[href="#cfg:deb-debian-trixie"]')).toHaveLength(1);
+        expect($('a[href="#cfg:rpm-fedora-42"]')).toHaveLength(1);
+        const debConfig = $("section#deb-debian-trixie pre").text();
+        expect(debConfig).toContain("Components: main main/sub");
+        expect(debConfig).toMatch(/^URIs: http:\/\/127\.0\.0\.1:\d+\/deb\/debian$/m);
+    }));
+
+    test("A configured but missing key file writes no keyring and warns once", withLocalTmpDir(async () => {
+        const warnSpy = jest.spyOn(logger, "warn");
+        try {
+            await createTestApp({
+                paths: {
+                    repoDir: "repo",
+                },
+                gpg: {
+                    gpgRepoPrivateKeyFile: "missing-key.asc",
+                }
+            });
+
+            expect(osPath.join("repo", "deb", "archive-keyring.asc")).not.toPathExist();
+            expect(osPath.join("repo", "rpm", "RPM-GPG-KEY.asc")).not.toPathExist();
+            expect(warnSpy.mock.calls.filter(([message]) => message === "GPG key file missing-key.asc does not exist.")).toHaveLength(1);
+        } finally {
+            warnSpy.mockRestore();
+        }
     }));
 
     test("Check that directories with files are read correctly", withLocalTmpDir(async () => {

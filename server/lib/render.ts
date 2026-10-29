@@ -4,7 +4,8 @@ import escapeHtml from "escape-html";
 import fsExtra from "fs-extra";
 import fs from "fs/promises";
 import { default as osPath } from "node:path";
-import type { Repository, RepoType } from "./repo.ts";
+import path from "node:path/posix";
+import type { Distribution, Release, Repository, RepoType } from "./repo.ts";
 import { getEnv, sanitize } from "./env.ts";
 import logger from "./logger.ts";
 import { fileURLToPath } from "node:url";
@@ -12,9 +13,8 @@ import type { Request } from "express";
 import { gpgDebPublicKeyPath } from "./gpg.ts";
 import { getHostname, getUriNoQuery } from "./req.ts";
 import _ from "lodash";
-import { getRepository as getDebRepository } from "./deb.ts";
-import { getRepository as getRpmRepository } from "./rpm.ts";
 import dedent from "dedent";
+import { getBackend } from "../backend/index.ts";
 
 const loadedTemplate: Record<string, boolean> = {};
 
@@ -169,13 +169,34 @@ async function renderDistroConfig<T extends Repository>(req: Request, eta: Eta, 
     return { navigation, configs };
 }
 
+type RepositoryOf<R extends Release> = Repository & { distributions: Record<string, Distribution & { releases: Record<string, R> }> };
+
+/** The releases below /<type> that match the browsed distro and release; an empty or missing segment matches all */
+function toRepository<V extends { distro: string; release: string }, R extends Release>(type: RepoType, views: V[],
+    distro: string | undefined, release: string | undefined, toRelease: (distroPath: string, view: V) => R): RepositoryOf<R> {
+    const repoObj: RepositoryOf<R> = { type, path: path.join("/", type), distributions: {} };
+    for (const view of views) {
+        if ((distro && view.distro !== distro) || (release && view.release !== release)) {
+            continue;
+        }
+        const distroObj = repoObj.distributions[view.distro] ??= { path: path.join(repoObj.path, view.distro), releases: {} };
+        distroObj.releases[view.release] = toRelease(distroObj.path, view);
+    }
+    return repoObj;
+}
+
 export async function renderDistroConfigs(req: Request, paths: Paths, gpg: Gpg, eta: Eta, directory: string) {
     const navigation: string[] = [];
     const configs: string[] = [];
+    const tree = getBackend(paths.repoStateDir).repositoryTree();
 
     if (directory === "/" || directory.startsWith("/deb/")) {
         const [, , pathDistro, , pathRelease] = directory.split("/");
-        const repoObj = await getDebRepository(paths.repoStateDir, pathDistro, pathRelease);
+        const repoObj = toRepository("deb", tree.deb, pathDistro, pathRelease, (distroPath, view) => ({
+            path: path.join(distroPath, "dists", view.release),
+            components: view.components,
+            architectures: view.architectures,
+        }));
         const { navigation: repoNavigation, configs: repoConfigs } = await renderDistroConfig(req, eta, paths.repoDir, gpg,
             repoObj, (repoObj, distro, release, data) => {
                 return {
@@ -196,7 +217,9 @@ export async function renderDistroConfigs(req: Request, paths: Paths, gpg: Gpg, 
 
     if (directory === "/" || directory.startsWith("/rpm/")) {
         const [, , pathDistro, pathRelease] = directory.split("/");
-        const repoObj = await getRpmRepository(paths.repoDir, pathDistro, pathRelease);
+        const repoObj = toRepository("rpm", tree.rpm, pathDistro, pathRelease, (distroPath, view) => ({
+            path: path.join(distroPath, view.release),
+        }));
         const { navigation: repoNavigation, configs: repoConfigs } = await renderDistroConfig(req, eta, paths.repoDir, gpg,
             repoObj, (repoObj, distro, release, data) => {
                 return {

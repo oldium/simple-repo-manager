@@ -11,6 +11,7 @@ import {
 } from "../lib/validations.ts";
 import type { ParamsDictionary } from "express-serve-static-core";
 import { RepoService } from "../lib/repo-service.ts";
+import { MAX_PAGE_SIZE, type Page } from "../backend/paging.ts";
 import {
     RepoError,
     RepoInternalError,
@@ -26,6 +27,40 @@ type PackagePathParams = {
     source: string;
     version?: string;
 };
+
+/** A repeated parameter is an error rather than a guess at which value counts */
+function queryValue(req: Request, name: string): string | undefined {
+    const value = req.query[name];
+    if (value !== undefined && typeof value !== "string") {
+        throw new RepoValidationError(`${ name } must be given once`);
+    }
+    return value;
+}
+
+function pageQuery(req: Request): Page {
+    const page: Page = {};
+    const limit = queryValue(req, "limit");
+    if (limit !== undefined) {
+        const value = /^[0-9]+$/.test(limit) ? Number(limit) : 0;
+        if (value < 1 || value > MAX_PAGE_SIZE) {
+            throw new RepoValidationError(`limit must be an integer from 1 to ${ MAX_PAGE_SIZE }`);
+        }
+        page.limit = value;
+    }
+    const cursor = queryValue(req, "cursor");
+    if (cursor !== undefined) {
+        page.cursor = cursor;
+    }
+    return page;
+}
+
+function immediateQuery(req: Request): boolean {
+    const immediate = queryValue(req, "immediate");
+    if (immediate !== undefined && immediate !== "true" && immediate !== "false") {
+        throw new RepoValidationError("immediate must be true or false");
+    }
+    return immediate === "true";
+}
 
 class RepoHandler {
     private readonly service: RepoService;
@@ -65,13 +100,14 @@ class RepoHandler {
         const versionArg = version === undefined || isAnyWildcard(version) ? undefined : version;
 
         try {
+            const page = pageQuery(req);
             const result = await this.service.listPackageFiles({
                 format: formatArg,
                 distribution: distroArg,
                 release: releaseArg,
                 source,
                 version: versionArg,
-            });
+            }, page);
             const versionLabel = version ?? "-";
             const msg = result.files.length === 0
                 ? `No packages matched ${ source }/${ versionLabel } in ${ format }/${ distribution }/${ release }`
@@ -81,7 +117,7 @@ class RepoHandler {
                 path: f.path,
                 downloadUrl: getUriNoQuery(req, "/" + f.path),
             }));
-            return sendListResponse(res, 200, msg, files, result.touchedTargets);
+            return sendListResponse(res, 200, msg, files, result.touchedTargets, result.nextCursor);
         } catch (err) {
             if (err instanceof RepoValidationError) {
                 return sendErrorResponse(res, 400, err.message);
@@ -107,15 +143,15 @@ class RepoHandler {
         try {
             const result = await this.service.importRepository();
             if (result.ok) {
-                sendRepoResponse(res, 200, "Repository build script executed successfully");
+                sendRepoResponse(res, 200, "Repository import finished successfully");
             } else {
-                sendRepoResponse(res, 500, "Repository build script execution failed. See server logs for details");
+                sendRepoResponse(res, 500, "Repository import failed. See server logs for details");
             }
         } catch (err) {
             if (err instanceof RepoServiceUnavailableError) {
                 return sendErrorResponse(res, 503, err.message);
             }
-            logger.error("Error during repository build:", { err });
+            logger.error("Error during repository import:", { err });
             if (!res.headersSent) {
                 sendRepoResponse(res, 500, "An unexpected server error occurred. See server logs for details");
             }
@@ -141,12 +177,14 @@ class RepoHandler {
         const versionArg = version === undefined || isAnyWildcard(version) ? undefined : version;
 
         try {
+            const immediate = immediateQuery(req);
             const result = await this.service.removePackage({
                 format: formatArg,
                 distribution: distroArg,
                 release: releaseArg,
                 source,
                 version: versionArg,
+                immediate,
             });
             const versionLabel = version ?? "-";
             const msg = result.files.length === 0

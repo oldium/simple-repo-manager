@@ -11,16 +11,10 @@ export default async function createTestApp(partialConfig?: DeepPartial<AppConfi
             incomingDir: "incoming",
             repoStateDir: "repo-state",
             repoDir: "repo",
-            signScript: undefined,
-            createrepoScript: "scripts/createrepo.sh",
-            repreproBin: "reprepro",
             ...partialConfig?.paths
         },
         gpg: {
             gpgRepoPrivateKeyFile: undefined,
-            gpgPublicKeysFile: undefined,
-            gpgPublicKeysDir: undefined,
-            gpgBin: "gpg",
             ...partialConfig?.gpg
         },
         upload: {

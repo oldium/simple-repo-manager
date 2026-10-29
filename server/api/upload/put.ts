@@ -2,14 +2,17 @@ import type { Paths, UploadOptions } from "../../lib/config.ts";
 import type { Request, RequestHandler, Response } from "express";
 import express from "express";
 import fs from "fs";
-import { move, tempName } from "../../lib/fs.ts";
+import assert from "node:assert";
+import type { Writable } from "stream";
+import { tempName } from "../../lib/fs.ts";
 import { validateDistro, validateFilename } from "../../lib/validations.ts";
 import osPath from "path";
 import path from "node:path/posix";
 import logger from "../../lib/logger.ts";
 import { SizeLimitStream } from "../../lib/streams.ts";
-import lock from "../../lib/lock/naive.ts";
 import { type FileResponse, sendErrorResponse, sendUploadResponse } from "../../lib/res.ts";
+import { type Digests, hashingTransform } from "../../backend/hash.ts";
+import { stageUpload } from "./stage.ts";
 
 interface PutRequestParams {
     distro: string;
@@ -47,9 +50,10 @@ class PutHandler {
             return;
         }
 
+        const relPath = path.join(type, ...distroComponents, filename);
         const filePath: Omit<FileResponse, "status"> = {
             filename,
-            path: path.join(type, ...distroComponents, filename)
+            path: relPath
         };
 
         logger.info(`Received PUT upload request for ${ type }/${ distroComponents.join('/') }: ${ filename }`);
@@ -68,10 +72,16 @@ class PutHandler {
             encoding: 'binary'
         });
 
+        let digests: Digests | undefined = undefined;
+        const hashStream = hashingTransform(d => { digests = d; });
+
         let sizeLimitStream: SizeLimitStream | undefined = undefined;
         if (this.sizeLimit && this.sizeLimit > 0) {
             sizeLimitStream = new SizeLimitStream(this.sizeLimit);
         }
+
+        // The stage the request feeds; ending it ends the chain through pipe()
+        const head: Writable = sizeLimitStream ?? hashStream;
 
         let response: { status: number, message: string, files: FileResponse[] } | undefined = undefined;
 
@@ -106,16 +116,9 @@ class PutHandler {
         }
 
         const endWritable = () => {
-            if (sizeLimitStream) {
-                if (!sizeLimitStream.writableEnded) {
-                    req.unpipe(sizeLimitStream);
-                    sizeLimitStream.end();
-                }
-            } else {
-                if (!writeStream.writableEnded) {
-                    req.unpipe(writeStream);
-                    writeStream.end();
-                }
+            if (!head.writableEnded) {
+                req.unpipe(head);
+                head.end();
             }
         }
 
@@ -140,8 +143,9 @@ class PutHandler {
 
             try {
                 // Attempt to move the completed temporary file
-                // targetPaths were already validated earlier
-                await lock.forMove(async () => await move(tempPath, targetDir, targetPath));
+                // targetPaths were already validated earlier; the hash flushed before the write stream could finish
+                assert(digests !== undefined);
+                await stageUpload({ tempPath, targetDir, targetPath, relPath, repoStateDir: this.paths.repoStateDir, digests });
 
                 // Send success response ONLY AFTER successful move
                 maySetResponse(201, 'File uploaded successfully', 'ok');
@@ -212,11 +216,10 @@ class PutHandler {
 
         if (sizeLimitStream) {
             sizeLimitStream.once('exceeded', onSizeExceeded);
-            req.pipe(sizeLimitStream, { end: false });
-            sizeLimitStream.pipe(writeStream);
-        } else {
-            req.pipe(writeStream, { end: false });
+            sizeLimitStream.pipe(hashStream);
         }
+        hashStream.pipe(writeStream);
+        req.pipe(head, { end: false });
     }
 }
 

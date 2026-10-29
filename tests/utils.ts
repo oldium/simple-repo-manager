@@ -7,6 +7,7 @@ import osPath from "path";
 import fsExtra from "fs-extra/esm";
 import fs from "fs/promises";
 import type { Server } from "node:http";
+import { Database } from "node:sqlite";
 import { closeBackends } from "../server/backend/registry.ts";
 
 export function withLocalTmpDir<T>(what: TmpDirCallback<T>) {
@@ -46,6 +47,25 @@ export function uploadFileByPut(app: Application, url: string, content: Buffer) 
     const req = request(app).put(url);
     req.type('application/octet-stream');
     return req.send(content);
+}
+
+export async function servedStatuses(app: Application, paths: string[]): Promise<number[]> {
+    const statuses: number[] = [];
+    for (const p of paths) {
+        statuses.push((await request(app).get(`/${ p }`)).status);
+    }
+    return statuses;
+}
+
+/** removed_at of every pool file in repo-state/repo.db, by path */
+export function poolRemovedAt(): Record<string, number | null> {
+    const db = new Database(osPath.join("repo-state", "repo.db"), { readOnly: true });
+    try {
+        return Object.fromEntries(db.prepare("SELECT path, removed_at FROM pool_files ORDER BY path").all()
+            .map(row => [row.path as string, row.removed_at as number | null]));
+    } finally {
+        db.close();
+    }
 }
 
 export async function sendRawHttp(server: Server, opts: { localAddress?: string, headers: string, content?: Buffer }): Promise<string> {

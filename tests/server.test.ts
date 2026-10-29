@@ -1,6 +1,5 @@
 import { withLocalTmpDir } from "./utils.ts";
 import { jest } from "@jest/globals";
-import { mockExecution } from "./mocks.ts";
 
 const env = { ...process.env };
 
@@ -19,11 +18,6 @@ describe("Test environment variables and config", () => {
         // running in a temporary directory, but we do it to ensure that
         // the server does not try to load any real environment variables
         jest.unstable_mockModule("dotenv/config", () => ({}));
-        // Stub out child_process.spawn so the config module's tool probes
-        // (createrepo_c, reprepro, gpg) don't execute real binaries that
-        // may happen to be on PATH. Exit code 1 makes every probe look
-        // like the tool is absent — config falls through cleanly.
-        mockExecution(1);
 
         jest.spyOn(process, "on").mockImplementation((event, listener) => {
             if (event === "SIGINT") {
@@ -38,8 +32,8 @@ describe("Test environment variables and config", () => {
         await import("../server/server.ts");
 
         // The very first info-level message must be the version banner
-        // emitted by server/bootstrap.ts, before config.ts's tool probes
-        // or any HTTP listening / directory lines.
+        // emitted by server/bootstrap.ts, before any config.ts warning
+        // or HTTP listening / directory lines.
         expect(infoSpy.mock.calls.length).toBeGreaterThan(0);
         expect(String(infoSpy.mock.calls[0][0])).toMatch(
             /^> Starting Simple Repo Manager v\d+\.\d+\.\d+/

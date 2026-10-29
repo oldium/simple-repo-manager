@@ -7,6 +7,7 @@ import osPath from "path";
 import files from "./files.ts";
 import finalhandler from "finalhandler";
 import { gpgInit } from "../lib/gpg.ts";
+import { openBackend } from "../backend/index.ts";
 import api from "./api.ts";
 
 function unexpectedErrorHandler() {
@@ -28,6 +29,15 @@ export default async function createApp(config: AppConfig, environment: Environm
         await fsExtra.ensureDir(osPath.join(config.paths.incomingDir, 'process', 'rpm'));
     }
 
+    await openBackend(config.paths, config.gpg.gpgRepoPrivateKeyFile, { rebuild: process.argv.includes("--rebuild") });
+    if (config.gpg.gpgRepoPrivateKeyFile) {
+        // The keyring lives in the format dirs, which a fresh install lacks; made after openBackend so they never pass for a published tree
+        for (const format of ["deb", "rpm"] as const) {
+            if (config.upload.enabledApi[format]) {
+                await fsExtra.ensureDir(osPath.join(config.paths.repoDir, format));
+            }
+        }
+    }
     await gpgInit(config);
 
     const app = express();

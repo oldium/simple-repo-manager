@@ -15,10 +15,15 @@ declare namespace NodeJS {
         REPO_DIR?: string;
         TEMPLATES_DIR?: string;
 
+        /** @deprecated Ignored since the native backend; only logs a warning */
         SIGN_SCRIPT?: string;
+        /** @deprecated Ignored since the native backend; only logs a warning */
         CREATEREPO_SCRIPT?: string;
+        /** @deprecated Ignored since the native backend; only logs a warning */
         REPREPRO_BIN?: string;
+        /** @deprecated Ignored since the native backend; only logs a warning */
         GPG_BIN?: string;
+        /** @deprecated Ignored since the native backend; only logs a warning */
         GNUPGHOME?: string;
 
         SLUG?: string;
@@ -45,7 +50,9 @@ declare namespace NodeJS {
         RPM_TEMPLATE?: string;
 
         GPG_REPO_PRIVATE_KEY_FILE?: string;
+        /** @deprecated Ignored since the native backend; only logs a warning */
         GPG_PUBLIC_KEYS_FILE?: string;
+        /** @deprecated Ignored since the native backend; only logs a warning */
         GPG_PUBLIC_KEYS_DIR?: string;
 
         API_ALLOWED_IPS?: string;
