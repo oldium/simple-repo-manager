@@ -149,6 +149,25 @@ describe("Test of files reading API", () => {
         expect(res2.text).toBe("<metadata/>");
     }));
 
+    test("Check that file names are escaped in the listing", withLocalTmpDir(async () => {
+        // Windows file names cannot hold " or <
+        const [name, escaped] = process.platform === "win32"
+            ? ["a&b'c.deb", "a&amp;b&#39;c.deb"]
+            : ['"><img src=x>.deb', "&quot;&gt;&lt;img src=x&gt;.deb"];
+        await createFiles({ [`repo/deb/debian/${ name }`]: "" });
+
+        const app = await createTestApp({
+            paths: {
+                repoDir: "repo",
+            }
+        });
+
+        const res = await request(app).get("/deb/debian/");
+        expect(res.status).toBe(200);
+        expect(res.text).toContain(`title="${ escaped }"`);
+        expect(cheerio.load(res.text)("img")).toHaveLength(0);
+    }));
+
     test("Check that directories starting with dots are ignored", withLocalTmpDir(async () => {
         await createFiles({
             "repo/deb/debian/dists/bookworm/Release": "",

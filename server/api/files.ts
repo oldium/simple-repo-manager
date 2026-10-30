@@ -74,7 +74,7 @@ function renderDirEntry(file: File) {
         : undefined;
 
     return (`      <li><a href="${ escapeHtml(
-            path.normalize(file.name) + (isDirectory ? "/" : "")) }" title="${ file.name }">` +
+            path.normalize(file.name) + (isDirectory ? "/" : "")) }" title="${ escapeHtml(file.name) }">` +
         `<span class="icon ${ classes.join(" ") }"></span>` +
         `<span class="name">${ escapeHtml(file.name) }</span>` +
         (size !== undefined ? `<span class="size">${ escapeHtml(size) }</span>` : '') +
