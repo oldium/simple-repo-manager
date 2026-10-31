@@ -143,9 +143,12 @@ function htmlTemplate(paths: Paths, gpg: Gpg, eta: Eta, cssFilePath: string, ico
     }
 }
 
+// An uploaded file must not run as a page of this origin, which holds the credentials of the write API
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-function enforceContentType(res: Response, filePath: string, _stat: unknown) {
+function setRepoFileHeaders(res: Response, filePath: string, _stat: unknown) {
     res.setHeader("Content-Type", mimeTypeFor(filePath));
+    res.setHeader("Content-Security-Policy", "sandbox");
+    res.setHeader("X-Content-Type-Options", "nosniff");
 }
 
 function getPublicDir(environment: Environment) {
@@ -197,7 +200,7 @@ export default async function files(paths: Paths, gpg: Gpg, environment: Environ
     router.get(cssFileUrl, transformMiddleware(cssFilePath, cssTransform, environment));
     router.get("/favicon.svg", serveMiddleware(faviconFilePath, environment));
     router.use(filterHidden());
-    router.use(serveStatic(paths.repoDir, { index: false, setHeaders: enforceContentType }),
+    router.use(serveStatic(paths.repoDir, { index: false, setHeaders: setRepoFileHeaders }),
         await serveHtmlTemplateIndex(paths, gpg, environment, cssFileUrl, iconNames)
     );
     return router;

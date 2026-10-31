@@ -22,6 +22,17 @@ async function uploadBundle(app: Application, dir: string, target = dir) {
 }
 
 describe("Test of files reading API", () => {
+    test("A repository file cannot run as a page of this origin", withLocalTmpDir(async () => {
+        await createFiles({ "repo/deb/debian/pool/main/e/evil/evil_1.tar.html": "<script>alert(1)</script>" });
+        const app = await createTestApp({ paths: { repoDir: "repo" } });
+
+        const res = await request(app).get("/deb/debian/pool/main/e/evil/evil_1.tar.html");
+
+        expect(res.status).toBe(200);
+        expect(res.headers["content-security-policy"]).toBe("sandbox");
+        expect(res.headers["x-content-type-options"]).toBe("nosniff");
+    }));
+
     test("Check that directories are read correctly", withLocalTmpDir(async () => {
         // noinspection SpellCheckingInspection
         await createFiles({
