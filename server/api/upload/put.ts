@@ -65,7 +65,7 @@ class PutHandler {
         }
 
         // Generate temporary filename using IP:Port (same logic as storage engine)
-        const tempPath: string = osPath.join(this.paths.incomingDir, 'tmp', tempName(req.socket, filename));
+        const tempPath: string = osPath.join(this.paths.incomingDir, 'tmp', tempName(req.socket));
 
         const writeStream = fs.createWriteStream(tempPath, {
             flags: 'w',

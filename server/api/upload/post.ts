@@ -38,8 +38,7 @@ class HashingDiskStorage implements StorageEngine {
     }
 
     _handleFile(req: Request, file: Express.Multer.File, cb: (error?: unknown, info?: Partial<UploadedFile>) => void): void {
-        const safeOriginalName = osPath.basename(file.originalname).replace(/[^a-zA-Z0-9_.-]/g, '');
-        const tempPath = osPath.join(this.tmpDir, tempName(req.socket, safeOriginalName));
+        const tempPath = osPath.join(this.tmpDir, tempName(req.socket));
         if (file.stream.destroyed) {
             // A multer 2.5 code, not yet in @types/multer 2.3
             cb(new multer.MulterError("STREAM_DESTROYED" as ErrorCode));

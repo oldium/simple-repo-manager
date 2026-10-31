@@ -85,7 +85,9 @@ export async function moveAll(src: string, dest: string): Promise<void> {
     }
 }
 
-export function tempName(socket: Socket, filename: string): string {
+let tempCounter = 0;
+
+export function tempName(socket: Socket): string {
     const remoteAddress = socket.remoteAddress;
     const remotePort = socket.remotePort;
     let identifierHash: string;
@@ -100,7 +102,6 @@ export function tempName(socket: Socket, filename: string): string {
         identifierHash = hash.digest('hex');
     }
 
-    // Use the filename from the URL parameter for PUT requests
-    const generatedTempFilename = `${ Date.now() }-${ identifierHash }-${ filename }`;
-    return generatedTempFilename;
+    // Parts of one POST start within a millisecond on one socket
+    return `${ Date.now() }-${ ++tempCounter }-${ identifierHash }`;
 }

@@ -67,6 +67,29 @@ describe("Checksums recorded during upload", () => {
         expect(stagedRows()).toEqual([expectedRow(rel, second)]);
     }));
 
+    test("Two parts of one POST under one name stay apart until staged", withLocalTmpDir(async () => {
+        const app = await createTestApp({ paths: PATHS });
+        const name = "srm-hello-1.0-1.fc42.x86_64.rpm";
+        const rel = `rpm/fedora/42/${ name }`;
+        const contents = [crypto.randomBytes(200 * 1024), crypto.randomBytes(200 * 1024)];
+
+        const res = await uploadFileByPost(app, "/api/v1/upload/rpm/fedora/42", contents.map(content => ({ name, content })));
+
+        expect(res.status).toBe(201);
+        const staged = fs.readFileSync(osPath.join(PATHS.incomingDir, "staging", ...rel.split("/")));
+        expect(contents).toContainEqual(staged);
+        expect(stagedRows()).toEqual([expectedRow(rel, staged)]);
+    }));
+
+    test("A long name goes through PUT and POST", withLocalTmpDir(async () => {
+        const app = await createTestApp({ paths: PATHS });
+        const content = crypto.randomBytes(100);
+        const name = (extra: string) => `${ "a".repeat(236) }${ extra }.rpm`;
+
+        expect((await uploadFileByPut(app, `/api/v1/upload/rpm/fedora/42/${ name("") }`, content)).status).toBe(201);
+        expect((await uploadFileByPost(app, "/api/v1/upload/rpm/fedora/41", [{ name: name(""), content }])).status).toBe(201);
+    }));
+
     test("POST records checksums for every uploaded file", withLocalTmpDir(async () => {
         const app = await createTestApp({ paths: PATHS });
         const files = [
