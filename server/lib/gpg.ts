@@ -6,6 +6,7 @@ import osPath from "path";
 import path from "path/posix";
 import fs from "fs/promises";
 import { loadSigningKey } from "../backend/pgp.ts";
+import { writeFileAtomic } from "../backend/publish-fs.ts";
 import { KEYRING_FILES } from "./validations.ts";
 
 async function addPublicKeyToRepo(repoKeyFile: string, publicKey: openpgp.PublicKey) {
@@ -23,8 +24,17 @@ async function addPublicKeyToRepo(repoKeyFile: string, publicKey: openpgp.Public
             }
         }
     }
-    await fsExtra.writeFile(repoKeyFile, publicKey.armor() + existingContent, 'utf8');
+    await writeFileAtomic(repoKeyFile, publicKey.armor() + existingContent);
     logger.info(`Added public key to repository key file ${ repoKeyFile }`);
+}
+
+/** To the keyring of each format directory that exists */
+export async function addPublicKeyToKeyrings(repoDir: string, publicKey: openpgp.PublicKey): Promise<void> {
+    for (const format of ["deb", "rpm"] as const) {
+        if (await fsExtra.pathExists(osPath.join(repoDir, format))) {
+            await addPublicKeyToRepo(osPath.join(repoDir, format, KEYRING_FILES[format]), publicKey);
+        }
+    }
 }
 
 export async function gpgDebPublicKeyPath(repoDir: string, gpg: Gpg) {
@@ -37,19 +47,8 @@ export async function gpgDebPublicKeyPath(repoDir: string, gpg: Gpg) {
 }
 
 export async function gpgInit(config: AppConfig) {
-    const formats: (keyof typeof KEYRING_FILES)[] = [];
-    for (const format of ["deb", "rpm"] as const) {
-        if (await fsExtra.pathExists(osPath.join(config.paths.repoDir, format))) {
-            formats.push(format);
-        }
-    }
-    if (formats.length === 0) {
-        return;
-    }
     const publicKey = (await loadSigningKey(config.gpg.gpgRepoPrivateKeyFile))?.toPublic();
     if (publicKey) {
-        for (const format of formats) {
-            await addPublicKeyToRepo(osPath.join(config.paths.repoDir, format, KEYRING_FILES[format]), publicKey);
-        }
+        await addPublicKeyToKeyrings(config.paths.repoDir, publicKey);
     }
 }

@@ -10,8 +10,6 @@ import type { Application } from "express";
 import fs from "node:fs/promises";
 import osPath from "path";
 import { fileURLToPath } from "url";
-import { jest } from "@jest/globals";
-import logger from "../../server/lib/logger.ts";
 
 const FIXTURES = fileURLToPath(new URL("../fixtures/packages/", import.meta.url));
 
@@ -92,25 +90,26 @@ describe("Test of files reading API", () => {
         expect(debConfig).toMatch(/^URIs: http:\/\/127\.0\.0\.1:\d+\/deb\/debian$/m);
     }));
 
-    test("A configured but missing key file writes no keyring and warns once", withLocalTmpDir(async () => {
-        const warnSpy = jest.spyOn(logger, "warn");
-        try {
-            await createTestApp({
-                paths: {
-                    repoDir: "repo",
-                },
-                gpg: {
-                    gpgRepoPrivateKeyFile: "missing-key.asc",
-                }
-            });
+    test("A configured but missing key file refuses the start and writes no keyring", withLocalTmpDir(async () => {
+        await expect(createTestApp({
+            paths: {
+                repoDir: "repo",
+            },
+            gpg: {
+                gpgRepoPrivateKeyFile: "missing-key.asc",
+            }
+        })).rejects.toThrow("GPG key file missing-key.asc does not exist");
 
-            expect(osPath.join("repo", "deb", "archive-keyring.asc")).not.toPathExist();
-            expect(osPath.join("repo", "rpm", "RPM-GPG-KEY.asc")).not.toPathExist();
-            expect(warnSpy.mock.calls.filter(([message]) => message === "GPG key file missing-key.asc does not exist.")).toHaveLength(1);
-        } finally {
-            warnSpy.mockRestore();
-        }
+        expect(osPath.join("repo", "deb", "archive-keyring.asc")).not.toPathExist();
+        expect(osPath.join("repo", "rpm", "RPM-GPG-KEY.asc")).not.toPathExist();
     }));
+
+    test.each([
+        ["key file", { gpgPublicKeysFile: "missing.asc" }, "GPG key file missing.asc does not exist"],
+        ["keys directory", { gpgPublicKeysDir: "missing" }, "GPG keys directory missing does not exist"],
+    ])("A configured but missing public %s refuses the start", (_, gpg, message) => withLocalTmpDir(async () => {
+        await expect(createTestApp({ gpg })).rejects.toThrow(message);
+    })());
 
     test("Check that directories with files are read correctly", withLocalTmpDir(async () => {
         await createFiles({

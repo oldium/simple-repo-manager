@@ -1341,15 +1341,21 @@ extension) or a binary file (usually with `.gpg` extension).
 
 The key must be usable by OpenPGP.js: an RSA key of at least 2048 bits or an
 ECC key (like Ed25519), not protected by a passphrase. Otherwise, the server
-refuses to start. When the configured key file does not exist, the server logs a
-warning and keeps the existing signatures until an import or removal republishes
-the release, which leaves it unsigned. Without `GPG_REPO_PRIVATE_KEY_FILE`, the
-metadata is not signed.
+refuses to start, as it does when the configured file does not exist. Without
+`GPG_REPO_PRIVATE_KEY_FILE`, the metadata is not signed.
 
 The server signs with the key as provided and logs its algorithm and fingerprint
 at the start. Choose an algorithm the clients of your repositories can verify,
 as newer ones may not work on older distributions. For example, Debian Bullseye,
 Ubuntu Noble and CentOS Stream 9 cannot verify algorithm 27 (RFC 9580 Ed25519).
+
+A new key needs no restart. Every import, also with nothing to import, compares
+the date and size of the key file. When they changed, the new public key is added
+to the keyrings below and the published releases are signed again. A changed file
+the server cannot use refuses the import with `503`, and uploads stay where they
+are until the file is fixed. When the file is gone, the server logs a warning and
+keeps signing with the key it has until the next start. A removal signs with the
+key loaded so far.
 
 [openpgpjs]: https://openpgpjs.org/
 
@@ -1378,8 +1384,9 @@ variable to it:
 The key file must be readable by the user the container runs as, see
 [Docker Build](#docker-build).
 
-The public key is extracted automatically during server start-up from the
-private key and is _added_ as an ASCII-armored key to the repository files
+The public key is extracted automatically during server start-up, and when an
+import finds a changed key file, from the private key and is _added_ as an
+ASCII-armored key to the repository files
 `<REPO_DIR>/deb/archive-keyring.asc` and `<REPO_DIR>/rpm/RPM-GPG-KEY.asc`, which
 correspond to the following URIs:
 
@@ -1422,6 +1429,46 @@ every release:
 
 The repository manager does not sign the uploaded packages, it only signs the
 repository metadata. The uploader must sign the packages themselves.
+
+### Verifying Uploads
+
+An upload has to be signed by one of the keys that verify uploads: the keys in
+`GPG_PUBLIC_KEYS_FILE`, which can hold several, the keys in the files of
+`GPG_PUBLIC_KEYS_DIR`, and the public part of `GPG_REPO_PRIVATE_KEY_FILE`.
+
+```dotenv
+GPG_PUBLIC_KEYS_FILE=gpg-keyring.asc
+GPG_PUBLIC_KEYS_DIR=gpg-public-keys
+```
+
+With any such key, an import fails with `status: "failed"` and keeps the upload
+in `INCOMING_DIR`, naming the reason, for:
+
+* A Debian `.changes` or `.dsc` that is not signed by one of the keys. The other
+  files of the bundle are covered by the checksums the `.changes` lists.
+* An RPM that is not signed by one of the keys, or whose payload does not match
+  the digest in its signed header. RPMs built by `rpm` before 4.14 have no such
+  digest and are refused as well.
+* A file name other than the one the signed content calls for, as nothing signs
+  the name: `<name>-<version>-<release>.<arch>.rpm`, and for a `.changes`
+  `<source>_<version>_` in front. A file with more than its signature covers fails
+  too.
+
+Without any key the server warns at the start that it cannot verify, and for
+every signed file it imports.
+
+The start log names the keys. They are read again at every import, so a changed
+file counts at once. A configured file or directory that does not exist, or a
+directory with no file in it, is a wrong configuration and refuses the start;
+during a run it only warns, and the keys loaded before stay. A file that cannot
+be read refuses the start and later the import, with nothing moved. A rebuild does
+not verify anything: what is published stays, also after a key changed.
+
+A signature says who built a package, not where it goes: the upload URL decides
+that, within the releases its `.changes` allows. The repository is a storage, so
+an older signed version can be uploaded again too. Changing files in
+`INCOMING_DIR` directly is what an administrator does to fix things, and not
+checked against.
 
 ## Production Build
 
@@ -1702,11 +1749,11 @@ backup until the migration is verified.
 * The `reprepro` state in `REPO_STATE_DIR/deb-<distribution>/` is no longer
   used and can be deleted after a successful migration. Staged uploads keep
   working.
-* `REPREPRO_BIN`, `CREATEREPO_SCRIPT`, `GPG_BIN`, `SIGN_SCRIPT`,
-  `GPG_PUBLIC_KEYS_FILE`, `GPG_PUBLIC_KEYS_DIR` and `GNUPGHOME` are no longer
-  used, and the server logs a warning when they are set. Signed `.changes`
-  files are no longer verified, uploads are protected by the API
-  authentication only.
+* `REPREPRO_BIN`, `CREATEREPO_SCRIPT`, `GPG_BIN`, `SIGN_SCRIPT` and `GNUPGHOME`
+  are no longer used, and the server logs a warning when they are set.
+* With any key configured, uploads now have to be signed, also the RPMs. An upload
+  that 2.x took unsigned or signed by an unknown key is refused, see
+  [Verifying Uploads](#verifying-uploads).
 * The signing key must be usable by OpenPGP.js, see
   [Signing Repository Metadata](#signing-repository-metadata).
 

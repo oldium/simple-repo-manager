@@ -10,6 +10,7 @@ import type { Stanza } from "../control.ts";
 import type { Digests } from "../hash.ts";
 import { moveFile, statQuietly } from "../publish-fs.ts";
 import { StagedDigests, checkFileName, checkStagedDirectories, importFailure, stagingDirs } from "../staging.ts";
+import { checkChangesName, verifiedControlText } from "../upload-signature.ts";
 import type { StagingDir } from "../staging.ts";
 import { DebCatalog } from "./catalog.ts";
 import type { DebBinaryInput, DebUploadInput, PoolFile } from "./catalog.ts";
@@ -107,10 +108,12 @@ class DebImporter {
         let claimed = [changesName];
         let parsed = false;
         try {
-            const changes = parseChanges(await readControlFile(toOsPath(dir.dir, changesName)));
+            const text = await readControlFile(toOsPath(dir.dir, changesName));
+            const changes = parseChanges(text);
             parsed = true;
             claimed = [changesName, ...changes.files.map(f => f.name)];
-            const upload = await this.readUpload(dir, target, changesName, changes);
+            const verified = parseChanges(await verifiedControlText(changesName, text, this.ctx.uploadKeys));
+            const upload = await this.readUpload(dir, target, changesName, verified);
             await this.checkCase(upload.moves.map(move => move.poolPath));
             const outcome = this.catalog.applyUpload(upload.input, this.ctx.now());
             if (!outcome.ok) {
@@ -142,6 +145,7 @@ class DebImporter {
         requiredField(changes.stanza, "Source");
         const expected = binarySource(changes.stanza);
         checkSourceVersion(expected, changesName);
+        checkChangesName(changesName, expected.source, requiredField(changes.stanza, "Version"), this.ctx.uploadKeys);
         const distributions = requiredField(changes.stanza, "Distribution").split(" ");
         if (!distributions.includes(target.release)) {
             throw new RepoValidationError(`Distribution "${ distributions.join(" ") }" does not contain ${ target.release }`);
@@ -189,7 +193,7 @@ class DebImporter {
         }
         const fileOf = async (name: string, listed: DscFile): Promise<PoolFile> =>
             uploaded.get(name)?.file ?? await this.fromPool(poolPathOf(name), name, listed, "in the pool does not match the .dsc");
-        const source = dsc === undefined ? undefined : await readSource(dsc, expected, poolDir, fileOf);
+        const source = dsc === undefined ? undefined : await readSource(dsc, await verifiedControlText(dsc.name, await readControlFile(dsc.location), this.ctx.uploadKeys), expected, poolDir, fileOf);
         for (const listed of others) {
             if (source === undefined || !source.referenced.has(listed.name)) {
                 throw new RepoValidationError(`${ listed.name } is neither a package nor referenced by the .dsc`);

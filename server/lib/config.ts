@@ -40,6 +40,8 @@ export type Security = {
 
 export type Gpg = {
     gpgRepoPrivateKeyFile?: string,
+    gpgPublicKeysFile?: string,
+    gpgPublicKeysDir?: string,
 }
 
 export type Paths = {
@@ -78,8 +80,9 @@ const repoDir = process.env.REPO_DIR ? untildify(process.env.REPO_DIR) : 'data/r
 const templateDir = process.env.TEMPLATES_DIR ? untildify(process.env.TEMPLATES_DIR) : undefined;
 const gpgRepoPrivateKeyFile = process.env.GPG_REPO_PRIVATE_KEY_FILE ? untildify(process.env.GPG_REPO_PRIVATE_KEY_FILE) :
     undefined;
-for (const name of ["REPREPRO_BIN", "CREATEREPO_SCRIPT", "GPG_BIN", "SIGN_SCRIPT", "GPG_PUBLIC_KEYS_FILE",
-    "GPG_PUBLIC_KEYS_DIR", "GNUPGHOME"] as const) {
+const gpgPublicKeysFile = process.env.GPG_PUBLIC_KEYS_FILE ? untildify(process.env.GPG_PUBLIC_KEYS_FILE) : undefined;
+const gpgPublicKeysDir = process.env.GPG_PUBLIC_KEYS_DIR ? untildify(process.env.GPG_PUBLIC_KEYS_DIR) : undefined;
+for (const name of ["REPREPRO_BIN", "CREATEREPO_SCRIPT", "GPG_BIN", "SIGN_SCRIPT", "GNUPGHOME"] as const) {
     if (process.env[name] !== undefined) {
         logger.warn(`Deprecated ${ name } is set but no longer used; please remove it from the environment`);
     }
@@ -94,6 +97,8 @@ const paths: Paths = {
 
 const gpg: Gpg = {
     gpgRepoPrivateKeyFile,
+    gpgPublicKeysFile,
+    gpgPublicKeysDir,
 }
 
 await requireAccess("Incoming directory", incomingDir, Access.Creatable);
@@ -102,6 +107,8 @@ await requireAccess("Repository directory", repoDir, Access.Creatable);
 for (const [name, path] of [
     ["Templates directory", templateDir],
     ["GPG repository private key file", gpgRepoPrivateKeyFile],
+    ["GPG public keys file", gpgPublicKeysFile],
+    ["GPG public keys directory", gpgPublicKeysDir],
 ] as const) {
     // Missing ones keep their optional handling
     if (path && await fsExtra.pathExists(path)) {

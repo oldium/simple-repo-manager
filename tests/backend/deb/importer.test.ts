@@ -4,6 +4,10 @@ import osPath from "path";
 import { fileURLToPath } from "url";
 import fs from "fs/promises";
 import type { Database } from "node:sqlite";
+import * as openpgp from "openpgp";
+import { signBundle } from "../../signing.ts";
+import { clearsign } from "../../../server/backend/pgp.ts";
+import { stripClearsign } from "../../../server/backend/control.ts";
 import { openDatabase } from "../../../server/backend/db.ts";
 import { hashFile } from "../../../server/backend/hash.ts";
 import type { Digests } from "../../../server/backend/hash.ts";
@@ -1278,4 +1282,122 @@ describe("Tests for importDebian", () => {
         await fs.mkdir(stagedPath(ctx, "deb/debian/trixie"), { recursive: true });
         expect(await importDebian(ctx)).toEqual([]);
     }));
+});
+
+describe("Tests for the keys that verify uploads", () => {
+    let key: openpgp.PrivateKey;
+    let other: openpgp.PrivateKey;
+
+    beforeAll(async () => {
+        [key, other] = await Promise.all(["key", "other"].map(async name =>
+            (await openpgp.generateKey({ type: "rsa", rsaBits: 2048, userIDs: [{ name }], format: "object" })).privateKey));
+    });
+
+    const stagedDir = (ctx: BackendContext): string => stagedPath(ctx, TRIXIE.target);
+
+    test("A bundle signed with one of the keys imports, and the pool keeps the signed files", withImporter(async ctx => {
+        ctx.uploadKeys = [other.toPublic(), key.toPublic()];
+        const names = await stage(ctx, TRIXIE);
+        await signBundle(stagedDir(ctx), key);
+
+        expect(await importDebian(ctx)).toEqual(expected(TRIXIE.target, names, "ok"));
+
+        expect(await fs.readFile(osPath.join(ctx.paths.repoDir, "deb/debian/pool/main/s/srm-hello", TRIXIE.changes), "utf8")).toContain("BEGIN PGP SIGNED MESSAGE");
+        expect(sources(ctx.db)).toEqual(["main srm-hello 1.0-1"]);
+    }));
+
+    test("An unsigned bundle fails as a whole, moving nothing", withImporter(async ctx => {
+        ctx.uploadKeys = [key.toPublic()];
+        const names = await stage(ctx, TRIXIE);
+
+        const result = await importDebian(ctx);
+
+        expect(result).toEqual(failed(expected(TRIXIE.target, names, "failed")));
+        expect(reasons(result)).toEqual([expect.stringContaining(`${ TRIXIE.changes } is not signed`)]);
+        expect(await staged(ctx, TRIXIE.target)).toEqual(names);
+        expect(count(ctx.db, "releases")).toBe(0);
+    }));
+
+    test("A bundle signed with another key fails, naming the key", withImporter(async ctx => {
+        ctx.uploadKeys = [key.toPublic()];
+        const names = await stage(ctx, TRIXIE);
+        await signBundle(stagedDir(ctx), other);
+
+        const result = await importDebian(ctx);
+
+        expect(result).toEqual(failed(expected(TRIXIE.target, names, "failed")));
+        expect(reasons(result)).toEqual([expect.stringContaining(`${ TRIXIE.changes } is signed by ${ other.getKeyID().toHex() }, none of the keys that verify uploads`)]);
+    }));
+
+    test("A signed .changes does not make up for an unsigned .dsc", withImporter(async ctx => {
+        ctx.uploadKeys = [key.toPublic()];
+        const names = await stage(ctx, TRIXIE);
+        const changes = osPath.join(stagedDir(ctx), TRIXIE.changes);
+        await fs.writeFile(changes, await clearsign(await fs.readFile(changes, "utf8"), key));
+
+        const result = await importDebian(ctx);
+
+        expect(result).toEqual(failed(expected(TRIXIE.target, names, "failed")));
+        expect(reasons(result)).toEqual([expect.stringContaining("srm-hello_1.0-1.dsc is not signed")]);
+        expect(count(ctx.db, "releases")).toBe(0);
+    }));
+
+    test("A .dsc signed with another key fails", withImporter(async ctx => {
+        ctx.uploadKeys = [key.toPublic()];
+        await stage(ctx, TRIXIE);
+        await signBundle(stagedDir(ctx), other);
+        const changes = osPath.join(stagedDir(ctx), TRIXIE.changes);
+        await fs.writeFile(changes, await clearsign(stripClearsign(await fs.readFile(changes, "utf8")), key));
+
+        expect(reasons(await importDebian(ctx))).toEqual([expect.stringContaining(`srm-hello_1.0-1.dsc is signed by ${ other.getKeyID().toHex() }`)]);
+    }));
+
+    test("A .changes with more than its signature covers fails", withImporter(async ctx => {
+        ctx.uploadKeys = [key.toPublic()];
+        const names = await stage(ctx, TRIXIE);
+        await signBundle(stagedDir(ctx), key);
+        await fs.appendFile(osPath.join(stagedDir(ctx), TRIXIE.changes), "\nDistribution: bookworm\n");
+
+        const result = await importDebian(ctx);
+
+        expect(result).toEqual(failed(expected(TRIXIE.target, names, "failed")));
+        expect(reasons(result)).toEqual([expect.stringContaining(`${ TRIXIE.changes } holds more than its signature covers`)]);
+    }));
+
+    test("A signed .changes under the name of another version fails, it could take that version's place", withImporter(async ctx => {
+        ctx.uploadKeys = [key.toPublic()];
+        await stage(ctx, TRIXIE);
+        await signBundle(stagedDir(ctx), key);
+        const renamed = "srm-hello_1.1-1_amd64.changes";
+        await fs.rename(osPath.join(stagedDir(ctx), TRIXIE.changes), osPath.join(stagedDir(ctx), renamed));
+
+        expect(reasons(await importDebian(ctx))).toEqual([expect.stringContaining(`${ renamed } does not match what it is signed for, a name starting with srm-hello_1.0-1_`)]);
+        expect(count(ctx.db, "releases")).toBe(0);
+    }));
+
+    test("A failed bundle goes through once its key is there", withImporter(async ctx => {
+        ctx.uploadKeys = [other.toPublic()];
+        const names = await stage(ctx, TRIXIE);
+        await signBundle(stagedDir(ctx), key);
+        expect(failed(await importDebian(ctx))).toEqual(failed(expected(TRIXIE.target, names, "failed")));
+
+        ctx.uploadKeys = [key.toPublic()];
+
+        expect(await importDebian(ctx)).toEqual(expected(TRIXIE.target, names, "ok"));
+    }));
+
+    test.each([[undefined], [[]]])("With keys %j a signed bundle imports with a warning for each signed file", keys => withImporter(async ctx => {
+        ctx.uploadKeys = keys;
+        const warn = jest.spyOn(logger, "warn").mockReturnValue(logger);
+        const names = await stage(ctx, TRIXIE);
+        await signBundle(stagedDir(ctx), other);
+
+        expect(await importDebian(ctx)).toEqual(expected(TRIXIE.target, names, "ok"));
+
+        expect(warn.mock.calls.map(([line]) => line)).toEqual([
+            `Could not verify the signature of ${ TRIXIE.changes }: there are no keys to verify uploads with`,
+            "Could not verify the signature of srm-hello_1.0-1.dsc: there are no keys to verify uploads with",
+        ]);
+        warn.mockRestore();
+    })());
 });

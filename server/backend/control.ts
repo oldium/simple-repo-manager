@@ -7,6 +7,7 @@ export type ListedFile = { name: string; size: number; hash: string; section?: s
 
 const BEGIN_SIGNED = "-----BEGIN PGP SIGNED MESSAGE-----\n";
 const BEGIN_SIGNATURE = "\n-----BEGIN PGP SIGNATURE-----";
+const END_SIGNATURE = "-----END PGP SIGNATURE-----";
 
 function normalize(text: string): string {
     return text.replaceAll("\r\n", "\n");
@@ -52,6 +53,17 @@ export function formatStanza(stanza: Stanza): string {
         text += value.length === 0 || value[0] === "\n" ? `${ name }:${ value }\n` : `${ name }: ${ value }\n`;
     }
     return text;
+}
+
+/** Anything but white space after the signature block; such bytes would be stored with the file */
+export function hasTextAfterSignature(text: string): boolean {
+    const normalized = normalize(text);
+    const end = normalized.indexOf(END_SIGNATURE);
+    return end >= 0 && normalized.slice(end + END_SIGNATURE.length).trim().length > 0;
+}
+
+export function isClearsigned(text: string): boolean {
+    return normalize(text).startsWith(BEGIN_SIGNED);
 }
 
 export function stripClearsign(text: string): string {

@@ -204,11 +204,8 @@ class DebPublisher {
         return true;
     }
 
-    /**
-     * Repairs canonical names, Release and signatures from the database; true when anything changed. With no key loaded,
-     * keyConfigured keeps existing signatures: the key file is configured but missing, not withdrawn.
-     */
-    async reconcileRelease(r: ReleaseRow, keyConfigured: boolean): Promise<boolean> {
+    /** Repairs canonical names, Release and signatures from the database; true when anything changed */
+    async reconcileRelease(r: ReleaseRow): Promise<boolean> {
         const rows = this.indexes.publishedIndexes<IndexKind>(r.id);
         if (rows.length === 0) {
             return false;
@@ -232,7 +229,7 @@ class DebPublisher {
             await this.removeOrphans(r, rows);
             await this.writeRelease(r, rows, origin, description);
             repairs.push("Release");
-        } else if (!await this.signaturesConsistent(dir, current, keyConfigured)) {
+        } else if (!await this.signaturesConsistent(dir, current)) {
             await this.writeSignatures(r, current);
             repairs.push(this.ctx.signingKey === undefined ? "removed signatures" : "signatures");
         }
@@ -301,12 +298,8 @@ class DebPublisher {
     }
 
     /** With a key, InRelease and Release.gpg both verify the text with it; without one, neither exists */
-    private async signaturesConsistent(dir: string, text: string, keyConfigured: boolean): Promise<boolean> {
+    private async signaturesConsistent(dir: string, text: string): Promise<boolean> {
         const key = this.ctx.signingKey;
-        if (key === undefined && keyConfigured) {
-            // The key file is missing: what an earlier run signed stays as it is
-            return true;
-        }
         const inRelease = await readQuietly(osPath.join(dir, "InRelease"));
         const releaseGpg = await readQuietly(osPath.join(dir, "Release.gpg"));
         if (key === undefined) {
@@ -374,15 +367,14 @@ export async function publishDebian(ctx: BackendContext): Promise<string[]> {
 /**
  * Repairs what a crash or failed write after a commit left, without bumping what is correct: canonical names are
  * linked again to their stored file, a Release that differs from the one the database describes (also through a changed
- * Origin/Description env) is written and signed anew, and signatures are re-signed or removed to match the key. With no
- * key loaded, keyConfigured keeps existing signatures: the key file is configured but missing, not withdrawn. Returns
+ * Origin/Description env) is written and signed anew, and signatures are re-signed or removed to match the key. Returns
  * the repaired releases as distro/release.
  */
-export async function reconcileDebian(ctx: BackendContext, o: { keyConfigured?: boolean } = {}): Promise<string[]> {
+export async function reconcileDebian(ctx: BackendContext): Promise<string[]> {
     const publisher = new DebPublisher(ctx);
     const repaired: string[] = [];
     for (const release of publisher.releases()) {
-        if (await publisher.reconcileRelease(release, o.keyConfigured ?? false)) {
+        if (await publisher.reconcileRelease(release)) {
             repaired.push(`${ release.distro }/${ release.name }`);
         }
     }

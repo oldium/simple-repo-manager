@@ -97,6 +97,20 @@ describe("Test environment variables and config.ts", () => {
         ]);
     }));
 
+    test("Reads where the keys that verify uploads are", withLocalTmpDir(async () => {
+        process.env.NODE_ENV = "production";
+        process.env.GPG_PUBLIC_KEYS_FILE = "keys.asc";
+        process.env.GPG_PUBLIC_KEYS_DIR = "keys";
+
+        const { default: logger } = await import("../../server/lib/logger.ts");
+        const warnSpy = jest.spyOn(logger, "warn");
+        const { default: config } = await import("../../server/lib/config.ts");
+
+        expect(config.app.gpg.gpgPublicKeysFile).toEqual("keys.asc");
+        expect(config.app.gpg.gpgPublicKeysDir).toEqual("keys");
+        expect(warnSpy).not.toHaveBeenCalled();
+    }));
+
     test("Check trusted proxy IP for single address", withLocalTmpDir(async () => {
         process.env.NODE_ENV = "production";
         process.env.TRUST_PROXY = "127.1.2.3";

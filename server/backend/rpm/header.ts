@@ -42,6 +42,16 @@ export type RpmHeader = {
     changelogs: RpmChangelog[];
 };
 
+export type RpmSignedParts = {
+    signatures: Buffer[];
+    header: Buffer;
+    payloadStart: number;
+    payloadDigest: string | undefined;
+    payloadDigestAlgorithm: number | undefined;
+    /** What the header says the file is called */
+    signedNames: string[];
+};
+
 const LEAD_SIZE = 96;
 const LEAD_MAGIC = Buffer.from([0xed, 0xab, 0xee, 0xdb]);
 const HEADER_MAGIC = Buffer.from([0x8e, 0xad, 0xe8, 0x01]);
@@ -115,7 +125,13 @@ const ENHANCENAME = 5055;
 const ENHANCEVERSION = 5056;
 const ENHANCEFLAGS = 5057;
 const PAYLOADSIZEALT = 5113;
+const PAYLOADDIGEST = 5092;
+const PAYLOADDIGESTALGO = 5093;
 // signature header
+const SIG_DSAHEADER = 267;
+const SIG_RSAHEADER = 268;
+// The rpm 6 format: base64 of the same signature
+const SIG_OPENPGP = 278;
 const SIG_LONGARCHIVESIZE = 271;
 const SIG_PAYLOADSIZE = 1007;
 
@@ -131,6 +147,7 @@ const TYPE_INT16 = 3;
 const TYPE_INT32 = 4;
 const TYPE_INT64 = 5;
 const TYPE_STRING = 6;
+const TYPE_BIN = 7;
 const TYPE_STRING_ARRAY = 8;
 const TYPE_I18NSTRING = 9;
 
@@ -156,6 +173,17 @@ class Header {
 
     has(tag: number): boolean {
         return this.entries.has(tag);
+    }
+
+    binary(tag: number): Buffer | undefined {
+        const entry = this.entries.get(tag);
+        if (entry === undefined) {
+            return undefined;
+        }
+        if (entry.type !== TYPE_BIN || entry.offset + entry.count > this.data.length) {
+            throw this.malformed(tag, entry.type);
+        }
+        return this.data.subarray(entry.offset, entry.offset + entry.count);
     }
 
     /** First string of a STRING, STRING_ARRAY or I18NSTRING tag */
@@ -312,6 +340,40 @@ function changelogs(h: Header, file: string): RpmChangelog[] {
 }
 
 /** Reads the lead, signature header and main header; the payload is never touched */
+function fileNames(h: Header): string[] {
+    const base = `${ h.string(NAME) ?? "" }-${ h.string(VERSION) ?? "" }-${ h.string(RELEASE) ?? "" }`;
+    return h.has(SOURCEPACKAGE) || (h.string(SOURCERPM) ?? "").length === 0 ? [`${ base }.src.rpm`, `${ base }.nosrc.rpm`] : [`${ base }.${ h.string(ARCH) ?? "" }.rpm`];
+}
+
+/** What a signature check needs: the signatures, the header as it is on disk and where the payload starts */
+export async function readRpmSignedParts(file: string): Promise<RpmSignedParts> {
+    const fileName = osPath.basename(file);
+    const handle = await fs.open(file, "r");
+    try {
+        const { size: fileSize } = await handle.stat();
+        const lead = await readAt(handle, 0, LEAD_SIZE, fileName, "lead");
+        if (!lead.subarray(0, LEAD_MAGIC.length).equals(LEAD_MAGIC)) {
+            throw new RepoValidationError(`${ fileName } is not an rpm package`);
+        }
+        const signature = await readHeader(handle, LEAD_SIZE, fileSize, fileName, "signature header");
+        const headerStart = signature.end + (8 - signature.end % 8) % 8;
+        const { header, end } = await readHeader(handle, headerStart, fileSize, fileName, "header");
+        return {
+            signatures: [
+                ...[SIG_RSAHEADER, SIG_DSAHEADER].flatMap(tag => signature.header.binary(tag) ?? []),
+                ...signature.header.strings(SIG_OPENPGP).map(text => Buffer.from(text, "base64")),
+            ],
+            header: await readAt(handle, headerStart, end - headerStart, fileName, "header"),
+            payloadStart: end,
+            payloadDigest: header.string(PAYLOADDIGEST),
+            payloadDigestAlgorithm: header.number(PAYLOADDIGESTALGO),
+            signedNames: fileNames(header),
+        };
+    } finally {
+        await handle.close();
+    }
+}
+
 export async function readRpmHeader(file: string): Promise<RpmHeader> {
     // Messages reach upload clients, so they name the file without its directory
     const fileName = osPath.basename(file);

@@ -30,7 +30,10 @@ export default async function createApp(config: AppConfig, environment: Environm
     await fsExtra.ensureDir(config.paths.repoDir);
     await resolveFileNaming(config.fileNaming, [config.paths.repoDir, config.paths.incomingDir]);
 
-    await openBackend(config.paths, config.gpg.gpgRepoPrivateKeyFile, { rebuild: process.argv.includes("--rebuild") });
+    await openBackend(config.paths, config.gpg.gpgRepoPrivateKeyFile, {
+        rebuild: process.argv.includes("--rebuild"),
+        uploadKeys: { file: config.gpg.gpgPublicKeysFile, dir: config.gpg.gpgPublicKeysDir },
+    });
     if (config.gpg.gpgRepoPrivateKeyFile) {
         // The keyring lives in the format dirs, which a fresh install lacks; made after openBackend so they never pass for a published tree
         for (const format of ["deb", "rpm"]) {

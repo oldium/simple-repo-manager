@@ -83,11 +83,8 @@ class RpmPublisher {
         return true;
     }
 
-    /**
-     * Repairs repomd.xml and its signature from the database; true when anything changed. With no key loaded,
-     * keyConfigured keeps an existing signature: the key file is configured but missing, not withdrawn.
-     */
-    async reconcileRelease(r: ReleaseRow, keyConfigured: boolean): Promise<boolean> {
+    /** Repairs repomd.xml and its signature from the database; true when anything changed */
+    async reconcileRelease(r: ReleaseRow): Promise<boolean> {
         const rows = this.indexes.publishedIndexes<MetadataKind>(r.id);
         if (rows.length === 0) {
             return false;
@@ -99,7 +96,7 @@ class RpmPublisher {
         if (current === undefined || current !== expected) {
             await this.writeRepomd(r, rows);
             repaired = "repomd.xml";
-        } else if (!await this.signatureConsistent(dir, current, keyConfigured)) {
+        } else if (!await this.signatureConsistent(dir, current)) {
             await this.writeSignature(r, current);
             repaired = this.ctx.signingKey === undefined ? "removed signature" : "signature";
         } else {
@@ -168,12 +165,8 @@ class RpmPublisher {
     }
 
     /** With a key, repomd.xml.asc verifies the text with it; without one, it does not exist */
-    private async signatureConsistent(dir: string, text: string, keyConfigured: boolean): Promise<boolean> {
+    private async signatureConsistent(dir: string, text: string): Promise<boolean> {
         const key = this.ctx.signingKey;
-        if (key === undefined && keyConfigured) {
-            // The key file is missing: what an earlier run signed stays as it is
-            return true;
-        }
         const signature = await readQuietly(osPath.join(dir, "repomd.xml.asc"));
         if (key === undefined) {
             return signature === undefined;
@@ -203,14 +196,13 @@ export async function publishRpm(ctx: BackendContext): Promise<string[]> {
 /**
  * Repairs what a crash or failed write after a commit left, without bumping what is correct: a repomd.xml that differs
  * from the one the database describes is written and signed anew, and its signature is re-signed or removed to match the
- * key. With no key loaded, keyConfigured keeps an existing signature: the key file is configured but missing, not
- * withdrawn. Returns the repaired releases as distro/release.
+ * key. Returns the repaired releases as distro/release.
  */
-export async function reconcileRpm(ctx: BackendContext, o: { keyConfigured?: boolean } = {}): Promise<string[]> {
+export async function reconcileRpm(ctx: BackendContext): Promise<string[]> {
     const publisher = new RpmPublisher(ctx);
     const repaired: string[] = [];
     for (const release of publisher.releases()) {
-        if (await publisher.reconcileRelease(release, o.keyConfigured ?? false)) {
+        if (await publisher.reconcileRelease(release)) {
             repaired.push(`${ release.distro }/${ release.name }`);
         }
     }

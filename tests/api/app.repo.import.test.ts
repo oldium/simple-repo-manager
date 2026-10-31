@@ -2,8 +2,10 @@ import request from "supertest";
 import type { Application } from "express";
 import _ from "lodash";
 import crypto from "node:crypto";
+import fs from "node:fs/promises";
 import osPath from "path";
 import dedent from "dedent";
+import * as openpgp from "openpgp";
 import createTestApp from "../testapp.ts";
 import { uploadFileByPut, withLocalTmpDir } from "../utils.ts";
 import { fixtureNames, uploadFixtureFile, uploadFixtureTree } from "../fixture-upload.ts";
@@ -126,6 +128,76 @@ describe("Import through MCP reports every staged file", () => {
 
         expect(result.ok).toBe(false);
         expect(byPath(result.files)).toEqual(byPath(imported(TRIXIE, [changes, deb], "failed", failedReason(`${ deb } is not an ar archive`))));
+    }));
+});
+
+describe("Import with a key that verifies uploads", () => {
+    test("Where a signing key is set, an unsigned upload fails with the reason, also over MCP", withLocalTmpDir(async () => {
+        const { privateKey } = await openpgp.generateKey({ type: "curve25519", userIDs: [{ name: "t" }], format: "armored" });
+        await fs.writeFile("key.asc", privateKey);
+        const app = await createTestApp({ gpg: { gpgRepoPrivateKeyFile: "key.asc" } });
+        await uploadFixtureTree(app, `packages/${ FEDORA }`);
+
+        const result = await mcpImport(app);
+
+        expect(result.ok).toBe(false);
+        expect(new Set(result.files.map(file => file.status))).toEqual(new Set(["failed"]));
+        expect(result.files[0].reason).toContain("is not signed");
+    }));
+
+    test("Where a key file is set, a broken one answers 503", withLocalTmpDir(async () => {
+        const { publicKey } = await openpgp.generateKey({ type: "curve25519", userIDs: [{ name: "t" }], format: "armored" });
+        await fs.writeFile("keys.asc", publicKey);
+        const app = await createTestApp({ gpg: { gpgPublicKeysFile: "keys.asc" } });
+        await fs.writeFile("keys.asc", "not a key");
+
+        const res = await request(app).post("/api/v1/repo/import");
+
+        expect(res.status).toBe(503);
+        expect(res.body.message).toBe("The keys that verify uploads cannot be used, nothing was imported. See server logs for details");
+    }));
+
+    test("Without any key an unsigned upload imports", withLocalTmpDir(async () => {
+        const app = await createTestApp();
+        await uploadFixtureTree(app, `packages/${ FEDORA }`);
+
+        expect((await mcpImport(app)).ok).toBe(true);
+    }));
+});
+
+describe("Import with a changed signing key file", () => {
+    async function withBrokenKeyFile(): Promise<Application> {
+        const { privateKey } = await openpgp.generateKey({ type: "curve25519", userIDs: [{ name: "t" }], format: "armored" });
+        await fs.writeFile("key.asc", privateKey);
+        const app = await createTestApp({ gpg: { gpgRepoPrivateKeyFile: "key.asc" } });
+        await uploadFixtureTree(app, `packages/${ FEDORA }`);
+        await fs.writeFile("key.asc", "not a key");
+        return app;
+    }
+
+    const REFUSED = "The signing key file changed and cannot be used, nothing was imported. See server logs for details";
+
+    test("REST answers 503, with the uploads still staged", withLocalTmpDir(async () => {
+        const app = await withBrokenKeyFile();
+        const res = await request(app).post("/api/v1/repo/import");
+
+        expect(res.status).toBe(503);
+        expect(res.body.message).toBe(REFUSED);
+        expect(await processed()).toEqual([]);
+        expect(await listFiles(osPath.join("incoming", "staging"))).toHaveLength((await fixtureNames(`packages/${ FEDORA }`)).length);
+    }));
+
+    test("MCP reports an error, with the uploads still staged", withLocalTmpDir(async () => {
+        const app = await withBrokenKeyFile();
+        const res = await request(app)
+            .post("/api/v1/mcp")
+            .set("Content-Type", "application/json")
+            .set("Accept", "application/json, text/event-stream")
+            .send({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "import_repository", arguments: {} } });
+
+        expect(res.body.result.isError).toBe(true);
+        expect(res.body.result.content[0].text).toContain(REFUSED);
+        expect(await listFiles(osPath.join("incoming", "staging"))).toHaveLength((await fixtureNames(`packages/${ FEDORA }`)).length);
     }));
 });
 

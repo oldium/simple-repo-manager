@@ -11,9 +11,6 @@ import { publishRpm, reconcileRpm } from "./rpm/publisher.ts";
 import logger from "../lib/logger.ts";
 import { toOsPath } from "../lib/safe-path.ts";
 
-/** keyConfigured: a signing key file is configured; with no key loaded, existing signatures then stay (the file is missing, not withdrawn) */
-export type ReconcileOptions = { keyConfigured?: boolean };
-
 /** What the startup reconciliation changed: releases as format/distro/release, index and pool files as repo-relative paths */
 export type ReconcileResult = {
     /** Indexes whose stored file was missing, rebuilt in full: "format/distro/release kind [component [architecture]]" */
@@ -230,11 +227,11 @@ class Reconciler {
  * only reported; the facade re-imports what is still in process. Logs each repair; must run under the writer mutex,
  * before the GC starts.
  */
-export async function reconcile(ctx: BackendContext, o: ReconcileOptions = {}): Promise<ReconcileResult> {
+export async function reconcile(ctx: BackendContext): Promise<ReconcileResult> {
     const reconciler = new Reconciler(ctx);
     const rebuilt = await reconciler.markMissing();
     const published = [...prefixed("deb", await publishDebian(ctx)), ...prefixed("rpm", await publishRpm(ctx))];
-    const repaired = [...prefixed("deb", await reconcileDebian(ctx, o)), ...prefixed("rpm", await reconcileRpm(ctx, o))];
+    const repaired = [...prefixed("deb", await reconcileDebian(ctx)), ...prefixed("rpm", await reconcileRpm(ctx))];
     const wrote = published.length > 0 || repaired.length > 0;
     const restamped = wrote ? reconciler.restampRemoved() : [];
     const restampedIndexes = wrote ? reconciler.restampSuperseded() : [];
@@ -252,8 +249,8 @@ export async function reconcile(ctx: BackendContext, o: ReconcileOptions = {}): 
  * Repairs what a failed publish left, once the publishers ran again; published: they wrote anything, possibly what the
  * failed publish could not. Whatever got written restarts the grace, as at startup. Must run under the writer mutex.
  */
-export async function repairPublished(ctx: BackendContext, published: boolean, o: ReconcileOptions = {}): Promise<void> {
-    const repaired = [...await reconcileDebian(ctx, o), ...await reconcileRpm(ctx, o)];
+export async function repairPublished(ctx: BackendContext, published: boolean): Promise<void> {
+    const repaired = [...await reconcileDebian(ctx), ...await reconcileRpm(ctx)];
     if (published || repaired.length > 0) {
         const reconciler = new Reconciler(ctx);
         reconciler.restampRemoved();

@@ -221,7 +221,7 @@ export class RepoService {
     }
 
     private backend(): Promise<Backend> {
-        return openBackend(this.paths, this.gpg.gpgRepoPrivateKeyFile);
+        return openBackend(this.paths, this.gpg.gpgRepoPrivateKeyFile, { uploadKeys: { file: this.gpg.gpgPublicKeysFile, dir: this.gpg.gpgPublicKeysDir } });
     }
 
     private knownFormat(format: Format | undefined): Format | undefined {

@@ -2,6 +2,7 @@ import osPath from "path";
 import path from "path/posix";
 import fs from "fs/promises";
 import type { Statement } from "node:sqlite";
+import type * as openpgp from "openpgp";
 import type { BackendContext } from "./context.ts";
 import { openDatabase } from "./db.ts";
 import { DebCatalog, REFERENCING_TABLES as DEB_TABLES } from "./deb/catalog.ts";
@@ -12,7 +13,8 @@ import { deletePoolFile, startGc } from "./gc.ts";
 import type { Digests } from "./hash.ts";
 import { MAX_PAGE_SIZE } from "./paging.ts";
 import type { Listing, Page } from "./paging.ts";
-import { describeSigningKey, loadSigningKey } from "./pgp.ts";
+import { MissingKeyError, describeSigningKey, keyFileStamp, loadSigningKey, loadUploadKeys, logUploadKeys } from "./pgp.ts";
+import type { UploadKeySources } from "./pgp.ts";
 import { isFormat, Pool } from "./pool.ts";
 import type { Format } from "./pool.ts";
 import { listFiles, statQuietly } from "./publish-fs.ts";
@@ -23,9 +25,10 @@ import { RpmCatalog, REFERENCING_TABLES as RPM_TABLES } from "./rpm/catalog.ts";
 import type { RpmReleaseView } from "./rpm/catalog.ts";
 import { importRpm } from "./rpm/importer.ts";
 import { publishRpm } from "./rpm/publisher.ts";
-import { RepoValidationError } from "../lib/errors.ts";
+import { RepoServiceUnavailableError, RepoValidationError } from "../lib/errors.ts";
 import { fileNaming, isRepoDirectoryName } from "../lib/file-naming.ts";
 import { moveAll } from "../lib/fs.ts";
+import { addPublicKeyToKeyrings } from "../lib/gpg.ts";
 import lock from "../lib/lock.ts";
 import logger from "../lib/logger.ts";
 import type {
@@ -39,7 +42,8 @@ export type { Listing, Page } from "./paging.ts";
 
 export type BackendPaths = BackendContext["paths"];
 
-export type OpenOptions = { rebuild?: boolean };
+/** uploadKeys: where the keys that verify uploads come from; without it uploads are not checked at all */
+export type OpenOptions = { rebuild?: boolean; uploadKeys?: UploadKeySources };
 
 /** A file of a source package; path is repo-relative */
 export type PackageFile = RepositoryRef & RepoFile;
@@ -107,7 +111,9 @@ export class Backend {
     /** Imports accepted but possibly still waiting inside lock.forExecOnce, off the mutex */
     private readonly inFlight = new Set<Promise<unknown>>();
     private gc: { stop(): void } | undefined;
-    private keyConfigured = false;
+    private signingKeyFile: string | undefined;
+    private signingKeyStamp: string | undefined;
+    private uploadKeySources: UploadKeySources | undefined;
     /** A publish failed, possibly after the indexes committed, and with nothing pending no publish would write Release again */
     private repairDue = false;
     /** close() was called: no new writer is accepted; the accepted ones still run */
@@ -125,10 +131,12 @@ export class Backend {
     }
 
     /** Under the mutex: reconciles, re-applies what an interrupted import left in incoming/process, then starts the GC */
-    async start(keyConfigured: boolean): Promise<void> {
-        this.keyConfigured = keyConfigured;
+    async start(signingKeyFile: string | undefined, signingKeyStamp: string | undefined, uploadKeySources: UploadKeySources | undefined): Promise<void> {
+        this.uploadKeySources = uploadKeySources;
+        this.signingKeyFile = signingKeyFile;
+        this.signingKeyStamp = signingKeyStamp;
         await this.mutex.run(async () => {
-            const result = await reconcile(this.ctx, { keyConfigured });
+            const result = await reconcile(this.ctx);
             const summary = Object.entries(result).filter(([, items]) => items.length > 0).map(([what, items]) => `${ items.length } ${ what }`);
             if (summary.length > 0) {
                 logger.info(`Startup reconciliation: ${ summary.join(", ") }`);
@@ -156,6 +164,8 @@ export class Backend {
         this.assertOpen();
         const run = lock.forExecOnce(() => this.mutex.run(async () => {
             this.assertNotSealed();
+            await this.refreshSigningKey();
+            await this.refreshUploadKeys();
             await moveAll(osPath.join(this.ctx.paths.incomingDir, "staging"), osPath.join(this.ctx.paths.incomingDir, "process"));
             return this.importProcess();
         }));
@@ -312,6 +322,56 @@ export class Backend {
         return { items };
     }
 
+    /**
+     * A key file with another date or size takes over, so a new key needs no restart: its public part goes to the keyrings
+     * first, then the publish of this import signs again. A file that cannot be used refuses the import, with nothing moved.
+     */
+    private async refreshSigningKey(): Promise<void> {
+        const stamp = await keyFileStamp(this.signingKeyFile);
+        if (stamp === this.signingKeyStamp) {
+            return;
+        }
+        let key: openpgp.PrivateKey | undefined;
+        try {
+            key = await loadSigningKey(this.signingKeyFile);
+        } catch (err) {
+            logger.error("Refusing the import, the signing key file changed and cannot be used", { err });
+            throw new RepoServiceUnavailableError("The signing key file changed and cannot be used, nothing was imported. See server logs for details", { cause: err });
+        }
+        if (key === undefined) {
+            logger.warn(`GPG key file ${ this.signingKeyFile } does not exist, signing with the key loaded before.`);
+            return;
+        }
+        await addPublicKeyToKeyrings(this.ctx.paths.repoDir, key.toPublic());
+        logger.info(`GPG key file ${ this.signingKeyFile } changed. Signing repository metadata with ${ await describeSigningKey(key) }`);
+        this.ctx.signingKey = key;
+        this.signingKeyStamp = stamp;
+        this.repairDue = true;
+    }
+
+    /** Read again each time, so a key added or replaced counts from this import on; one that cannot be used refuses it, with nothing moved */
+    private async refreshUploadKeys(): Promise<void> {
+        if (this.uploadKeySources === undefined) {
+            return;
+        }
+        let keys: openpgp.PublicKey[];
+        try {
+            keys = await loadUploadKeys(this.uploadKeySources, this.ctx.signingKey);
+        } catch (err) {
+            if (err instanceof MissingKeyError) {
+                logger.warn(`${ err.message }, verifying with the keys loaded before.`);
+                return;
+            }
+            logger.error("Refusing the import, the keys that verify uploads cannot be used", { err });
+            throw new RepoServiceUnavailableError("The keys that verify uploads cannot be used, nothing was imported. See server logs for details");
+        }
+        const fingerprints = (list: openpgp.PublicKey[] | undefined): string | undefined => list?.map(key => key.getFingerprint()).sort().join();
+        if (fingerprints(keys) !== fingerprints(this.ctx.uploadKeys)) {
+            logUploadKeys(keys);
+        }
+        this.ctx.uploadKeys = keys;
+    }
+
     /** Imports what incoming/process holds, then publishes */
     private async importProcess(): Promise<ImportResult> {
         const files = [...await importDebian(this.ctx), ...await importRpm(this.ctx)];
@@ -325,7 +385,7 @@ export class Backend {
         try {
             const published = [...await publishDebian(this.ctx), ...await publishRpm(this.ctx)];
             if (this.repairDue) {
-                await repairPublished(this.ctx, published.length > 0, { keyConfigured: this.keyConfigured });
+                await repairPublished(this.ctx, published.length > 0);
                 this.repairDue = false;
             }
         } catch (err) {
@@ -377,12 +437,18 @@ function checkOwnNames({ deb, rpm }: ReturnType<Backend["repositoryTree"]>): voi
 }
 
 async function open(paths: BackendPaths, signingKeyFile: string | undefined, options: OpenOptions, key: string): Promise<Backend> {
+    // Ahead of the read: a file changing in between only means reading it again at the next import
+    const signingKeyStamp = await keyFileStamp(signingKeyFile);
     const signingKey = await loadSigningKey(signingKeyFile);
     if (signingKeyFile !== undefined && signingKey === undefined) {
-        logger.warn(`GPG key file ${ signingKeyFile } does not exist.`);
+        throw new MissingKeyError(`GPG key file ${ signingKeyFile } does not exist`);
     }
     if (signingKey !== undefined) {
         logger.info(`Signing repository metadata with ${ await describeSigningKey(signingKey) }`);
+    }
+    const uploadKeys = options.uploadKeys === undefined ? undefined : await loadUploadKeys(options.uploadKeys, signingKey);
+    if (uploadKeys !== undefined) {
+        logUploadKeys(uploadKeys);
     }
     const now = (): number => Math.floor(Date.now() / 1000);
     for (const dir of [paths.repoDir, paths.repoStateDir, osPath.join(paths.incomingDir, "staging"), osPath.join(paths.incomingDir, "process")]) {
@@ -400,13 +466,13 @@ async function open(paths: BackendPaths, signingKeyFile: string | undefined, opt
         }
     }
     const db = openDatabase(dbFile);
-    const backend = new Backend({ db, paths, signingKey, now });
+    const backend = new Backend({ db, paths, signingKey, uploadKeys, now });
     try {
         if (!fileNaming().caseSensitive) {
             checkOneSpelling(backend.repositoryTree());
         }
         checkOwnNames(backend.repositoryTree());
-        await backend.start(signingKeyFile !== undefined);
+        await backend.start(signingKeyFile, signingKeyStamp, options.uploadKeys);
     } catch (err) {
         db.close();
         throw err;

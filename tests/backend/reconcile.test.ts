@@ -763,21 +763,6 @@ describe("Tests for reconcile", () => {
         expect(await reconcile(ctx)).toEqual(NOTHING);
     }));
 
-    test("With a configured key whose file is missing, signatures stay; only a rewritten file goes unsigned", withCtx(async ctx => {
-        await publishAll(ctx);
-        ctx.signingKey = undefined;
-        const before = await snapshot("repo");
-
-        expect(await reconcile(ctx, { keyConfigured: true })).toEqual(NOTHING);
-
-        expect(await snapshot("repo")).toEqual(before);
-        await fs.unlink(repodata(ctx, "repomd.xml"));
-        expect(await reconcile(ctx, { keyConfigured: true })).toEqual({ ...NOTHING, repaired: ["rpm/fedora/42"] });
-        expect(await fs.readFile(repodata(ctx, "repomd.xml"), "utf8")).toContain(`<revision>${ NOW + 1 }</revision>`);
-        expect(await exists(repodata(ctx, "repomd.xml.asc"))).toBe(false);
-        await expectSignedDeb(ctx);
-    }));
-
     test("Two indexes sharing one missing stored file are both rebuilt", withCtx(async ctx => {
         await stageDeb(ctx, TRIXIE);
         await stageDeb(ctx, ARM64);

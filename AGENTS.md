@@ -40,7 +40,9 @@ upload anything outside the directory the user pointed you at.**
 server on `http://127.0.0.1:80` (and `[::1]:80`), with `./data/`
 bind-mounted to `/app/data` inside the container. The override mounts
 the repo signing key (`./repo-key.gpg` → `/app/repo-key.gpg`) read-only;
-the server derives the published public keyrings from it.
+the server derives the published public keyrings from it. With that key an
+import refuses what it did not sign, so the unsigned fixtures fail there: sign
+them with `signBundle` and `signRpm` from `tests/signing.ts`, or leave the key out.
 
 `./data/` holds **all** mutable server state — incoming uploads, the
 generated repository tree, and the repository database

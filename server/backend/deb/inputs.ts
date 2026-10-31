@@ -83,10 +83,10 @@ export async function readBinary(located: LocatedFile, kind: DebBinaryInput["kin
 }
 
 /** The .dsc of the expected source version and the files it lists, each obtained through fileOf and verified against it */
-export async function readSource(dsc: LocatedFile, expected: SourceVersion, poolDir: string, fileOf: (name: string, listed: DscFile) => Promise<PoolFile>):
+export async function readSource(dsc: LocatedFile, text: string, expected: SourceVersion, poolDir: string, fileOf: (name: string, listed: DscFile) => Promise<PoolFile>):
     Promise<{ sourcePackage: { stanza: string; files: PoolFile[] }; referenced: Set<string> }> {
 
-    const parsed = parseDsc(await readControlFile(dsc.location));
+    const parsed = parseDsc(text);
     // The Sources index must carry a sha256 for each file
     for (const [name, listed] of parsed.files) {
         if (listed.sha256 === undefined) {

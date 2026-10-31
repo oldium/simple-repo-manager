@@ -5,6 +5,8 @@ import osPath from "path";
 import { fileURLToPath } from "url";
 import fs from "fs/promises";
 import type { Database } from "node:sqlite";
+import * as openpgp from "openpgp";
+import { signRpm } from "../../signing.ts";
 import { openDatabase } from "../../../server/backend/db.ts";
 import { GC_GRACE_SECONDS, runGc } from "../../../server/backend/gc.ts";
 import { hashFile } from "../../../server/backend/hash.ts";
@@ -943,4 +945,67 @@ describe("Tests for RpmCatalog", () => {
         expect(catalog.releases("centos", "42")).toEqual([]);
         expect(indexFiles(db, "centos", "9")).toEqual(["filelists:::0", "other:::0", "primary:::0"]);
     }));
+});
+
+describe("Tests for the keys that verify uploads", () => {
+    let key: openpgp.PrivateKey;
+
+    beforeAll(async () => {
+        ({ privateKey: key } = await openpgp.generateKey({ type: "rsa", rsaBits: 2048, userIDs: [{ name: "key" }], format: "object" }));
+    });
+
+    const signStaged = async (ctx: BackendContext, name: string): Promise<void> => {
+        const file = stagedPath(ctx, `${ TARGET }/${ name }`);
+        await fs.writeFile(file, await signRpm(await fs.readFile(file), key));
+    };
+
+    test("An rpm signed with one of the keys imports", withImporter(async ctx => {
+        ctx.uploadKeys = [key.toPublic()];
+        await stage(ctx, [BIN]);
+        await signStaged(ctx, BIN);
+
+        expect(await importRpm(ctx)).toEqual(expected(TARGET, [BIN], "ok"));
+    }));
+
+    test("A signed rpm under the name of another package fails, the published one stays", withImporter(async ctx => {
+        ctx.uploadKeys = [key.toPublic()];
+        await stage(ctx, [BIN, DOC]);
+        await signStaged(ctx, BIN);
+        await signStaged(ctx, DOC);
+        expect(await importRpm(ctx)).toEqual(expected(TARGET, [BIN, DOC].sort(), "ok"));
+        const published = await fs.readFile(poolPath(ctx, `${ POOL }/${ BIN }`));
+
+        await stage(ctx, [DOC]);
+        await signStaged(ctx, DOC);
+        await fs.rename(stagedPath(ctx, `${ TARGET }/${ DOC }`), stagedPath(ctx, `${ TARGET }/${ BIN }`));
+
+        const result = await importRpm(ctx);
+        expect(result[0].reason).toContain(`${ BIN } does not match what it is signed for, ${ DOC }`);
+        expect(await fs.readFile(poolPath(ctx, `${ POOL }/${ BIN }`))).toEqual(published);
+    }));
+
+    test("An unsigned rpm fails, moves nothing and adds no row", withImporter(async ctx => {
+        ctx.uploadKeys = [key.toPublic()];
+        await stage(ctx, [BIN]);
+
+        const result = await importRpm(ctx);
+
+        expect(result).toEqual(failed(expected(TARGET, [BIN], "failed")));
+        expect(result[0].reason).toContain(`${ BIN } is not signed`);
+        expect(await staged(ctx)).toEqual([BIN]);
+        expect(count(ctx.db, "pool_files")).toBe(0);
+        expect(count(ctx.db, "releases")).toBe(0);
+    }));
+
+    test.each([[undefined], [[]]])("With keys %j a signed rpm imports with a warning", keys => withImporter(async ctx => {
+        ctx.uploadKeys = keys;
+        const warn = jest.spyOn(logger, "warn").mockReturnValue(logger);
+        await stage(ctx, [BIN]);
+        await signStaged(ctx, BIN);
+
+        expect(await importRpm(ctx)).toEqual(expected(TARGET, [BIN], "ok"));
+
+        expect(warn.mock.calls.map(([line]) => line)).toEqual([`Could not verify the signature of ${ BIN }: there are no keys to verify uploads with`]);
+        warn.mockRestore();
+    })());
 });

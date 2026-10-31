@@ -8,6 +8,7 @@ import { gunzipSync, zstdDecompressSync } from "zlib";
 import fs from "fs/promises";
 import { Database } from "node:sqlite";
 import * as openpgp from "openpgp";
+import { signBundle, signRpm } from "../signing.ts";
 import { openDatabase } from "../../server/backend/db.ts";
 import { DebCatalog } from "../../server/backend/deb/catalog.ts";
 import { GC_GRACE_SECONDS, GC_INTERVAL_MS, runGc } from "../../server/backend/gc.ts";
@@ -16,6 +17,7 @@ import { getBackend, openBackend } from "../../server/backend/index.ts";
 import type { Backend } from "../../server/backend/index.ts";
 import { describeSigningKey, loadSigningKey, verifyClearsigned, verifyDetached } from "../../server/backend/pgp.ts";
 import { listFiles } from "../../server/backend/publish-fs.ts";
+import { RepoServiceUnavailableError } from "../../server/lib/errors.ts";
 import { NOT_IN_LOWER_CASE, resetFileNaming, setFileNaming } from "../../server/lib/file-naming.ts";
 import lock from "../../server/lib/lock.ts";
 import logger from "../../server/lib/logger.ts";
@@ -726,27 +728,15 @@ describe("Tests for the backend facade", () => {
         expect(sources(reopened)).toEqual(["deb/debian/trixie srm-hello 1.0-1"]);
     }));
 
-    test("A configured key file that does not exist warns, keeps earlier signatures and publishes unsigned", withLocalTmpDir(async () => {
+    test("A configured key file that does not exist refuses the start, leaving the signatures as they are", withLocalTmpDir(async () => {
         await stage(TRIXIE);
         const signed = await open();
         await signed.importStaged();
         const inRelease = await fs.readFile(dists("InRelease"), "utf8");
         await signed.close();
-        const warnSpy = jest.spyOn(logger, "warn").mockReturnValue(logger);
-        let backend: Backend;
-        try {
-            backend = await open("missing.asc");
-            expect(warnSpy).toHaveBeenCalledWith("GPG key file missing.asc does not exist.");
-        } finally {
-            warnSpy.mockRestore();
-        }
-        expect(await fs.readFile(dists("InRelease"), "utf8")).toBe(inRelease);
 
-        await stage(NOBLE);
-        expect((await backend.importStaged()).ok).toBe(true);
+        await expect(open("missing.asc")).rejects.toThrow("GPG key file missing.asc does not exist");
 
-        expect(await exists(dists("Release", "ubuntu", "noble"))).toBe(true);
-        expect(await exists(dists("InRelease", "ubuntu", "noble"))).toBe(false);
         expect(await fs.readFile(dists("InRelease"), "utf8")).toBe(inRelease);
     }));
 });
@@ -926,6 +916,151 @@ describe.each([
     }));
 });
 
+describe("Tests for a changed signing key file", () => {
+    const KEYRINGS = ["deb/archive-keyring.asc", "rpm/RPM-GPG-KEY.asc"];
+    let otherKey: string;
+
+    beforeAll(async () => {
+        otherKey = (await openpgp.generateKey({ type: "curve25519", userIDs: [{ name: "other" }], format: "armored" })).privateKey;
+    });
+
+    /** New content under a date no earlier write can share */
+    async function replaceKeyFile(content: string): Promise<void> {
+        await fs.writeFile(KEY_FILE, content);
+        const later = new Date(Date.now() + 60_000);
+        await fs.utimes(KEY_FILE, later, later);
+    }
+
+    /** A backend with the fixture packages published and signed with the generated key */
+    async function published(): Promise<Backend> {
+        await stage(TRIXIE);
+        await stage(RPMS);
+        const backend = await open();
+        await backend.importStaged();
+        return backend;
+    }
+
+    async function signatures(): Promise<string[]> {
+        return Promise.all([dists("InRelease"), dists("Release.gpg"), repoFile(`${ REPOMD }.asc`)].map(file => fs.readFile(file, "utf8")));
+    }
+
+    async function debSignatures(): Promise<string[]> {
+        return Promise.all([dists("InRelease"), dists("Release.gpg")].map(file => fs.readFile(file, "utf8")));
+    }
+
+    async function keyringFingerprints(rel: string): Promise<string[]> {
+        return (await openpgp.readKeys({ armoredKeys: await fs.readFile(repoFile(rel), "utf8") })).map(key => key.getFingerprint());
+    }
+
+    test("An unchanged key file signs nothing again", withLocalTmpDir(async () => {
+        const backend = await published();
+        const before = await signatures();
+
+        await backend.importStaged();
+
+        expect(await signatures()).toEqual(before);
+        expect(await exists(repoFile(KEYRINGS[0]))).toBe(false);
+        await backend.close();
+    }));
+
+    test("An import with nothing staged signs again with a changed key and adds it to the keyrings", withLocalTmpDir(async () => {
+        const backend = await published();
+        const release = await fs.readFile(dists("Release"), "utf8");
+        const repomd = await fs.readFile(repoFile(REPOMD), "utf8");
+        await replaceKeyFile(otherKey);
+
+        const result = await backend.importStaged();
+
+        expect(result).toEqual({ ok: true, files: [] });
+        await expectSignedDeb();
+        await expectSignedRpm();
+        expect(await fs.readFile(dists("Release"), "utf8")).toBe(release);
+        expect(await fs.readFile(repoFile(REPOMD), "utf8")).toBe(repomd);
+        const fingerprint = (await openpgp.readPrivateKey({ armoredKey: otherKey })).getFingerprint();
+        for (const keyring of KEYRINGS) {
+            expect(await keyringFingerprints(keyring)).toEqual([fingerprint]);
+        }
+        await backend.close();
+    }));
+
+    test("A new key signs what the same import brings", withLocalTmpDir(async () => {
+        await stage(TRIXIE);
+        const backend = await open();
+        await backend.importStaged();
+        await stage(RPMS);
+        await replaceKeyFile(otherKey);
+
+        await backend.importStaged();
+
+        await expectSignedDeb();
+        await expectSignedRpm();
+        await backend.close();
+    }));
+
+    test.each<[string, () => Promise<string>]>([
+        ["garbage", async () => "not a key"],
+        ["a protected key", async () => (await openpgp.generateKey({ type: "curve25519", userIDs: [{ name: "p" }], passphrase: "secret", format: "armored" })).privateKey],
+    ])("A key file changed to %s refuses the import, moves nothing, and the next import retries", (_, content) => withLocalTmpDir(async () => {
+        await stage(TRIXIE);
+        const backend = await open();
+        await backend.importStaged();
+        const before = await fs.readFile(dists("InRelease"), "utf8");
+        const staged = await stage(RPMS);
+        await replaceKeyFile(await content());
+        const error = jest.spyOn(logger, "error").mockReturnValue(logger);
+
+        await expect(backend.importStaged()).rejects.toStrictEqual(new RepoServiceUnavailableError("The signing key file changed and cannot be used, nothing was imported. See server logs for details"));
+
+        expect(error).toHaveBeenCalledWith("Refusing the import, the signing key file changed and cannot be used", { err: expect.anything() });
+        error.mockRestore();
+        expect((await fs.readdir(osJoin(PATHS.incomingDir, "staging", RPMS.target))).sort()).toEqual(staged);
+        expect(await exists(osJoin(PATHS.incomingDir, "process", RPMS.target))).toBe(false);
+        expect(await fs.readFile(dists("InRelease"), "utf8")).toBe(before);
+        expect(await exists(repoFile(KEYRINGS[0]))).toBe(false);
+
+        await replaceKeyFile(otherKey);
+        expect((await backend.importStaged()).files.map(file => file.status)).toEqual(staged.map(() => "ok"));
+        await expectSignedDeb();
+        await expectSignedRpm();
+        await backend.close();
+    })());
+
+    test("Another file of the same date and size counts as the same", withLocalTmpDir(async () => {
+        const date = new Date(1_700_000_000_000);
+        await fs.writeFile(KEY_FILE, armoredKey);
+        await fs.utimes(KEY_FILE, date, date);
+        await stage(TRIXIE);
+        const backend = await openBackend(PATHS, KEY_FILE);
+        await backend.importStaged();
+        const before = await debSignatures();
+        await fs.writeFile(KEY_FILE, "x".repeat(armoredKey.length));
+        await fs.utimes(KEY_FILE, date, date);
+
+        expect(await backend.importStaged()).toEqual({ ok: true, files: [] });
+
+        expect(await debSignatures()).toEqual(before);
+        await backend.close();
+    }));
+
+    test("A key file that is gone keeps the loaded key signing", withLocalTmpDir(async () => {
+        await stage(TRIXIE);
+        const backend = await open();
+        await backend.importStaged();
+        const key = await openpgp.readPrivateKey({ armoredKey });
+        await fs.rm(KEY_FILE);
+        await stage(RPMS);
+        const warn = jest.spyOn(logger, "warn").mockReturnValue(logger);
+
+        await backend.importStaged();
+
+        expect(warn).toHaveBeenCalledWith(`GPG key file ${ KEY_FILE } does not exist, signing with the key loaded before.`);
+        warn.mockRestore();
+        expect(await verifyDetached(await fs.readFile(repoFile(REPOMD), "utf8"), await fs.readFile(repoFile(`${ REPOMD }.asc`), "utf8"), key)).toBe(true);
+        await backend.close();
+    }));
+
+});
+
 describe("Tests for the repair after a failed publish", () => {
     test("A failure stops the publish, and the tick finishes what it did not reach", withLocalTmpDir(async () => {
         await stage(TRIXIE);
@@ -970,34 +1105,6 @@ describe("Tests for the repair after a failed publish", () => {
         expect(await releaseSha256()).toEqual(await debIndexes());
     }));
 
-    test("With a configured key file that is missing, the repair keeps the earlier signatures", withLocalTmpDir(async () => {
-        await stage(TRIXIE);
-        await stage(RPMS);
-        const signed = await open();
-        await signed.importStaged();
-        const inRelease = await fs.readFile(dists("InRelease"), "utf8");
-        const repomdSignature = await fs.readFile(repoFile(`${ REPOMD }.asc`), "utf8");
-        await signed.close();
-        const warnSpy = jest.spyOn(logger, "warn").mockReturnValue(logger);
-        let backend: Backend;
-        try {
-            backend = await open("missing.asc");
-        } finally {
-            warnSpy.mockRestore();
-        }
-        await stage(NOBLE);
-        await fs.mkdir(dists("", "ubuntu", "noble"), { recursive: true });
-        const unblock = await blockWrite(dists("Release", "ubuntu", "noble"));
-        await expect(backend.importStaged()).rejects.toThrow();
-        expect(await exists(dists("Release", "ubuntu", "noble"))).toBe(false);
-
-        await unblock();
-        expect(await backend.importStaged()).toEqual({ ok: true, files: [] });
-
-        expect(await exists(dists("Release", "ubuntu", "noble"))).toBe(true);
-        expect(await fs.readFile(dists("InRelease"), "utf8")).toBe(inRelease);
-        expect(await fs.readFile(repoFile(`${ REPOMD }.asc`), "utf8")).toBe(repomdSignature);
-    }));
 });
 
 const CASE_INSENSITIVE = { caseSensitive: false, shortNames: false };
@@ -1215,5 +1322,201 @@ describe("Tests for the sweep of incoming/process", () => {
         const { files } = await backend.importStaged();
 
         expect(files).toEqual([{ filename: second, path: `rpm/fedora/42/${ second }`, status: "ok" }]);
+    }));
+});
+
+describe("Tests for the keys that verify uploads", () => {
+    let signer: { privateKey: openpgp.PrivateKey; privateArmored: string; publicArmored: string; binary: Uint8Array };
+    let second: { publicArmored: string };
+
+    const generate = async (name: string): Promise<typeof signer> => {
+        const { privateKey, publicKey } = await openpgp.generateKey({ type: "rsa", rsaBits: 2048, userIDs: [{ name }], format: "object" });
+        return { privateKey, privateArmored: privateKey.armor(), publicArmored: publicKey.armor(), binary: publicKey.write() };
+    };
+
+    beforeAll(async () => {
+        signer = await generate("signer");
+        second = await generate("second");
+    });
+
+    const stageSigned = async (): Promise<string[]> => {
+        const names = await stage(TRIXIE);
+        await signBundle(osJoin(PATHS.incomingDir, "staging", TRIXIE.target), signer.privateKey);
+        return names;
+    };
+    const statuses = (files: { status: string }[]): Set<string> => new Set(files.map(file => file.status));
+    const openWith = (uploadKeys: { file?: string; dir?: string }, keyFile?: string): Promise<Backend> => openBackend(PATHS, keyFile, { uploadKeys });
+
+    test("Without the option nothing is checked", withLocalTmpDir(async () => {
+        await stage(TRIXIE);
+        const backend = await openBackend(PATHS, undefined);
+
+        expect(statuses((await backend.importStaged()).files)).toEqual(new Set(["ok"]));
+
+        await backend.close();
+    }));
+
+    test("A key in the file refuses what is unsigned and takes what it signed", withLocalTmpDir(async () => {
+        await fs.writeFile("keys.asc", signer.publicArmored);
+        const info = jest.spyOn(logger, "info").mockReturnValue(logger);
+        const backend = await openWith({ file: "keys.asc" });
+        expect(info).toHaveBeenCalledWith(`Verifying uploads with ${ signer.privateKey.getFingerprint() }`);
+
+        await stage(RPMS);
+        expect(statuses((await backend.importStaged()).files)).toEqual(new Set(["failed"]));
+        await fs.rm(osJoin(PATHS.incomingDir, "process", "rpm"), { recursive: true });
+
+        await stageSigned();
+        expect(statuses((await backend.importStaged()).files)).toEqual(new Set(["ok"]));
+
+        await backend.close();
+    }));
+
+    test("The signing key alone is a key that verifies", withLocalTmpDir(async () => {
+        await fs.writeFile("signing.asc", signer.privateArmored);
+        const backend = await openWith({}, "signing.asc");
+
+        await stage(TRIXIE);
+        expect(statuses((await backend.importStaged()).files)).toEqual(new Set(["failed"]));
+
+        await backend.close();
+    }));
+
+    test("A file can hold several armored keys, a directory several files, also binary ones", withLocalTmpDir(async () => {
+        await fs.writeFile("keys.asc", `${ second.publicArmored }\n${ signer.publicArmored }`);
+        const first = jest.spyOn(logger, "info").mockReturnValue(logger);
+        await (await openWith({ file: "keys.asc" })).close();
+        expect(first.mock.calls.flat().filter(line => String(line).startsWith("Verifying"))[0]).toContain(signer.privateKey.getFingerprint());
+        first.mockRestore();
+
+        await fs.mkdir("keys");
+        await fs.writeFile(osJoin("keys", "one.gpg"), signer.binary);
+        await fs.mkdir(osJoin("keys", "ignored"));
+        await fs.rm("state", { recursive: true });
+        const backend = await openWith({ dir: "keys" });
+        await stageSigned();
+
+        expect(statuses((await backend.importStaged()).files)).toEqual(new Set(["ok"]));
+
+        await backend.close();
+    }));
+
+    test("Without any key it warns once at the start, and imports", withLocalTmpDir(async () => {
+        const warn = jest.spyOn(logger, "warn").mockReturnValue(logger);
+        const backend = await openWith({});
+
+        expect(warn.mock.calls.flat()).toEqual(["Uploads cannot be verified: there is no GPG_PUBLIC_KEYS_FILE, GPG_PUBLIC_KEYS_DIR or GPG_REPO_PRIVATE_KEY_FILE key"]);
+        await stage(TRIXIE);
+        expect(statuses((await backend.importStaged()).files)).toEqual(new Set(["ok"]));
+
+        await backend.close();
+    }));
+
+    test.each<[string, { file?: string; dir?: string }, string]>([
+        ["a file that is not there", { file: "missing.asc" }, "GPG key file missing.asc does not exist"],
+        ["a directory that is not there", { dir: "missing" }, "GPG keys directory missing does not exist"],
+        ["a directory with no file in it", { dir: "empty" }, "GPG keys directory empty holds no file"],
+    ])("A wrong configuration refuses the start: %s", (_, sources, message) => withLocalTmpDir(async () => {
+        await fs.mkdir("empty");
+        await fs.mkdir("ignored", { recursive: true });
+
+        await expect(openWith(sources)).rejects.toThrow(message);
+    })());
+
+    test("A wrong configuration refuses the start even with a signing key that could verify", withLocalTmpDir(async () => {
+        await fs.writeFile("signing.asc", signer.privateArmored);
+
+        await expect(openWith({ file: "missing.asc" }, "signing.asc")).rejects.toThrow("GPG key file missing.asc does not exist");
+    }));
+
+    test.each([["garbage", "not a key"], ["empty", ""]])("A file holding %s refuses the start, naming it", (_, content) => withLocalTmpDir(async () => {
+        await fs.writeFile("keys.asc", content);
+
+        await expect(openWith({ file: "keys.asc" })).rejects.toThrow("Failed to read public keys from keys.asc");
+    })());
+
+    test("A key added to the file counts at the next import, for what waits in process too", withLocalTmpDir(async () => {
+        await fs.writeFile("keys.asc", second.publicArmored);
+        const backend = await openWith({ file: "keys.asc" });
+        const names = await stageSigned();
+        expect(statuses((await backend.importStaged()).files)).toEqual(new Set(["failed"]));
+
+        await fs.writeFile("keys.asc", `${ second.publicArmored }\n${ signer.publicArmored }`);
+
+        const { files } = await backend.importStaged();
+        expect(statuses(files)).toEqual(new Set(["ok"]));
+        expect(files.map(file => file.filename).sort()).toEqual(names);
+
+        await backend.close();
+    }));
+
+    test("The key file going away during a run leaves the keys loaded before, an unsigned upload stays refused", withLocalTmpDir(async () => {
+        await fs.writeFile("keys.asc", signer.publicArmored);
+        const backend = await openWith({ file: "keys.asc" });
+        await fs.rm("keys.asc");
+        const warn = jest.spyOn(logger, "warn").mockReturnValue(logger);
+        await stage(TRIXIE);
+
+        expect(statuses((await backend.importStaged()).files)).toEqual(new Set(["failed"]));
+
+        expect(warn).toHaveBeenCalledWith("GPG key file keys.asc does not exist, verifying with the keys loaded before.");
+        await backend.close();
+    }));
+
+    (process.platform === "win32" ? test.skip : test)("A key in the directory can be a link, as a mounted secret is", withLocalTmpDir(async () => {
+        await fs.mkdir("store");
+        await fs.writeFile(osJoin("store", "one.asc"), signer.publicArmored);
+        await fs.mkdir("keys");
+        await fs.symlink(osPath.resolve("store", "one.asc"), osJoin("keys", "one.asc"));
+        await fs.symlink(osPath.resolve("store"), osJoin("keys", "..data"));
+        const info = jest.spyOn(logger, "info").mockReturnValue(logger);
+
+        const backend = await openWith({ dir: "keys" });
+
+        expect(info).toHaveBeenCalledWith(`Verifying uploads with ${ signer.privateKey.getFingerprint() }`);
+        await backend.close();
+    }));
+
+    test("A file that broke refuses the import, with the upload still staged", withLocalTmpDir(async () => {
+        await fs.writeFile("keys.asc", signer.publicArmored);
+        const backend = await openWith({ file: "keys.asc" });
+        await stageSigned();
+        await fs.writeFile("keys.asc", "not a key");
+        const error = jest.spyOn(logger, "error").mockReturnValue(logger);
+
+        await expect(backend.importStaged()).rejects.toStrictEqual(new RepoServiceUnavailableError("The keys that verify uploads cannot be used, nothing was imported. See server logs for details"));
+
+        expect(error).toHaveBeenCalledWith("Refusing the import, the keys that verify uploads cannot be used", { err: expect.any(Error) });
+        expect(await fs.readdir(osJoin(PATHS.incomingDir, "staging", TRIXIE.target))).not.toEqual([]);
+
+        await backend.close();
+    }));
+
+    test("A rebuild verifies nothing: what is published stays when the keys changed", withLocalTmpDir(async () => {
+        await stage(TRIXIE);
+        let backend = await openBackend(PATHS, undefined);
+        await backend.importStaged();
+        const sources = backend.listSourcePackages({}).items;
+        await backend.close();
+
+        await fs.writeFile("keys.asc", signer.publicArmored);
+        backend = await openBackend(PATHS, undefined, { rebuild: true, uploadKeys: { file: "keys.asc" } });
+
+        expect(backend.listSourcePackages({}).items).toEqual(sources);
+        await backend.close();
+    }));
+
+    test("An rpm signed with a key from the file imports through the backend", withLocalTmpDir(async () => {
+        await fs.writeFile("keys.asc", signer.publicArmored);
+        const backend = await openWith({ file: "keys.asc" });
+        const names = await stage(RPMS);
+        for (const name of names) {
+            const file = osJoin(PATHS.incomingDir, "staging", RPMS.target, name);
+            await fs.writeFile(file, await signRpm(await fs.readFile(file), signer.privateKey));
+        }
+
+        expect(statuses((await backend.importStaged()).files)).toEqual(new Set(["ok"]));
+
+        await backend.close();
     }));
 });

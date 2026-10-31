@@ -7,6 +7,8 @@ export type BackendContext = {
     db: Database;
     paths: { incomingDir: string; repoStateDir: string; repoDir: string };
     signingKey: openpgp.PrivateKey | undefined;
+    /** What uploads have to be signed with; without any, signed uploads are only warned about */
+    uploadKeys?: openpgp.PublicKey[];
     now(): number;
 };
 

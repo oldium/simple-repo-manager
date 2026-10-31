@@ -5,6 +5,7 @@ import { repoFile } from "../context.ts";
 import type { BackendContext } from "../context.ts";
 import { moveFile } from "../publish-fs.ts";
 import { StagedDigests, checkStagedDirectories, importFailure, stagingDirs } from "../staging.ts";
+import { checkRpmSignature } from "../upload-signature.ts";
 import type { StagingDir } from "../staging.ts";
 import { RpmCatalog } from "./catalog.ts";
 import { readRpm } from "./inputs.ts";
@@ -44,6 +45,7 @@ class RpmImporter {
             checkStagedDirectories(dir.rel);
             const location = toOsPath(dir.dir, name);
             const stat = await fs.stat(location);
+            await checkRpmSignature(location, name, this.ctx.uploadKeys);
             const input = await readRpm(location, name, target, await this.staged.digests(relPath, location, stat), stat);
             await this.checkCase([input.file.path]);
             const outcome = this.catalog.applyPackage(input, this.ctx.now());

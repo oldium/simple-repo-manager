@@ -21,6 +21,7 @@ update="../test-data/packages-update"
 work="tmp/verify-native"
 logs="${work}/logs"
 tool="${work}/tool.mjs"
+signed="${work}/signed"
 pubkey="${work}/keys/pubkey.asc"
 override="${work}/compose.yaml"
 base="http://127.0.0.1:80"
@@ -191,19 +192,20 @@ check_reupload() {
     server_up || return 1
     local trixie="data/repo/deb/debian/dists/trixie" conflict="${work}/conflict" name
     local -a staged=()
-    step update-upload node "${tool}" upload "${api}" "${update}" . || return 1
+    step update-upload node "${tool}" upload "${api}" "${signed}/packages-update" . || return 1
     step update-import node "${tool}" import "${api}" all-ok || return 1
     # A full srm-hello build first, so the arm64 bundle lands next to amd64 and source
-    step base-upload node "${tool}" upload "${api}" tests/fixtures/packages deb/debian/trixie/main || return 1
+    step base-upload node "${tool}" upload "${api}" "${signed}/packages" deb/debian/trixie/main || return 1
     step base-import node "${tool}" import "${api}" all-ok || return 1
-    step arm64-upload node "${tool}" upload "${api}" tests/fixtures/packages-arm64 . || return 1
+    step arm64-upload node "${tool}" upload "${api}" "${signed}/packages-arm64" . || return 1
     step arm64-import node "${tool}" import "${api}" all-ok || return 1
     step arm64 node "${tool}" listed "${trixie}" main/binary-arm64/Packages.gz Package=srm-hello Architecture=arm64 || return 1
     step amd64 node "${tool}" listed "${trixie}" main/binary-amd64/Packages.gz Package=srm-hello Architecture=amd64 || return 1
     step source node "${tool}" listed "${trixie}" main/source/Sources.gz Package=srm-hello || return 1
     step conflict-bundle node "${tool}" conflict tests/fixtures/packages/deb/debian/trixie/main \
         "${conflict}/deb/debian/bookworm/main" bookworm || return 1
-    step conflict-upload node "${tool}" upload "${api}" "${conflict}" . || return 1
+    step conflict-sign node "${tool}" sign "${work}/keys/private.asc" "${conflict}" "${signed}/conflict" || return 1
+    step conflict-upload node "${tool}" upload "${api}" "${signed}/conflict" . || return 1
     step conflict-import node "${tool}" import "${api}" failed srm-hello_1.0.orig.tar.gz "is in the pool with other content" || return 1
     step conflict-pool cmp tests/fixtures/packages/deb/debian/trixie/main/srm-hello_1.0.orig.tar.gz \
         data/repo/deb/debian/pool/main/s/srm-hello/srm-hello_1.0.orig.tar.gz || return 1
@@ -225,8 +227,8 @@ check_removal() {
 
 # Upload, import and remove srm-hello; the import and both removals republish
 publish_cycle() {
-    node "${tool}" upload "${api}" tests/fixtures/packages deb/debian/trixie/main \
-        && node "${tool}" upload "${api}" tests/fixtures/packages rpm/fedora/42 \
+    node "${tool}" upload "${api}" "${signed}/packages" deb/debian/trixie/main \
+        && node "${tool}" upload "${api}" "${signed}/packages" rpm/fedora/42 \
         && node "${tool}" import "${api}" "$1" \
         && node "${tool}" remove "${api}" deb debian trixie srm-hello - false \
         && node "${tool}" remove "${api}" rpm fedora 42 srm-hello - false
@@ -275,8 +277,8 @@ check_crash() {
     done
     echo "${interrupted} of ${round} kills interrupted a publish"
     ((interrupted > 0)) || { reason="no kill interrupted a publish, see ${logs}/crash.log"; return 1; }
-    step final-upload-deb node "${tool}" upload "${api}" tests/fixtures/packages deb/debian/trixie/main || return 1
-    step final-upload-rpm node "${tool}" upload "${api}" tests/fixtures/packages rpm/fedora/42 || return 1
+    step final-upload-deb node "${tool}" upload "${api}" "${signed}/packages" deb/debian/trixie/main || return 1
+    step final-upload-rpm node "${tool}" upload "${api}" "${signed}/packages" rpm/fedora/42 || return 1
     step final-import node "${tool}" import "${api}" all-ok || return 1
     step final-verify node "${tool}" verify data/repo "${pubkey}" strict || return 1
 }
@@ -330,8 +332,9 @@ EOF
 cat > "${tool}" <<'TOOL'
 // verify-native.sh helper: node tool.mjs <command> <args>...; failures print "problem: ..." lines and exit 1
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, openAsBlob, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, openAsBlob, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, posix, relative, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 import { gunzipSync, gzipSync, zstdDecompressSync } from "node:zlib";
 import * as openpgp from "openpgp";
 
@@ -795,6 +798,26 @@ const commands = {
     },
 
     /** A source-only upload for release whose orig tarball has the fixture's name but other bytes */
+    // A copy of a tree with its uploads signed, as the server takes nothing else with a key set
+    async sign(keyFile, from, to) {
+        const { signBundle, signRpm } = await import(pathToFileURL(join(process.cwd(), "tests", "signing.ts")).href);
+        const privateKey = await openpgp.readPrivateKey({ armoredKey: readFileSync(keyFile, "utf8") });
+        cpSync(from, to, { recursive: true });
+        const walk = async dir => {
+            const entries = readdirSync(dir, { withFileTypes: true });
+            for (const entry of entries.filter(e => e.isDirectory())) {
+                await walk(join(dir, entry.name));
+            }
+            if (entries.some(e => e.name.endsWith(".changes"))) {
+                await signBundle(dir, privateKey);
+            }
+            for (const entry of entries.filter(e => e.isFile() && e.name.endsWith(".rpm"))) {
+                writeFileSync(join(dir, entry.name), await signRpm(readFileSync(join(dir, entry.name)), privateKey));
+            }
+        };
+        await walk(to);
+    },
+
     async conflict(fixtureDir, outDir, release) {
         const all = names(fixtureDir, false);
         const dscName = all.find((n) => n.endsWith(".dsc"));
@@ -851,6 +874,9 @@ process.exit(problems > 0 || ok === false ? 1 : 0);
 TOOL
 
 node "${tool}" keygen "${work}/keys" > "${logs}/keygen.log" 2>&1 || die "key generation failed, see ${logs}/keygen.log"
+for tree in tests/fixtures/packages tests/fixtures/packages-arm64 "${update}"; do
+    node "${tool}" sign "${work}/keys/private.asc" "${tree}" "${signed}/${tree##*/}" > "${logs}/sign.log" 2>&1 || die "signing ${tree} failed, see ${logs}/sign.log"
+done
 
 trap cleanup EXIT
 echo "== image"

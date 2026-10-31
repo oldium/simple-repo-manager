@@ -414,7 +414,7 @@ class DebRebuild {
         };
         try {
             const dsc = { name: entry.dscName, location: this.location(dscPath), file: await fileOf(entry.dscName), ...sp(entry.dscName, entry.stanza) };
-            return (await readSource(dsc, { source: g.source, version: g.version }, entry.directory, fileOf)).sourcePackage;
+            return (await readSource(dsc, await readControlFile(dsc.location), { source: g.source, version: g.version }, entry.directory, fileOf)).sourcePackage;
         } catch (err) {
             this.problem(dscPath, err);
             return undefined;
