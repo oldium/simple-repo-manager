@@ -8,6 +8,7 @@ import files from "./files.ts";
 import finalhandler from "finalhandler";
 import { gpgInit } from "../lib/gpg.ts";
 import { openBackend } from "../backend/index.ts";
+import { resolveFileNaming } from "../lib/file-naming.ts";
 import api from "./api.ts";
 
 function unexpectedErrorHandler() {
@@ -28,6 +29,10 @@ export default async function createApp(config: AppConfig, environment: Environm
         await fsExtra.ensureDir(osPath.join(config.paths.incomingDir, 'staging', 'rpm'));
         await fsExtra.ensureDir(osPath.join(config.paths.incomingDir, 'process', 'rpm'));
     }
+
+    // A directory that does not exist yet could only answer with the Windows default
+    await fsExtra.ensureDir(config.paths.repoDir);
+    await resolveFileNaming(config.fileNaming, [config.paths.repoDir, config.paths.incomingDir]);
 
     await openBackend(config.paths, config.gpg.gpgRepoPrivateKeyFile, { rebuild: process.argv.includes("--rebuild") });
     if (config.gpg.gpgRepoPrivateKeyFile) {

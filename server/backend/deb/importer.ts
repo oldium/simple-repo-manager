@@ -1,14 +1,15 @@
-import osPath from "path";
 import path from "path/posix";
 import fs from "fs/promises";
 import type { Database } from "node:sqlite";
+import { caseChecker } from "../case-conflict.ts";
+import type { CaseChecker } from "../case-conflict.ts";
 import { repoFile } from "../context.ts";
 import type { BackendContext } from "../context.ts";
 import { field, parseControl, parseFileList, stripClearsign } from "../control.ts";
 import type { Stanza } from "../control.ts";
 import type { Digests } from "../hash.ts";
 import { moveFile, statQuietly } from "../publish-fs.ts";
-import { StagedDigests, checkPathSegment, importFailure, stagingDirs } from "../staging.ts";
+import { StagedDigests, checkFileName, checkStagedDirectories, importFailure, stagingDirs } from "../staging.ts";
 import type { StagingDir } from "../staging.ts";
 import { DebCatalog } from "./catalog.ts";
 import type { DebBinaryInput, DebUploadInput, PoolFile } from "./catalog.ts";
@@ -17,8 +18,10 @@ import { BINARY_KINDS, changesArchitectures, checkSourceVersion, readBinary, rea
 import type { Listed } from "./inputs.ts";
 import { binarySource, poolDirectory, requiredField } from "./stanzas.ts";
 import { RepoValidationError } from "../../lib/errors.ts";
+import { repoDirectoryName } from "../../lib/file-naming.ts";
 import logger from "../../lib/logger.ts";
 import type { ImportFile } from "../../lib/repo-service.ts";
+import { checkPosixPath, toOsPath } from "../../lib/safe-path.ts";
 
 const SKIPPED_REASON = "no .changes file references it";
 
@@ -51,7 +54,7 @@ function parseChanges(text: string): { stanza: Stanza; files: ChangesFile[] } {
     const stanza = stanzas[0];
     const files = new Map<string, ChangesFile>();
     for (const listed of parseFileList(requiredField(stanza, "Files"), true)) {
-        checkPathSegment(listed.name, "file name in Files");
+        checkFileName(listed.name, "file name in Files");
         if (files.has(listed.name)) {
             throw new RepoValidationError(`${ listed.name } is listed twice in Files`);
         }
@@ -80,7 +83,7 @@ function conflictText(conflict: string): string {
 
 /** The component level and below: <distro>/<release>/<component>[/<sub>] */
 function targetOf(segments: string[]): Target | undefined {
-    const [distro, release, ...component] = segments;
+    const [distro, release, ...component] = segments.map(segment => repoDirectoryName(segment));
     return component.length > 0 ? { distro, release, component: component.join("/") } : undefined;
 }
 
@@ -89,12 +92,14 @@ class DebImporter {
     private readonly catalog: DebCatalog;
     private readonly staged: StagedDigests;
     private readonly s: ReturnType<typeof prepareStatements>;
+    private readonly checkCase: CaseChecker;
 
     constructor(ctx: BackendContext) {
         this.ctx = ctx;
         this.catalog = new DebCatalog(ctx.db);
         this.staged = new StagedDigests(ctx.db);
         this.s = prepareStatements(ctx.db);
+        this.checkCase = caseChecker(ctx.paths.repoDir);
     }
 
     async importChanges(dir: StagingDir<Target>, target: Target, changesName: string): Promise<Outcome> {
@@ -102,10 +107,11 @@ class DebImporter {
         let claimed = [changesName];
         let parsed = false;
         try {
-            const changes = parseChanges(await readControlFile(osPath.join(dir.dir, changesName)));
+            const changes = parseChanges(await readControlFile(toOsPath(dir.dir, changesName)));
             parsed = true;
             claimed = [changesName, ...changes.files.map(f => f.name)];
             const upload = await this.readUpload(dir, target, changesName, changes);
+            await this.checkCase(upload.moves.map(move => move.poolPath));
             const outcome = this.catalog.applyUpload(upload.input, this.ctx.now());
             if (!outcome.ok) {
                 throw new RepoValidationError(outcome.conflicts.map(conflictText).join("; "));
@@ -114,7 +120,7 @@ class DebImporter {
                 logger.info(`${ dir.rel }/${ changesName } left unreferenced: ${ outcome.unreferenced.join(", ") }`);
             }
             for (const move of upload.moves) {
-                await moveFile(osPath.join(dir.dir, move.name), repoFile(this.ctx, move.poolPath));
+                await moveFile(toOsPath(dir.dir, move.name), repoFile(this.ctx, move.poolPath));
                 this.staged.delete(`${ dir.rel }/${ move.name }`);
                 moved.push(move.name);
             }
@@ -125,6 +131,7 @@ class DebImporter {
     }
 
     private async readUpload(dir: StagingDir<Target>, target: Target, changesName: string, changes: ReturnType<typeof parseChanges>): Promise<Upload> {
+        checkStagedDirectories(dir.rel);
         // Pool acceptance must never rest on md5 and size alone
         for (const listed of changes.files) {
             if (listed.sha256 === undefined) {
@@ -141,14 +148,19 @@ class DebImporter {
         }
         const scope = changesArchitectures(changes.stanza, changesName);
         const poolDir = poolDirectory(target.component, expected.source);
-        const poolPathOf = (name: string): string => path.join("deb", target.distro, poolDir, name);
+        const poolPathOf = (name: string): string => {
+            const poolPath = path.join("deb", target.distro, poolDir, name);
+            // The catalog commits before the move, which must not fail on the name then
+            checkPosixPath(poolPath);
+            return poolPath;
+        };
 
         const uploaded = new Map<string, Uploaded>();
         for (const listed of changes.files) {
             uploaded.set(listed.name, await this.locate(dir, listed, poolPathOf(listed.name)));
         }
 
-        const changesFile = osPath.join(dir.dir, changesName);
+        const changesFile = toOsPath(dir.dir, changesName);
         const trackedFiles: PoolFile[] = [{
             path: poolPathOf(changesName), ...await this.staged.digests(`${ dir.rel }/${ changesName }`, changesFile, await fs.stat(changesFile)),
         }];
@@ -156,7 +168,7 @@ class DebImporter {
         let dsc: Uploaded | undefined;
         const others: Uploaded[] = [];
         for (const listed of uploaded.values()) {
-            const extension = osPath.extname(listed.name);
+            const extension = path.extname(listed.name);
             const kind = BINARY_KINDS[extension];
             if (kind !== undefined) {
                 binaries.push(await readBinary(listed, kind, expected, poolDir));
@@ -194,8 +206,9 @@ class DebImporter {
 
     /** A listed file from the staging directory, or from the pool when it is not there (an interrupted earlier move) */
     private async locate(dir: StagingDir<Target>, listed: ChangesFile, poolPath: string): Promise<Uploaded> {
-        const location = osPath.join(dir.dir, listed.name);
-        const stat = await statQuietly(location);
+        const location = toOsPath(dir.dir, listed.name);
+        // Only the exact name: on Windows stat also finds the file under another case
+        const stat = dir.files.includes(listed.name) ? await statQuietly(location) : undefined;
         if (stat === undefined) {
             const file = await this.fromPool(poolPath, listed.name, listed, "in the pool does not match the .changes");
             // A row left by a crash between the move and its deletion

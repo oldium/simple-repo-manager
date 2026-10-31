@@ -6,11 +6,20 @@ import createApp from "./api/app.ts";
 import { closeBackends } from "./backend/index.ts";
 import { formatAddressPort } from "./lib/address.ts";
 import logger from "./lib/logger.ts";
+import { checkWindowsVersion } from "./lib/windows-version.ts";
+import os from "node:os";
 import osPath from "path";
+
+checkWindowsVersion(os.release(), process.platform);
 
 const { promise: terminationPromise, resolve: terminationResolve } = Promise.withResolvers<NodeJS.Signals>();
 process.on("SIGINT", terminationResolve);
 process.on("SIGTERM", terminationResolve);
+if (process.platform === "win32") {
+    // The console window closing and Ctrl+Break; elsewhere SIGHUP stays free for a reload
+    process.on("SIGHUP", terminationResolve);
+    process.on("SIGBREAK", terminationResolve);
+}
 
 const httpServer = createServer(config.http, await createApp(config.app, config.environment));
 

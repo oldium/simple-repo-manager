@@ -1,7 +1,7 @@
 // noinspection DuplicatedCode,SpellCheckingInspection
 
 import { jest } from '@jest/globals';
-import path from 'path';
+import osPath from 'path';
 import fs from 'fs';
 import { uploadFileByPost, uploadFileByPut, uploadFileByPutRawIncomplete, waitForAssertion, withLocalTmpDir } from "../utils.ts";
 import createTestApp from "../testapp.ts";
@@ -20,10 +20,10 @@ describe('Test Debian file upload', () => {
 
         expect(res.status).toBe(201);
 
-        const expectedFilePath = path.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main', 'test.deb');
+        const expectedFilePath = osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main', 'test.deb');
         expect(expectedFilePath).toPathExist();
         expect(fs.readFileSync(expectedFilePath)).toEqual(contentFile);
-        expect(fs.readdirSync(path.join('incoming', 'tmp'))).toHaveLength(0);
+        expect(fs.readdirSync(osPath.join('incoming', 'tmp'))).toHaveLength(0);
     }));
 
     test('Check that POST with custom field name succeeds', withLocalTmpDir(async () => {
@@ -42,10 +42,10 @@ describe('Test Debian file upload', () => {
 
         expect(res.status).toBe(201);
 
-        const expectedFilePath = path.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main', 'test.deb');
+        const expectedFilePath = osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main', 'test.deb');
         expect(expectedFilePath).toPathExist();
         expect(fs.readFileSync(expectedFilePath)).toEqual(contentFile);
-        expect(fs.readdirSync(path.join('incoming', 'tmp'))).toHaveLength(0);
+        expect(fs.readdirSync(osPath.join('incoming', 'tmp'))).toHaveLength(0);
     }));
 
     test('Check that POST with wrong field name fails', withLocalTmpDir(async () => {
@@ -61,7 +61,7 @@ describe('Test Debian file upload', () => {
 
         expect(res.status).toBe(400);
 
-        expect(fs.readdirSync(path.join('incoming', 'tmp'))).toHaveLength(0);
+        expect(fs.readdirSync(osPath.join('incoming', 'tmp'))).toHaveLength(0);
     }));
 
     test('Check that POST to subcomponent succeeds', withLocalTmpDir(async () => {
@@ -77,11 +77,11 @@ describe('Test Debian file upload', () => {
 
         expect(res.status).toBe(201);
 
-        const expectedFilePath = path.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'update', 'main',
+        const expectedFilePath = osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'update', 'main',
             'test.deb');
         expect(expectedFilePath).toPathExist();
         expect(fs.readFileSync(expectedFilePath)).toEqual(contentFile);
-        expect(fs.readdirSync(path.join('incoming', 'tmp'))).toHaveLength(0);
+        expect(fs.readdirSync(osPath.join('incoming', 'tmp'))).toHaveLength(0);
     }));
 
     test('Check that POST with multiple Debian files succeeds', withLocalTmpDir(async () => {
@@ -102,11 +102,11 @@ describe('Test Debian file upload', () => {
         expect(res.status).toBe(201);
 
         files.forEach(file => {
-            const expectedFilePath = path.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main', file.name);
+            const expectedFilePath = osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main', file.name);
             expect(expectedFilePath).toPathExist();
             expect(fs.readFileSync(expectedFilePath)).toEqual(file.content);
         });
-        expect(fs.readdirSync(path.join('incoming', 'tmp'))).toHaveLength(0);
+        expect(fs.readdirSync(osPath.join('incoming', 'tmp'))).toHaveLength(0);
     }));
 
     test('Check that POST with valid Debian-related file extensions succeeds', withLocalTmpDir(async () => {
@@ -126,11 +126,11 @@ describe('Test Debian file upload', () => {
                 [{ name: filename, content: testContent }]);
             expect(res.status).toBe(201);
 
-            const expectedFilePath = path.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main', filename);
+            const expectedFilePath = osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main', filename);
             expect(expectedFilePath).toPathExist();
             expect(fs.readFileSync(expectedFilePath)).toEqual(testContent);
         }
-        expect(fs.readdirSync(path.join('incoming', 'tmp'))).toHaveLength(0);
+        expect(fs.readdirSync(osPath.join('incoming', 'tmp'))).toHaveLength(0);
     }));
 
     test('Check that POST with invalid Debian-related file extension fails', withLocalTmpDir(async () => {
@@ -150,10 +150,10 @@ describe('Test Debian file upload', () => {
                 [{ name: filename, content: testContent }]);
             expect(res.status).toBe(400);
 
-            const expectedFilePath = path.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main', filename);
+            const expectedFilePath = osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main', filename);
             expect(expectedFilePath).not.toPathExist();
         }
-        expect(fs.readdirSync(path.join('incoming', 'tmp'))).toHaveLength(0);
+        expect(fs.readdirSync(osPath.join('incoming', 'tmp'))).toHaveLength(0);
     }));
 
     test('Check that POST with invalid file name fails', withLocalTmpDir(async () => {
@@ -180,11 +180,11 @@ describe('Test Debian file upload', () => {
                 [{ name: invalidFileName, content: testContent }]);
             expect(res.status).toBe(400);
 
-            const expectedFilePath = path.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main',
+            const expectedFilePath = osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main',
                 invalidFileName);
             expect(expectedFilePath).not.toPathExist();
         }
-        expect(fs.readdirSync(path.join('incoming', 'tmp'))).toHaveLength(0);
+        expect(fs.readdirSync(osPath.join('incoming', 'tmp'))).toHaveLength(0);
     }));
 
     test('Check that POST with invalid component or subcomponent name fails', withLocalTmpDir(async () => {
@@ -204,10 +204,10 @@ describe('Test Debian file upload', () => {
             const res = await uploadFileByPost(app, invalidPath, [{ name: 'test.deb', content: testContent }]);
             expect(res.status).toBe(400);
 
-            const expectedFilePath = path.join('incoming', 'staging', ...invalidPath.split('/').slice(4), 'test.deb');
+            const expectedFilePath = osPath.join('incoming', 'staging', ...invalidPath.split('/').slice(4), 'test.deb');
             expect(expectedFilePath).not.toPathExist();
         }
-        expect(fs.readdirSync(path.join('incoming', 'tmp'))).toHaveLength(0);
+        expect(fs.readdirSync(osPath.join('incoming', 'tmp'))).toHaveLength(0);
     }));
 
     test('Check that POST with too big file fails', withLocalTmpDir(async () => {
@@ -227,9 +227,9 @@ describe('Test Debian file upload', () => {
             [{ name: filename, content: testContent }]);
         expect(res.status).toBe(413);
 
-        const expectedFilePath = path.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main', filename);
+        const expectedFilePath = osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main', filename);
         expect(expectedFilePath).not.toPathExist();
-        expect(fs.readdirSync(path.join('incoming', 'tmp'))).toHaveLength(0);
+        expect(fs.readdirSync(osPath.join('incoming', 'tmp'))).toHaveLength(0);
     }));
 
     test('Check that PUT upload succeeds', withLocalTmpDir(async () => {
@@ -245,11 +245,11 @@ describe('Test Debian file upload', () => {
         const res = await uploadFileByPut(app, testFilePath, testContent);
         expect(res.status).toBe(201);
 
-        const expectedFilePath = path.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main',
+        const expectedFilePath = osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main',
             'clevis_21-1+tpm1u8+deb12.dsc');
         expect(expectedFilePath).toPathExist();
         expect(fs.readFileSync(expectedFilePath)).toEqual(testContent);
-        expect(fs.readdirSync(path.join('incoming', 'tmp'))).toHaveLength(0);
+        expect(fs.readdirSync(osPath.join('incoming', 'tmp'))).toHaveLength(0);
     }));
 
     test('Check that PUT upload to subcomponent succeeds', withLocalTmpDir(async () => {
@@ -265,11 +265,11 @@ describe('Test Debian file upload', () => {
         const res = await uploadFileByPut(app, testFilePath, testContent);
         expect(res.status).toBe(201);
 
-        const expectedFilePath = path.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'update', 'main',
+        const expectedFilePath = osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'update', 'main',
             'test.put.deb');
         expect(expectedFilePath).toPathExist();
         expect(fs.readFileSync(expectedFilePath)).toEqual(testContent);
-        expect(fs.readdirSync(path.join('incoming', 'tmp'))).toHaveLength(0);
+        expect(fs.readdirSync(osPath.join('incoming', 'tmp'))).toHaveLength(0);
     }));
 
     test('Check that PUT upload with invalid extension fails', withLocalTmpDir(async () => {
@@ -288,11 +288,11 @@ describe('Test Debian file upload', () => {
             const res = await uploadFileByPut(app, invalidFilePath, testContent);
             expect(res.status).toBe(400);
 
-            const expectedFilePath = path.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main',
+            const expectedFilePath = osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main',
                 `invalidfile.${ ext }`);
             expect(expectedFilePath).not.toPathExist();
         }
-        expect(fs.readdirSync(path.join('incoming', 'tmp'))).toHaveLength(0);
+        expect(fs.readdirSync(osPath.join('incoming', 'tmp'))).toHaveLength(0);
     }));
 
     test('Check that PUT with invalid file name fails', withLocalTmpDir(async () => {
@@ -318,11 +318,11 @@ describe('Test Debian file upload', () => {
             const res = await uploadFileByPut(app, invalidFilePath, testContent);
             expect(res.status).toBe(400);
 
-            const expectedFilePath = path.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main',
+            const expectedFilePath = osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main',
                 invalidFileName);
             expect(expectedFilePath).not.toPathExist();
         }
-        expect(fs.readdirSync(path.join('incoming', 'tmp'))).toHaveLength(0);
+        expect(fs.readdirSync(osPath.join('incoming', 'tmp'))).toHaveLength(0);
     }));
 
     test('Check that PUT with invalid component or subcomponent name fails', withLocalTmpDir(async () => {
@@ -343,10 +343,10 @@ describe('Test Debian file upload', () => {
             const res = await uploadFileByPut(app, invalidPath, testContent);
             expect(res.status).toBe(400);
 
-            const expectedFilePath = path.join('incoming', 'staging', ...invalidPath.split('/').slice(4));
+            const expectedFilePath = osPath.join('incoming', 'staging', ...invalidPath.split('/').slice(4));
             expect(expectedFilePath).not.toPathExist();
         }
-        expect(fs.readdirSync(path.join('incoming', 'tmp'))).toHaveLength(0);
+        expect(fs.readdirSync(osPath.join('incoming', 'tmp'))).toHaveLength(0);
     }));
 
     test('Check that PUT upload with too big file fails', withLocalTmpDir(async () => {
@@ -365,9 +365,9 @@ describe('Test Debian file upload', () => {
         const res = await uploadFileByPut(app, testFilePath, testContent);
         expect(res.status).toBe(413);
 
-        const expectedFilePath = path.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main', 'largefile.deb');
+        const expectedFilePath = osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main', 'largefile.deb');
         expect(expectedFilePath).not.toPathExist();
-        expect(fs.readdirSync(path.join('incoming', 'tmp'))).toHaveLength(0);
+        expect(fs.readdirSync(osPath.join('incoming', 'tmp'))).toHaveLength(0);
     }));
 
     test('Check that PUT upload with file write error cleans-up correctly', withLocalTmpDir(async () => {
@@ -378,8 +378,8 @@ describe('Test Debian file upload', () => {
         });
 
         // Mocking the tempName function to simulate an invalid filename error
-        const originalJoin = path.join;
-        jest.spyOn(path, 'join').mockImplementation((...args: string[]) => {
+        const originalJoin = osPath.join;
+        jest.spyOn(osPath, 'join').mockImplementation((...args: string[]) => {
             if (args[0] === "incoming" && args[1] === "tmp") {
                 return originalJoin(...args.splice(0, args.length - 1), "non-existing-dir", args[args.length - 1]);
             } else {
@@ -396,17 +396,17 @@ describe('Test Debian file upload', () => {
 
             jest.restoreAllMocks();
 
-            const expectedTmpFilePath = path.join('incoming', 'tmp', 'failingfile.deb');
-            const expectedFinalFilePath = path.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main',
+            const expectedTmpFilePath = osPath.join('incoming', 'tmp', 'failingfile.deb');
+            const expectedFinalFilePath = osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main',
                 'failingfile.deb');
             expect(expectedTmpFilePath).not.toPathExist();
             expect(expectedFinalFilePath).not.toPathExist();
         } finally {
-            // Restore the original path.join behavior
+            // Restore the original osPath.join behavior
             jest.restoreAllMocks();
         }
 
-        expect(fs.readdirSync(path.join('incoming', 'tmp'))).toHaveLength(0);
+        expect(fs.readdirSync(osPath.join('incoming', 'tmp'))).toHaveLength(0);
     }));
 
     test('Check that aborted PUT upload of chunked file cleans-up correctly', withLocalTmpDir(async () => {
@@ -432,9 +432,9 @@ describe('Test Debian file upload', () => {
         await uploadFileByPutRawIncomplete(app, requestHeaders, buffer);
 
         await waitForAssertion(() => {
-            const expectedFilePath = path.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main', 'rawput.deb');
+            const expectedFilePath = osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main', 'rawput.deb');
             expect(expectedFilePath).not.toPathExist();
-            expect(fs.readdirSync(path.join('incoming', 'tmp'))).toHaveLength(0);
+            expect(fs.readdirSync(osPath.join('incoming', 'tmp'))).toHaveLength(0);
         });
     }));
 
@@ -461,9 +461,9 @@ describe('Test Debian file upload', () => {
         await uploadFileByPutRawIncomplete(app, requestHeaders, buffer);
 
         await waitForAssertion(() => {
-            const expectedFilePath = path.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main', 'rawput.deb');
+            const expectedFilePath = osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main', 'rawput.deb');
             expect(expectedFilePath).not.toPathExist();
-            expect(fs.readdirSync(path.join('incoming', 'tmp'))).toHaveLength(0);
+            expect(fs.readdirSync(osPath.join('incoming', 'tmp'))).toHaveLength(0);
         });
     }));
 
@@ -493,9 +493,9 @@ describe('Test Debian file upload', () => {
         await uploadFileByPutRawIncomplete(app, requestHeaders, buffer);
 
         await waitForAssertion(() => {
-            const expectedFilePath = path.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main', 'largefile.deb');
+            const expectedFilePath = osPath.join('incoming', 'staging', 'deb', 'debian', 'bookworm', 'main', 'largefile.deb');
             expect(expectedFilePath).not.toPathExist();
-            expect(fs.readdirSync(path.join('incoming', 'tmp'))).toHaveLength(0);
+            expect(fs.readdirSync(osPath.join('incoming', 'tmp'))).toHaveLength(0);
         });
     }));
 

@@ -2,6 +2,8 @@ import osPath from "path";
 import { renameOverOpenFile } from "./win-rename.ts";
 import fs from "fs/promises";
 import type { Dirent, Stats } from "fs";
+import logger from "../lib/logger.ts";
+import { segmentProblem, toPosixPath } from "../lib/safe-path.ts";
 
 function tempName(file: string): string {
     return `${ file }.tmp-${ process.pid }`;
@@ -20,6 +22,11 @@ export function isTempName(file: string): boolean {
         }
     }
     return true;
+}
+
+/** The name the temp file stands for; what the limit on names keeps room for does not count */
+export function withoutTempSuffix(name: string): string {
+    return name.slice(0, name.lastIndexOf(".tmp-"));
 }
 
 export function errorCode(err: unknown): string | undefined {
@@ -146,31 +153,41 @@ export async function statQuietly(file: string): Promise<Stats | undefined> {
     }
 }
 
+/** Whether a directory entry can be part of the repository; no URL or repo-relative path could reach any other */
+export function isUsableEntry(dir: string, name: string): boolean {
+    const problem = segmentProblem(name);
+    if (problem !== undefined) {
+        logger.warn(`Ignoring an entry of ${ dir }: ${ problem }`);
+    }
+    return problem === undefined;
+}
+
 /** Every file below root as a relative posix path, in name order; directories for which skip(relative path) holds are not entered; none when root is missing */
 export async function listFiles(root: string, skip: (rel: string) => boolean = () => false): Promise<string[]> {
     const files: string[] = [];
-    const walk = async (segments: string[]): Promise<void> => {
+    const walk = async (dir: string): Promise<void> => {
         let entries: Dirent[];
         try {
-            entries = await fs.readdir(osPath.join(root, ...segments), { withFileTypes: true });
+            entries = await fs.readdir(dir, { withFileTypes: true });
         } catch (err) {
             if (errorCode(err) !== "ENOENT") {
                 throw err;
             }
             return;
         }
-        for (const entry of entries.sort(byName)) {
-            const rel = [...segments, entry.name].join("/");
+        for (const entry of entries.sort(byName).filter(e => isUsableEntry(dir, e.name))) {
+            const file = osPath.join(dir, entry.name);
+            const rel = toPosixPath(root, file);
             if (entry.isDirectory()) {
                 if (!skip(rel)) {
-                    await walk([...segments, entry.name]);
+                    await walk(file);
                 }
             } else if (entry.isFile() || entry.isSymbolicLink()) {
                 files.push(rel);
             }
         }
     };
-    await walk([]);
+    await walk(root);
     return files;
 }
 
@@ -199,7 +216,8 @@ export async function moveFile(from: string, to: string): Promise<void> {
         if (errorCode(err) !== "EXDEV") {
             throw err;
         }
-        const temp = tempName(to);
+        // Not by process: a crash leaves the source, so the import at the next start finds this file again and replaces it
+        const temp = `${ to }.tmp-0`;
         try {
             await removeQuietly(temp);
             await fs.copyFile(from, temp);

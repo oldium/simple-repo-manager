@@ -2,6 +2,7 @@ import { debWithControl, withLocalTmpDir } from "../utils.ts";
 import { jest } from "@jest/globals";
 import crypto from "crypto";
 import osPath from "path";
+import path from "path/posix";
 import { fileURLToPath } from "url";
 import fs from "fs/promises";
 import zlib from "zlib";
@@ -18,14 +19,17 @@ import { renderPackagesStanza } from "../../server/backend/deb/stanzas.ts";
 import type { SectionPriority } from "../../server/backend/deb/stanzas.ts";
 import { GC_GRACE_SECONDS, runGc } from "../../server/backend/gc.ts";
 import { hashFile } from "../../server/backend/hash.ts";
-import { rebuildFromDisk } from "../../server/backend/rebuild/index.ts";
+import { rebuildFromDisk, removeLeftoverTemps } from "../../server/backend/rebuild/index.ts";
 import { RpmCatalog } from "../../server/backend/rpm/catalog.ts";
 import { importRpm } from "../../server/backend/rpm/importer.ts";
 import { publishRpm } from "../../server/backend/rpm/publisher.ts";
+import { NOT_IN_LOWER_CASE, resetFileNaming, setFileNaming } from "../../server/lib/file-naming.ts";
 import logger from "../../server/lib/logger.ts";
 
 const FIXTURES = fileURLToPath(new URL("../fixtures/", import.meta.url));
 const GOLDEN = osPath.join(FIXTURES, "golden");
+const windowsTest = process.platform === "win32" ? test : test.skip;
+
 const NOW = 1700000000;
 
 type Bundle = { dir: string; pool: string; target: string };
@@ -51,6 +55,8 @@ const ARM64_DEB = "srm-hello_1.0-1_arm64.deb";
 const DOC_DEB = "srm-hello-doc_1.0-1_all.deb";
 const STALE_DEB = "srm-hello_0.9-1_amd64.deb";
 const KINDS = ["primary", "filelists", "other"] as const;
+const CASE_INSENSITIVE = { caseSensitive: false, shortNames: false };
+const CASE_SENSITIVE = { caseSensitive: true, shortNames: false };
 
 /** A context without a database: the rebuild owns the database file */
 type Ctx = Omit<BackendContext, "db"> & { clock: { now: number } };
@@ -66,6 +72,7 @@ beforeAll(async () => {
 
 afterEach(() => {
     jest.restoreAllMocks();
+    resetFileNaming();
 });
 
 function osJoin(root: string, ...posix: string[]): string {
@@ -682,6 +689,23 @@ describe("Tests for rebuildFromDisk", () => {
         expect(warn).toHaveBeenCalledWith(`${ SRM_HELLO_POOL }/${ changes }: ${ changes } holds ${ size } bytes, over the ${ size - 1 } limit; treated as a file no upload references`);
     }));
 
+    test("A directory no repo-relative path can reach aborts the rebuild and changes nothing", withTree(async ctx => {
+        await writeRpmTree(ctx);
+        // What each system can really hold; Node creates the Windows one literally
+        const name = process.platform === "win32" ? "aux" : "a\\b";
+        const unreachable = osJoin(ctx.paths.repoDir, "rpm", "fedora", "42", "Packages", name);
+        await fs.mkdir(unreachable);
+        await fs.copyFile(repoFile(ctx, `${ RPM_RELEASE }/Packages/s/${ BIN_RPM }`), osJoin(unreachable, BIN_RPM));
+        const warn = jest.spyOn(logger, "warn").mockReturnValue(logger);
+
+        const result = await rebuildFromDisk(ctx);
+
+        expect(warn).toHaveBeenCalled();
+        expect(result).toEqual({ ok: false, problems: [expect.stringContaining(JSON.stringify(name))] });
+        expect(await exists(repoFile(ctx, `${ RPM_RELEASE }/Packages/s/${ BIN_RPM }`))).toBe(true);
+        expect(await exists(repoFile(ctx, `${ RPM_POOL }/${ BIN_RPM }`))).toBe(false);
+    }));
+
     test("Successful rebuild moves RPMs to Packages/<c>/<source>/ and publishes", withTree(async ctx => {
         const leftovers = await writeRpmTree(ctx);
 
@@ -712,6 +736,18 @@ describe("Tests for rebuildFromDisk", () => {
             }
             expect(rows(db, SUPERSEDED)).toEqual(leftovers.sort().map(path => ({ path, superseded_at: NOW })));
         });
+    }));
+
+    test("A letter directory respelled because case is set not to count still gives up its files", withTree(async ctx => {
+        setFileNaming(CASE_INSENSITIVE);
+        const letter = repoFile(ctx, `${ RPM_RELEASE }/Packages/S`);
+        await fs.mkdir(letter, { recursive: true });
+        await fs.copyFile(osPath.join(RPMS, BIN_RPM), osJoin(letter, BIN_RPM));
+
+        expect(await rebuildFromDisk(ctx)).toEqual({ ok: true });
+
+        expect(await fs.readdir(repoFile(ctx, `${ RPM_RELEASE }/Packages`))).toEqual(["s"]);
+        expect(await exists(repoFile(ctx, `${ RPM_POOL }/${ BIN_RPM }`))).toBe(true);
     }));
 
     test("An upper-case letter directory of the old layout moves to lower case and leaves nothing behind", withTree(async ctx => {
@@ -767,6 +803,363 @@ describe("Tests for rebuildFromDisk", () => {
         }
     }));
 
+    test("A rebuild leaves an upper-case letter directory in lower case", withTree(async ctx => {
+        const letter = repoFile(ctx, `${ RPM_RELEASE }/Packages/S`);
+        await fs.mkdir(letter, { recursive: true });
+        await fs.copyFile(osPath.join(RPMS, BIN_RPM), osJoin(letter, BIN_RPM));
+
+        expect(await rebuildFromDisk(ctx)).toEqual({ ok: true });
+
+        expect(await fs.readdir(repoFile(ctx, `${ RPM_RELEASE }/Packages`))).toEqual(["s"]);
+    }));
+
+    test("Where case does not count, a directory no move leaves from takes the spelling of the targets below it", withTree(async ctx => {
+        setFileNaming(CASE_INSENSITIVE);
+        await fs.mkdir(repoFile(ctx, `${ RPM_RELEASE }/Other`), { recursive: true });
+        await fs.copyFile(osPath.join(RPMS, BIN_RPM), repoFile(ctx, `${ RPM_RELEASE }/Other/${ BIN_RPM }`));
+        await fs.mkdir(osJoin(ctx.paths.repoDir, RPM_RELEASE, "Packages", "S"), { recursive: true });
+        await fs.writeFile(osJoin(ctx.paths.repoDir, RPM_RELEASE, "Packages", "S", "notes.txt"), "kept");
+
+        expect(await rebuildFromDisk(ctx)).toEqual({ ok: true });
+
+        expect(await fs.readdir(repoFile(ctx, `${ RPM_RELEASE }/Packages`))).toEqual(["s"]);
+    }));
+
+    test("Where case counts, a directory keeps its spelling", withTree(async ctx => {
+        setFileNaming(CASE_SENSITIVE);
+        await fs.mkdir(repoFile(ctx, `${ RPM_RELEASE }/Other`), { recursive: true });
+        await fs.copyFile(osPath.join(RPMS, BIN_RPM), repoFile(ctx, `${ RPM_RELEASE }/Other/${ BIN_RPM }`));
+        await fs.mkdir(osJoin(ctx.paths.repoDir, RPM_RELEASE, "Packages", "S"), { recursive: true });
+        await fs.writeFile(osJoin(ctx.paths.repoDir, RPM_RELEASE, "Packages", "S", "notes.txt"), "kept");
+
+        expect(await rebuildFromDisk(ctx)).toEqual({ ok: true });
+
+        expect(await fs.readdir(repoFile(ctx, `${ RPM_RELEASE }/Packages`))).toContain("S");
+    }));
+
+    windowsTest("A junction keeps its target as it is named while the letter directory below it is respelled", withTree(async ctx => {
+        const target = osPath.resolve("RPM");
+        const letter = osJoin(target, "fedora", "42", "Packages", "S");
+        await fs.mkdir(letter, { recursive: true });
+        await fs.copyFile(osPath.join(RPMS, BIN_RPM), osJoin(letter, BIN_RPM));
+        await fs.mkdir(ctx.paths.repoDir, { recursive: true });
+        await fs.symlink(target, repoFile(ctx, "rpm"), "junction");
+
+        expect(await rebuildFromDisk(ctx)).toEqual({ ok: true });
+
+        expect(await fs.readdir(".")).toContain("RPM");
+        expect(await fs.readdir(ctx.paths.repoDir)).toContain("rpm");
+        expect(await fs.readdir(osJoin(target, "fedora", "42", "Packages"))).toEqual(["s"]);
+    }));
+
+    test("Where case does not count, two RPMs whose targets differ only in case abort the rebuild and overwrite nothing", withTree(async ctx => {
+        setFileNaming(CASE_INSENSITIVE);
+        const [first, second] = [`${ RPM_RELEASE }/a/${ BIN_RPM }`, `${ RPM_RELEASE }/b/SRM-hello-1.0-1.fc42.x86_64.rpm`];
+        await fs.mkdir(repoFile(ctx, `${ RPM_RELEASE }/a`), { recursive: true });
+        await fs.mkdir(repoFile(ctx, `${ RPM_RELEASE }/b`), { recursive: true });
+        await fs.copyFile(osPath.join(RPMS, BIN_RPM), repoFile(ctx, first));
+        await fs.copyFile(osPath.join(RPMS, BIN_RPM), repoFile(ctx, second));
+
+        expect(await rebuildFromDisk(ctx)).toEqual({
+            ok: false,
+            problems: [`${ RPM_POOL }/SRM-hello-1.0-1.fc42.x86_64.rpm differs only in case from ${ RPM_POOL }/${ BIN_RPM }, which this file system cannot keep apart`],
+        });
+
+        expect(await exists(repoFile(ctx, first))).toBe(true);
+        expect(await exists(repoFile(ctx, second))).toBe(true);
+    }));
+
+    test.each([
+        "rpm/Fedora", "rpm/fedora/Rawhide", "deb/Debian", "deb/debian/dists/Trixie", "deb/debian/dists/trixie/Main",
+        "deb/debian/dists/bookworm-security/updates/Main", "deb/debian/pool/Main", "deb/debian/pool/updates/Main",
+        `rpm/f${ String.fromCodePoint(0xE9) }dora`, `rpm/${ String.fromCodePoint(0x212A) }ali`, `deb/debian/dists/trixie/m${ String.fromCodePoint(0xE1) }in`,
+    ])("%s aborts the rebuild where case does not count and stays, where case counts it passes", dir => withTree(async ctx => {
+        await fs.mkdir(repoFile(ctx, dir), { recursive: true });
+        const parent = repoFile(ctx, path.dirname(dir));
+        const name = path.basename(dir);
+
+        setFileNaming(CASE_INSENSITIVE);
+        expect(await rebuildFromDisk(ctx)).toEqual({ ok: false, problems: [`${ dir }: ${ NOT_IN_LOWER_CASE }`] });
+        expect(await fs.readdir(parent)).toEqual([name]);
+        expect(await stateFiles(ctx, "repo.db")).toEqual([]);
+
+        setFileNaming(CASE_SENSITIVE);
+        expect(await rebuildFromDisk(ctx)).toEqual({ ok: true });
+        expect(await fs.readdir(parent)).toEqual([name]);
+    })());
+
+    test("An rpm tree in rpm/Fedora/42 aborts the rebuild where case does not count, where case counts it is rebuilt in that spelling", withTree(async ctx => {
+        await writeRepoFile(ctx, `rpm/Fedora/42/Packages/s/${ BIN_RPM }`, await fs.readFile(osPath.join(RPMS, BIN_RPM)));
+        const before = await treeDigests(ctx.paths.repoDir);
+
+        setFileNaming(CASE_INSENSITIVE);
+        expect(await rebuildFromDisk(ctx)).toEqual({ ok: false, problems: [`rpm/Fedora: ${ NOT_IN_LOWER_CASE }`] });
+        expect(await treeDigests(ctx.paths.repoDir)).toEqual(before);
+        expect(await stateFiles(ctx, "repo.db")).toEqual([]);
+
+        setFileNaming(CASE_SENSITIVE);
+        expect(await rebuildFromDisk(ctx)).toEqual({ ok: true });
+        expect(await fs.readdir(repoFile(ctx, "rpm"))).toEqual(["Fedora"]);
+        expect(await exists(repoFile(ctx, `rpm/Fedora/42/Packages/s/srm-hello/${ BIN_RPM }`))).toBe(true);
+    }));
+
+    test.each(["release", "inrelease"])("A directory %s below a release aborts the rebuild where case does not count and stays, where case counts it passes", name => withTree(async ctx => {
+        const dir = `deb/debian/dists/trixie/${ name }`;
+        await fs.mkdir(repoFile(ctx, dir), { recursive: true });
+
+        setFileNaming(CASE_INSENSITIVE);
+        expect(await rebuildFromDisk(ctx)).toEqual({ ok: false, problems: [`${ dir }: "${ name }" cannot be a component, the release has a file of that name`] });
+        expect(await exists(repoFile(ctx, dir))).toBe(true);
+        expect(await stateFiles(ctx, "repo.db")).toEqual([]);
+
+        setFileNaming(CASE_SENSITIVE);
+        expect(await rebuildFromDisk(ctx)).toEqual({ ok: true });
+    })());
+
+    test.each(["deb/debian/pool/release", "deb/debian/dists/trixie/main/release"])("%s is no file of a release and passes where case does not count", dir => withTree(async ctx => {
+        await fs.mkdir(repoFile(ctx, dir), { recursive: true });
+
+        setFileNaming(CASE_INSENSITIVE);
+
+        expect(await rebuildFromDisk(ctx)).toEqual({ ok: true });
+    })());
+
+    test.each([["main/source", "source"], ["main/by-hash", "by-hash"], ["main/debug", "debug"], ["main/binary-amd64", "binary-amd64"], ["debian-installer", "debian-installer"]])("A Release listing the component %s aborts the rebuild, which would read it as a part of its parent", (component, name) => withTree(async ctx => {
+        await writeRepoFile(ctx, "deb/debian/dists/trixie/Release", `Origin: x\nComponents: main ${ component }\nSHA256:\n`);
+
+        expect(await rebuildFromDisk(ctx)).toEqual({ ok: false, problems: [`deb/debian/dists/trixie/Release, which lists ${ component }: "${ name }" cannot be a component, the publish writes that name below a component`] });
+        expect(await stateFiles(ctx, "repo.db")).toEqual([]);
+    }, { signed: false })());
+
+    test.each([["deb/archive-keyring.asc/dists", "deb/archive-keyring.asc", "archive-keyring.asc"], ["rpm/RPM-GPG-KEY.asc/42", "rpm/RPM-GPG-KEY.asc", "RPM-GPG-KEY.asc"]])("A directory %s aborts the rebuild, the format has a keyring of that name", (dir, named, name) => withTree(async ctx => {
+        await fs.mkdir(repoFile(ctx, dir), { recursive: true });
+
+        setFileNaming(CASE_SENSITIVE);
+
+        expect(await rebuildFromDisk(ctx)).toEqual({ ok: false, problems: [`${ named }: ${ JSON.stringify(name) } cannot be a distribution, the format has a keyring of that name`] });
+    })());
+
+    test("A directory by-hash below a release aborts the rebuild where case counts as well", withTree(async ctx => {
+        const dir = "deb/debian/dists/trixie/by-hash";
+        await fs.mkdir(repoFile(ctx, dir), { recursive: true });
+
+        setFileNaming(CASE_SENSITIVE);
+
+        expect(await rebuildFromDisk(ctx)).toEqual({ ok: false, problems: [`${ dir }: "by-hash" cannot be a component, the publish writes that name below a component`] });
+    }));
+
+    test("A Release listing the components it may list passes", withTree(async ctx => {
+        await writeRepoFile(ctx, "deb/debian/dists/trixie/Release", "Origin: x\nComponents: main updates/main\nSHA256:\n");
+
+        expect(await rebuildFromDisk(ctx)).toEqual({ ok: true });
+    }, { signed: false }));
+
+    describe("Temp files a crash left", () => {
+        const LONGEST = `${ "a".repeat(236) }.rpm`;
+        const temps = [`${ RPM_RELEASE }/Packages/s/${ BIN_RPM }.tmp-123`, `${ RPM_RELEASE }/Packages/s/${ LONGEST }.tmp-0`, "deb/debian/pool/main/s/srm-hello/srm-hello_1.0-1_amd64.deb.tmp-1234567890",
+            `deb/debian/pool/main/s/srm-hello/${ LONGEST }.tmp-0`, "deb/debian/dists/trixie/main/binary-amd64/Packages.gz.tmp-5", "deb/debian/dists/trixie/Release.tmp-5"];
+
+        test("Go with a rebuild, whatever their length and wherever they are", withTree(async ctx => {
+            await writeRpmTree(ctx);
+            for (const temp of temps) {
+                await writeRepoFile(ctx, temp, "half");
+            }
+            const warn = jest.spyOn(logger, "warn").mockReturnValue(logger);
+
+            expect(await rebuildFromDisk(ctx)).toEqual({ ok: true });
+
+            for (const temp of temps) {
+                expect(await exists(repoFile(ctx, temp))).toBe(false);
+            }
+            expect(await exists(repoFile(ctx, `${ RPM_RELEASE }/Packages/s/srm-hello/${ BIN_RPM }`))).toBe(true);
+            expect(warn.mock.calls.filter(([line]) => String(line).includes("referenced by no index"))).toEqual([]);
+        }));
+
+        test("Stay when the rebuild aborts", withTree(async ctx => {
+            for (const temp of temps) {
+                await writeRepoFile(ctx, temp, "half");
+            }
+            await writeRepoFile(ctx, `${ RPM_RELEASE }/Packages/s/bad.rpm`, "not an rpm");
+
+            expect(await rebuildFromDisk(ctx)).toMatchObject({ ok: false });
+
+            for (const temp of temps) {
+                expect(await exists(repoFile(ctx, temp))).toBe(true);
+            }
+        }));
+
+        test("Only the suffix is free of the limit, a longer name aborts", withTree(async ctx => {
+            await writeRepoFile(ctx, `deb/debian/pool/main/s/srm-hello/${ "a".repeat(241) }.tmp-0`, "x");
+
+            expect(await rebuildFromDisk(ctx)).toEqual({ ok: false, problems: [expect.stringContaining('is longer than 240 bytes')] });
+        }));
+
+        test("A directory named like a temp file is an ordinary directory", withTree(async ctx => {
+            const dir = "deb/debian/pool/main/s/srm-hello.tmp-5";
+            await fs.mkdir(repoFile(ctx, dir), { recursive: true });
+
+            expect(await rebuildFromDisk(ctx)).toEqual({ ok: true });
+
+            expect(await exists(repoFile(ctx, dir))).toBe(true);
+        }));
+
+        test("A package named like a temp file stays, it has its row", withTree(async ctx => {
+            await fs.mkdir(ctx.paths.repoStateDir);
+            const db = openDatabase(osJoin(ctx.paths.repoStateDir, "repo.db"));
+            const listed = "deb/debian/pool/main/s/srm-hello/srm-hello_1.0.tar.tmp-1";
+            const unlisted = "deb/debian/pool/main/s/srm-hello/srm-hello_1.0-1_amd64.deb.tmp-1";
+            db.prepare("INSERT INTO pool_files (path, size, md5, sha1, sha256, sha512) VALUES (?, 0, '', '', '', '')").run(listed);
+            await writeRepoFile(ctx, listed, "x");
+            await writeRepoFile(ctx, unlisted, "x");
+
+            await removeLeftoverTemps(db, [listed, unlisted].map(rel => ({ rel, file: repoFile(ctx, rel) })));
+            db.close();
+
+            expect(await exists(repoFile(ctx, listed))).toBe(true);
+            expect(await exists(repoFile(ctx, unlisted))).toBe(false);
+        }));
+    });
+
+    describe("A link to a directory", () => {
+        const linkTo = async (ctx: Ctx, rel: string): Promise<void> => {
+            const target = osJoin("elsewhere", rel);
+            await fs.mkdir(target, { recursive: true });
+            await fs.mkdir(osPath.dirname(repoFile(ctx, rel)), { recursive: true });
+            await fs.symlink(osPath.resolve(target), repoFile(ctx, rel), process.platform === "win32" ? "junction" : "dir");
+        };
+
+        test.each([
+            "rpm/fedora", "rpm/fedora/42", "rpm/fedora/42/Packages", "rpm/fedora/42/Packages/s", "deb/debian", "deb/debian/dists", "deb/debian/dists/trixie",
+            "deb/debian/dists/trixie/main", "deb/debian/dists/trixie/main/binary-amd64",
+        ])("%s aborts the rebuild, which would lose what is behind it", rel => withTree(async ctx => {
+            await linkTo(ctx, rel);
+
+            expect(await rebuildFromDisk(ctx)).toEqual({ ok: false, problems: [`${ rel }: a link to a directory, which the rebuild does not follow, so what is behind it would be lost`] });
+            expect(await stateFiles(ctx, "repo.db")).toEqual([]);
+        })());
+
+        test.each(["rpm", "deb", "deb/debian/pool", "deb/debian/pool/main", "deb/debian/pool/main/s", "rpm/fedora/42/repodata"])("%s is fine, the rebuild needs no walk there", rel => withTree(async ctx => {
+            await linkTo(ctx, rel);
+
+            expect(await rebuildFromDisk(ctx)).toEqual({ ok: true });
+        })());
+
+        test("All of them are named at once", withTree(async ctx => {
+            await linkTo(ctx, "rpm/fedora");
+            await linkTo(ctx, "deb/debian");
+
+            expect(await rebuildFromDisk(ctx)).toEqual({ ok: false, problems: expect.arrayContaining([expect.stringContaining("deb/debian: a link"), expect.stringContaining("rpm/fedora: a link")]) as string[] });
+        }));
+    });
+
+    // Windows lets only some accounts create one
+    (process.platform === "win32" ? test.skip : test)("A link to a package is read like the package", withTree(async ctx => {
+        await writeRpmTree(ctx);
+        const file = repoFile(ctx, `${ RPM_RELEASE }/Packages/s/${ BIN_RPM }`);
+        await fs.rename(file, "elsewhere-rpm");
+        await fs.symlink(osPath.resolve("elsewhere-rpm"), file);
+
+        expect(await rebuildFromDisk(ctx)).toEqual({ ok: true });
+    }));
+
+    /** Published through an import where case counts, as a volume that tells case apart leaves it; returns the database */
+    const publishInSpelling = async (ctx: Ctx, target: string, changes: (text: string) => string): Promise<Record<string, Row[]>> => {
+        setFileNaming(CASE_SENSITIVE);
+        await fs.mkdir(ctx.paths.repoStateDir);
+        return withDatabase(osJoin(ctx.paths.repoStateDir, "repo.db"), async db => {
+            const full: BackendContext = { ...ctx, db };
+            await stage(ctx, { ...TRIXIE, target });
+            const file = osJoin(ctx.paths.incomingDir, "process", target, "srm-hello_1.0-1_amd64.changes");
+            await fs.writeFile(file, changes(await fs.readFile(file, "utf8")));
+            expect((await importDebian(full)).filter(f => f.status !== "ok")).toEqual([]);
+            await publishDebian(full);
+            return snapshot(db);
+        });
+    };
+
+    test("A Debian tree in upper case aborts the rebuild where case does not count and changes nothing, where case counts it is reproduced", withTree(async ctx => {
+        const before = await publishInSpelling(ctx, "deb/Debian/Trixie/Main", text => text.replace("Distribution: trixie", "Distribution: Trixie"));
+        const published = await treeDigests(ctx.paths.repoDir);
+        const file = osJoin(ctx.paths.repoStateDir, "repo.db");
+
+        setFileNaming(CASE_INSENSITIVE);
+        expect(await rebuildFromDisk(ctx)).toEqual({ ok: false, problems: [
+            `deb/Debian: ${ NOT_IN_LOWER_CASE }`,
+            `deb/Debian/pool/Main: ${ NOT_IN_LOWER_CASE }`,
+            `deb/Debian/dists/Trixie: ${ NOT_IN_LOWER_CASE }`,
+            `deb/Debian/dists/Trixie/Main: ${ NOT_IN_LOWER_CASE }`,
+            `deb/Debian/pool/Main/s/srm-hello, listed in deb/Debian/dists/Trixie/Main/binary-amd64/Packages.gz: ${ NOT_IN_LOWER_CASE }`,
+        ] });
+        expect(await treeDigests(ctx.paths.repoDir)).toEqual(published);
+        expect(await withDatabase(file, snapshot)).toEqual(before);
+
+        setFileNaming(CASE_SENSITIVE);
+        expect(await rebuildFromDisk(ctx)).toEqual({ ok: true });
+        expect(await withDatabase(file, snapshot)).toEqual(before);
+        expect(await treeDigests(ctx.paths.repoDir)).toEqual(published);
+    }, { signed: false }));
+
+    test("An index naming a pool directory with upper case aborts the rebuild also when the directory on disk is renamed to lower case", withTree(async ctx => {
+        await publishInSpelling(ctx, "deb/debian/trixie/Main", text => text);
+        await fs.rename(repoFile(ctx, "deb/debian/pool/Main"), repoFile(ctx, "deb/debian/pool/main"));
+        await fs.rename(repoFile(ctx, "deb/debian/dists/trixie/Main"), repoFile(ctx, "deb/debian/dists/trixie/main"));
+
+        setFileNaming(CASE_INSENSITIVE);
+
+        // Off a case-insensitive volume the files listed under pool/Main are also missing
+        expect(await rebuildFromDisk(ctx)).toEqual({ ok: false, problems: expect.arrayContaining([
+            `deb/debian/pool/Main/s/srm-hello, listed in deb/debian/dists/trixie/main/binary-amd64/Packages.gz: ${ NOT_IN_LOWER_CASE }`,
+        ]) });
+    }));
+
+    const PACKAGES = "deb/debian/dists/trixie/main/binary-amd64/Packages.gz";
+    const LISTED = `Filename: pool/main/s/srm-hello/${ AMD64_DEB }\n`;
+    const LISTED_IN_OTHER_CASE = `Filename: pool/main/s/srm-hello/SRM${ AMD64_DEB.slice(3) }\n`;
+
+    /** Packages.gz of trixie edited, as its own file: the canonical name is a link to the by-hash one */
+    async function editPackages(ctx: Ctx, edit: (text: string) => string): Promise<void> {
+        const text = await readIndex(ctx, PACKAGES);
+        expect(text).toContain(LISTED);
+        await fs.rm(repoFile(ctx, PACKAGES));
+        await writeRepoFile(ctx, PACKAGES, zlib.gzipSync(edit(text)));
+    }
+
+    test("An index naming a pool file in another case than the disk aborts the rebuild where case does not count", withTree(async ctx => {
+        await publishInSpelling(ctx, TRIXIE.target, text => text);
+        await editPackages(ctx, text => text.replace(LISTED, LISTED_IN_OTHER_CASE));
+        const before = await treeDigests(ctx.paths.repoDir);
+
+        setFileNaming(CASE_INSENSITIVE);
+
+        expect(await rebuildFromDisk(ctx)).toEqual({ ok: false, problems: [`${ SRM_HELLO_POOL }/SRM${ AMD64_DEB.slice(3) }: missing, listed in ${ PACKAGES }`] });
+        expect(await treeDigests(ctx.paths.repoDir)).toEqual(before);
+    }));
+
+    test("An index naming two pool files differing only in case aborts the rebuild where case does not count", withTree(async ctx => {
+        await publishInSpelling(ctx, TRIXIE.target, text => text);
+        await editPackages(ctx, text => text.split("\n\n").flatMap(stanza => stanza.includes(LISTED) ? [stanza, stanza.replace(LISTED, LISTED_IN_OTHER_CASE)] : [stanza]).join("\n\n"));
+
+        setFileNaming(CASE_INSENSITIVE);
+
+        expect(await rebuildFromDisk(ctx)).toEqual({ ok: false, problems: expect.arrayContaining([
+            `${ SRM_HELLO_POOL }/SRM${ AMD64_DEB.slice(3) } differs only in case from ${ SRM_HELLO_POOL }/${ AMD64_DEB }, which this file system cannot keep apart`,
+        ]) });
+    }));
+
+    test("An index naming a pool directory other than ASCII aborts the rebuild where case does not count", withTree(async ctx => {
+        const component = `m${ String.fromCodePoint(0xE1) }in`;
+        await publishInSpelling(ctx, `deb/debian/trixie/${ component }`, text => text);
+
+        setFileNaming(CASE_INSENSITIVE);
+
+        expect(await rebuildFromDisk(ctx)).toEqual({ ok: false, problems: expect.arrayContaining([
+            `deb/debian/pool/${ component }/s/srm-hello, listed in deb/debian/dists/trixie/${ component }/binary-amd64/Packages.gz: ${ NOT_IN_LOWER_CASE }`,
+        ]) });
+    }));
+
+    // All of it published and rebuilt, too much for the default under a full parallel run
+    const REPRODUCTION_TIMEOUT_MS = 30_000;
+
     const expectRebuildReproducesPublishedTree = async (ctx: Ctx): Promise<void> => {
         await fs.mkdir(ctx.paths.repoStateDir);
         const file = osJoin(ctx.paths.repoStateDir, "repo.db");
@@ -793,7 +1186,16 @@ describe("Tests for rebuildFromDisk", () => {
         expect(await treeDigests(ctx.paths.repoDir)).toEqual(published);
     };
 
-    test("Rebuild from the tree this backend published reproduces the same rows", withTree(expectRebuildReproducesPublishedTree, { signed: false }));
+    test("Rebuild from the tree this backend published reproduces the same rows", withTree(expectRebuildReproducesPublishedTree, { signed: false }), REPRODUCTION_TIMEOUT_MS);
+
+    test("Fixed names with upper case pass where case does not count", withTree(async ctx => {
+        setFileNaming(CASE_INSENSITIVE);
+
+        await expectRebuildReproducesPublishedTree(ctx);
+
+        expect(await exists(repoFile(ctx, "deb/debian/dists/trixie/main/binary-amd64/by-hash/SHA256"))).toBe(true);
+        expect(await exists(repoFile(ctx, `${ RPM_RELEASE }/Packages`))).toBe(true);
+    }, { signed: false }), REPRODUCTION_TIMEOUT_MS);
 
     test("Rebuild reproduces the same rows and files where canonical names are copies, not hard links", withTree(async ctx => {
         const link = jest.spyOn(fs, "link").mockRejectedValue(Object.assign(new Error("not permitted"), { code: "EPERM" }));
@@ -801,7 +1203,7 @@ describe("Tests for rebuildFromDisk", () => {
         await expectRebuildReproducesPublishedTree(ctx);
 
         expect(link).toHaveBeenCalled();
-    }, { signed: false }));
+    }, { signed: false }), REPRODUCTION_TIMEOUT_MS);
 
     test("A release emptied by removal stays published, listed and signed, with all its cells", withTree(async ctx => {
         const cells = await writeEmptiedTree(ctx);

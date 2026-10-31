@@ -9,12 +9,14 @@ import fs from "fs/promises";
 import { Database } from "node:sqlite";
 import * as openpgp from "openpgp";
 import { openDatabase } from "../../server/backend/db.ts";
+import { DebCatalog } from "../../server/backend/deb/catalog.ts";
 import { GC_GRACE_SECONDS, GC_INTERVAL_MS, runGc } from "../../server/backend/gc.ts";
 import { hashFile } from "../../server/backend/hash.ts";
 import { getBackend, openBackend } from "../../server/backend/index.ts";
 import type { Backend } from "../../server/backend/index.ts";
 import { describeSigningKey, loadSigningKey, verifyClearsigned, verifyDetached } from "../../server/backend/pgp.ts";
 import { listFiles } from "../../server/backend/publish-fs.ts";
+import { NOT_IN_LOWER_CASE, resetFileNaming, setFileNaming } from "../../server/lib/file-naming.ts";
 import lock from "../../server/lib/lock.ts";
 import logger from "../../server/lib/logger.ts";
 
@@ -995,5 +997,223 @@ describe("Tests for the repair after a failed publish", () => {
         expect(await exists(dists("Release", "ubuntu", "noble"))).toBe(true);
         expect(await fs.readFile(dists("InRelease"), "utf8")).toBe(inRelease);
         expect(await fs.readFile(repoFile(`${ REPOMD }.asc`), "utf8")).toBe(repomdSignature);
+    }));
+});
+
+const CASE_INSENSITIVE = { caseSensitive: false, shortNames: false };
+const CASE_SENSITIVE = { caseSensitive: true, shortNames: false };
+
+function processPath(relPath: string): string {
+    return osJoin(PATHS.incomingDir, "process", relPath);
+}
+
+describe("Tests for a start where case does not count", () => {
+    afterEach(resetFileNaming);
+
+    /** Imported where case counts, as a volume that tells case apart leaves it */
+    async function importInSpelling(bundle: { dir: string; target: string }): Promise<void> {
+        setFileNaming(CASE_SENSITIVE);
+        await stage(bundle);
+        const backend = await open();
+        expect((await backend.importStaged()).ok).toBe(true);
+        await backend.close();
+    }
+
+    test.each<[string, typeof TRIXIE, string]>([
+        ["a distribution of rpm", { ...RPMS, target: "rpm/Fedora/42" }, "rpm/Fedora/42"],
+        ["a release of rpm", { ...RPMS, target: "rpm/fedora/Rawhide" }, "rpm/fedora/Rawhide"],
+        ["a distribution of deb", { ...TRIXIE, target: "deb/Debian/trixie/main" }, "deb/Debian/trixie"],
+        ["a component of deb", { ...TRIXIE, target: "deb/debian/trixie/Main" }, "deb/debian/trixie/Main"],
+        ["a sub-component of deb", { ...TRIXIE, target: "deb/debian/trixie/updates/Main" }, "deb/debian/trixie/updates/Main"],
+        ["a distribution with a Kelvin sign", { ...RPMS, target: `rpm/${ String.fromCodePoint(0x212A) }ali/42` }, `rpm/${ String.fromCodePoint(0x212A) }ali/42`],
+        ["a distribution with a lower-case letter other than ASCII", { ...RPMS, target: `rpm/f${ String.fromCodePoint(0xE9) }dora/42` }, `rpm/f${ String.fromCodePoint(0xE9) }dora/42`],
+    ])("A database holding %s refuses the start and the message names it", (_, bundle, name) => withLocalTmpDir(async () => {
+        await importInSpelling(bundle);
+        const published = await listFiles(PATHS.repoDir);
+        const leftover = processPath("rpm/fedora/41/left.rpm");
+        await fs.mkdir(osPath.dirname(leftover), { recursive: true });
+        await fs.writeFile(leftover, "x");
+
+        setFileNaming(CASE_INSENSITIVE);
+        await expect(open()).rejects.toThrow(`The database holds ${ name }, which this file system cannot keep apart`);
+
+        expect(await listFiles(PATHS.repoDir)).toEqual(published);
+        expect(await exists(leftover)).toBe(true);
+        await fs.rm(leftover);
+
+        setFileNaming(CASE_SENSITIVE);
+        await (await open()).close();
+    })());
+
+    test("All the names with upper case are named at once", withLocalTmpDir(async () => {
+        await importInSpelling({ ...RPMS, target: "rpm/Fedora/42" });
+        await importInSpelling({ ...TRIXIE, target: "deb/debian/trixie/Main" });
+
+        setFileNaming(CASE_INSENSITIVE);
+
+        await expect(open()).rejects.toThrow("The database holds deb/debian/trixie/Main, rpm/Fedora/42, which");
+    }));
+
+    test.each([
+        [CASE_INSENSITIVE, "release", '"release" cannot be a component, the release has a file of that name'],
+        [CASE_SENSITIVE, "main/by-hash", '"by-hash" cannot be a component, the publish writes that name below a component'],
+    ])("With %j, a database holding the component %s refuses the start and the message names it", (naming, component, problem) => withLocalTmpDir(async () => {
+        await fs.mkdir(PATHS.repoStateDir);
+        const db = openDatabase(osJoin(PATHS.repoStateDir, "repo.db"));
+        new DebCatalog(db).ensureCell({ distro: "debian", release: "trixie", component, architecture: "amd64", kind: "deb" }, 0);
+        db.close();
+
+        setFileNaming(naming);
+
+        await expect(open()).rejects.toThrow(`The database holds names the server itself writes: deb/debian/trixie/${ component }: ${ problem }`);
+    })());
+
+    test("A database in lower case starts", withLocalTmpDir(async () => {
+        await importInSpelling(RPMS);
+        await importInSpelling(TRIXIE);
+
+        setFileNaming(CASE_INSENSITIVE);
+        const backend = await open();
+
+        expect(backend.listRepositories()).toEqual([{ format: "deb", distribution: "debian", release: "trixie" }, { format: "rpm", distribution: "fedora", release: "42" }]);
+    }));
+
+    test.each([
+        { ...RPMS, target: `rpm/${ String.fromCodePoint(0x212A) }ali/42` },
+        { ...TRIXIE, target: `deb/${ String.fromCodePoint(0x212A) }ali/trixie/main` },
+    ])("A folder in $target fails the import, it is not a plain k, and the next start is clean", bundle => withLocalTmpDir(async () => {
+        setFileNaming(CASE_INSENSITIVE);
+        await stage(bundle);
+        const imported = await open();
+
+        const { files } = await imported.importStaged();
+
+        expect(new Set(files.map(file => file.status))).toEqual(new Set(["failed"]));
+        expect(files[0].reason).toContain(NOT_IN_LOWER_CASE);
+        expect(imported.listRepositories()).toEqual([]);
+        await imported.close();
+
+        expect((await open()).listRepositories()).toEqual([]);
+    })());
+
+    test("An upper-case tree aborts the rebuild first, a tree renamed to lower case rebuilds and starts", withLocalTmpDir(async () => {
+        await importInSpelling({ ...RPMS, target: "rpm/Fedora/42" });
+        const error = jest.spyOn(logger, "error").mockReturnValue(logger);
+
+        try {
+            setFileNaming(CASE_INSENSITIVE);
+            await expect(open(KEY_FILE, { rebuild: true })).rejects.toThrow("Rebuild found 1 problem(s)");
+            expect(error).toHaveBeenCalledWith(expect.stringContaining("rpm/Fedora"));
+        } finally {
+            error.mockRestore();
+        }
+
+        await fs.rename(repoFile("rpm/Fedora"), repoFile("rpm/fedora"));
+        const backend = await open(KEY_FILE, { rebuild: true });
+
+        expect(backend.listRepositories()).toEqual([{ format: "rpm", distribution: "fedora", release: "42" }]);
+    }));
+
+    test("A Debian distribution renamed to lower case rebuilds and starts", withLocalTmpDir(async () => {
+        await importInSpelling({ ...TRIXIE, target: "deb/Debian/trixie/main" });
+        await fs.rename(repoFile("deb/Debian"), repoFile("deb/debian"));
+
+        setFileNaming(CASE_INSENSITIVE);
+        const backend = await open(KEY_FILE, { rebuild: true });
+
+        expect(backend.listRepositories()).toEqual([{ format: "deb", distribution: "debian", release: "trixie" }]);
+    }));
+});
+
+describe("Tests for the sweep of incoming/process", () => {
+    beforeEach(() => setFileNaming(CASE_INSENSITIVE));
+    afterEach(resetFileNaming);
+
+    test("An import removes the directories it emptied and the empty hand-placed ones, the format roots stay", withLocalTmpDir(async () => {
+        await stage({ ...RPMS, target: "rpm/Fedora/42" });
+        await fs.mkdir(processPath("deb/Debian/trixie/main"), { recursive: true });
+        const backend = await open();
+
+        expect((await backend.importStaged()).ok).toBe(true);
+
+        expect(await listFiles(osJoin(PATHS.incomingDir, "process"))).toEqual([]);
+        expect(await fs.readdir(processPath("deb"))).toEqual([]);
+        expect(await fs.readdir(processPath("rpm"))).toEqual([]);
+        expect((await fs.readdir(osJoin(PATHS.incomingDir, "process"))).sort()).toEqual(["deb", "rpm"]);
+    }));
+
+    test("A start that imports what process holds sweeps too", withLocalTmpDir(async () => {
+        const [name] = await fs.readdir(RPMS.dir);
+        await fs.mkdir(processPath("rpm/Fedora/42"), { recursive: true });
+        await fs.copyFile(osPath.join(RPMS.dir, name), processPath(`rpm/Fedora/42/${ name }`));
+
+        await open();
+
+        expect(await fs.readdir(processPath("rpm"))).toEqual([]);
+    }));
+
+    test("A directory holding what an import left stays, its empty neighbour goes", withLocalTmpDir(async () => {
+        await fs.mkdir(processPath("rpm/fedora/42"), { recursive: true });
+        await fs.writeFile(processPath("rpm/fedora/42/notes.txt"), "kept");
+        await fs.mkdir(processPath("rpm/fedora/41/Packages"), { recursive: true });
+        const backend = await open();
+        await fs.mkdir(processPath("rpm/fedora/40"), { recursive: true });
+
+        const { files } = await backend.importStaged();
+
+        expect(files.map(file => file.status)).toEqual(["skipped"]);
+        expect(await fs.readdir(processPath("rpm/fedora"))).toEqual(["42"]);
+        expect(await fs.readdir(processPath("rpm/fedora/42"))).toEqual(["notes.txt"]);
+    }));
+
+    test("A directory that cannot be removed is logged and the import stays good", withLocalTmpDir(async () => {
+        await stage(RPMS);
+        const backend = await open();
+        const rmdir = jest.spyOn(fs, "rmdir").mockRejectedValue(Object.assign(new Error("busy"), { code: "EBUSY" }));
+        const warn = jest.spyOn(logger, "warn").mockReturnValue(logger);
+        try {
+            expect((await backend.importStaged()).ok).toBe(true);
+            expect(warn).toHaveBeenCalledWith(expect.stringContaining("could not be removed"), expect.anything());
+        } finally {
+            rmdir.mockRestore();
+            warn.mockRestore();
+        }
+    }));
+
+    test("A directory that cannot be read is logged and the import stays good", withLocalTmpDir(async () => {
+        await stage(RPMS);
+        const backend = await open();
+        const root = osPath.join(PATHS.incomingDir, "process", "rpm");
+        const readdir = fs.readdir;
+        let reads = 0;
+        const refused = jest.spyOn(fs, "readdir").mockImplementation((async (dir: string, options: never) => {
+            if (dir === root && ++reads === 2) {
+                throw Object.assign(new Error("denied"), { code: "EACCES" });
+            }
+            return readdir(dir, options);
+        }) as never);
+        const warn = jest.spyOn(logger, "warn").mockReturnValue(logger);
+        try {
+            expect((await backend.importStaged()).ok).toBe(true);
+            expect(reads).toBe(2);
+            expect(warn).toHaveBeenCalledWith("Empty directories in incoming/process could not be swept", expect.anything());
+        } finally {
+            refused.mockRestore();
+            warn.mockRestore();
+        }
+    }));
+
+    test("After an emptied hand-placed directory a later upload lands in lower case", withLocalTmpDir(async () => {
+        const [first, second] = await fs.readdir(RPMS.dir);
+        await fs.mkdir(processPath("rpm/Fedora/42"), { recursive: true });
+        await fs.copyFile(osPath.join(RPMS.dir, first), processPath(`rpm/Fedora/42/${ first }`));
+        const backend = await open();
+        const to = osJoin(PATHS.incomingDir, "staging", "rpm", "fedora", "42");
+        await fs.mkdir(to, { recursive: true });
+        await fs.copyFile(osPath.join(RPMS.dir, second), osPath.join(to, second));
+
+        const { files } = await backend.importStaged();
+
+        expect(files).toEqual([{ filename: second, path: `rpm/fedora/42/${ second }`, status: "ok" }]);
     }));
 });

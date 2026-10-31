@@ -1,8 +1,8 @@
-import path from "node:path";
+import osPath from "node:path";
 import mime from "mime-types";
 
 export function mimeTypeFor(filename: string): string {
-    const basename = path.basename(filename);
+    const basename = osPath.basename(filename);
 
     if (filename.endsWith(".deb") || filename.endsWith(".ddeb") || filename.endsWith(".udeb")) {
         return "application/vnd.debian.binary-package";

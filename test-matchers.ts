@@ -1,6 +1,6 @@
 import { expect } from '@jest/globals';
 import type { MatcherFunction } from 'expect';
-import path from 'node:path';
+import osPath from 'node:path';
 import fsExtra from "fs-extra";
 import { default as jestExtendedMatchers } from 'jest-extended';
 import * as openpgp from 'openpgp';
@@ -12,7 +12,7 @@ const toMatchGlob: MatcherFunction<[pattern: string]> = function (actual: unknow
         throw new TypeError('The parameter must be a string!');
     }
 
-    const pass = path.matchesGlob(actual, pattern);
+    const pass = osPath.matchesGlob(actual, pattern);
     if (pass) {
         return {
             message: () =>

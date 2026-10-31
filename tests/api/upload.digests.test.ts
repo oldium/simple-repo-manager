@@ -81,13 +81,16 @@ describe("Checksums recorded during upload", () => {
         expect(stagedRows()).toEqual([expectedRow(rel, staged)]);
     }));
 
-    test("A long name goes through PUT and POST", withLocalTmpDir(async () => {
+    test("The longest allowed name goes through PUT and POST, a longer one answers 400", withLocalTmpDir(async () => {
         const app = await createTestApp({ paths: PATHS });
         const content = crypto.randomBytes(100);
         const name = (extra: string) => `${ "a".repeat(236) }${ extra }.rpm`;
 
         expect((await uploadFileByPut(app, `/api/v1/upload/rpm/fedora/42/${ name("") }`, content)).status).toBe(201);
         expect((await uploadFileByPost(app, "/api/v1/upload/rpm/fedora/41", [{ name: name(""), content }])).status).toBe(201);
+        expect((await uploadFileByPut(app, `/api/v1/upload/rpm/fedora/42/${ name("a") }`, content)).status).toBe(400);
+        expect((await uploadFileByPost(app, "/api/v1/upload/rpm/fedora/42", [{ name: name("a"), content }])).status).toBe(400);
+        expect((await uploadFileByPut(app, `/api/v1/upload/rpm/${ "a".repeat(241) }/42/x.rpm`, content)).status).toBe(400);
     }));
 
     test("POST records checksums for every uploaded file", withLocalTmpDir(async () => {

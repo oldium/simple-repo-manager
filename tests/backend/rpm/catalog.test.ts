@@ -6,6 +6,7 @@ import { fileURLToPath } from "url";
 import fs from "fs/promises";
 import type { Database } from "node:sqlite";
 import { openDatabase } from "../../../server/backend/db.ts";
+import { GC_GRACE_SECONDS, runGc } from "../../../server/backend/gc.ts";
 import { hashFile } from "../../../server/backend/hash.ts";
 import type { Digests } from "../../../server/backend/hash.ts";
 import type { BackendContext } from "../../../server/backend/context.ts";
@@ -14,12 +15,21 @@ import { KEY_SEP } from "../../../server/backend/deb/stanzas.ts";
 import { RpmCatalog, rpmPoolPath, rpmSortKey } from "../../../server/backend/rpm/catalog.ts";
 import type { RpmPackageInput } from "../../../server/backend/rpm/catalog.ts";
 import { importRpm } from "../../../server/backend/rpm/importer.ts";
+import { publishRpm } from "../../../server/backend/rpm/publisher.ts";
 import { RepoValidationError } from "../../../server/lib/errors.ts";
+import { NOT_IN_LOWER_CASE, resetFileNaming, setFileNaming } from "../../../server/lib/file-naming.ts";
 import logger from "../../../server/lib/logger.ts";
 import type { ImportFile } from "../../../server/lib/repo-service.ts";
 
+const notWindowsTest = process.platform === "win32" ? test.skip : test;
+
+const CASE_INSENSITIVE = { caseSensitive: false, shortNames: false };
+const CASE_SENSITIVE = { caseSensitive: true, shortNames: false };
+
+afterEach(resetFileNaming);
+
 const FIXTURES = fileURLToPath(new URL("../../fixtures/", import.meta.url));
-const RPMS = osPath.join(FIXTURES, "packages", "rpm", "fedora", "42");
+const RPMS =osPath.join(FIXTURES, "packages", "rpm", "fedora", "42");
 const GOLDEN = osPath.join(FIXTURES, "golden", "rpm", "fedora", "42", "repodata");
 const NOW = 1700000000;
 const TARGET = "rpm/fedora/42";
@@ -385,6 +395,236 @@ describe("Tests for importRpm", () => {
         expect(await pooled(ctx)).toEqual(names);
         expect(count(ctx.db, "rpm_packages")).toBe(1);
         expect(await fs.readdir(poolPath(ctx, "rpm/fedora/42/Packages/s"))).toEqual(["srm-hello"]);
+    }));
+
+    test("A source named aux fails where its pool directory cannot exist, elsewhere it is a name like any", withImporter(async ctx => {
+        await fs.mkdir(stagedPath(ctx, TARGET), { recursive: true });
+        await fs.writeFile(stagedPath(ctx, `${ TARGET }/x.rpm`), await withSourceRpm("aux-1.0.0.0.0-1.fc42.src.rpm"));
+
+        const result = await importRpm(ctx);
+
+        if (process.platform === "win32") {
+            expect(result).toEqual(failed(expected(TARGET, ["x.rpm"], "failed")));
+            expect(result[0].reason).toContain('Malformed source name: "aux" is a reserved name on Windows');
+            expect(await staged(ctx)).toEqual(["x.rpm"]);
+            expect(count(ctx.db, "rpm_packages")).toBe(0);
+            expect(count(ctx.db, "pool_files")).toBe(0);
+        } else {
+            expect(result).toEqual(expected(TARGET, ["x.rpm"], "ok"));
+            expect(await pooled(ctx, "rpm/fedora/42/Packages/a/aux")).toEqual(["x.rpm"]);
+        }
+    }));
+
+    test("A file named like a device with an extension imports on any OS", withImporter(async ctx => {
+        await fs.mkdir(stagedPath(ctx, TARGET), { recursive: true });
+        await fs.copyFile(osPath.join(RPMS, BIN), stagedPath(ctx, `${ TARGET }/con.rpm`));
+
+        expect(await importRpm(ctx)).toEqual(expected(TARGET, ["con.rpm"], "ok"));
+
+        expect(await pooled(ctx)).toEqual(["con.rpm"]);
+    }));
+
+    const BIN_IN_OTHER_CASE = "SRM-hello-1.0-1.fc42.x86_64.rpm";
+
+    /** The doc package under the name of the binary in another case, so an overwrite would show in the content */
+    async function stageInOtherCase(ctx: BackendContext): Promise<void> {
+        await fs.copyFile(osPath.join(RPMS, DOC), stagedPath(ctx, `${ TARGET }/${ BIN_IN_OTHER_CASE }`));
+    }
+
+    test("An rpm differing only in case from a pool file fails, moves nothing, adds no row and is retried", withImporter(async ctx => {
+        setFileNaming(CASE_INSENSITIVE);
+        await stage(ctx, [BIN]);
+        await importRpm(ctx);
+        await stageInOtherCase(ctx);
+        const rows = fullPoolRows(ctx.db);
+        const listed = packages(ctx.db);
+
+        const result = await importRpm(ctx);
+
+        expect(result).toEqual(failed(expected(TARGET, [BIN_IN_OTHER_CASE], "failed")));
+        expect(result[0].reason).toContain(`${ POOL }/${ BIN_IN_OTHER_CASE } differs only in case from ${ POOL }/${ BIN }`);
+        expect(await staged(ctx)).toEqual([BIN_IN_OTHER_CASE]);
+        expect(await pooled(ctx)).toEqual([BIN]);
+        expect(await hashFile(poolPath(ctx, `${ POOL }/${ BIN }`))).toEqual(await hashFile(osPath.join(RPMS, BIN)));
+        expect(fullPoolRows(ctx.db)).toEqual(rows);
+        expect(packages(ctx.db)).toEqual(listed);
+
+        expect((await importRpm(ctx)).map(f => f.status)).toEqual(["failed"]);
+        expect(await staged(ctx)).toEqual([BIN_IN_OTHER_CASE]);
+    }));
+
+    test("Two rpms in one import whose sources differ only in case share a directory and stay two sources", withImporter(async (ctx, catalog) => {
+        const second = "srm-hello-2.0-1.fc42.x86_64.rpm";
+        await stage(ctx, [BIN]);
+        await fs.writeFile(stagedPath(ctx, `${ TARGET }/${ second }`), await withSourceRpm("SRM-hello-1.0-1.fc42.src.rpm"));
+
+        expect(await importRpm(ctx)).toEqual(expected(TARGET, [BIN, second], "ok"));
+
+        expect(await staged(ctx)).toEqual([]);
+        expect(await pooled(ctx)).toEqual([BIN, second]);
+        expect(catalog.listSources({}, {}).items.map(i => i.source)).toEqual(["SRM-hello", "srm-hello"]);
+        expect(catalog.remove({ source: "SRM-hello" }, NOW, true)).toEqual({ removed: [`${ POOL }/${ second }`], deleteNow: [`${ POOL }/${ second }`] });
+        expect(catalog.listFiles({ source: "srm-hello" }, {}).items.map(i => i.path)).toEqual([`${ POOL }/${ BIN }`]);
+    }));
+
+    test("An rpm of a source differing only in case, named in another case than a pool file, fails and moves nothing", withImporter(async ctx => {
+        setFileNaming(CASE_INSENSITIVE);
+        await stage(ctx, [BIN]);
+        await importRpm(ctx);
+        await fs.writeFile(stagedPath(ctx, `${ TARGET }/${ BIN_IN_OTHER_CASE }`), await withSourceRpm("SRM-hello-1.0-1.fc42.src.rpm"));
+
+        const result = await importRpm(ctx);
+
+        expect(result).toEqual(failed(expected(TARGET, [BIN_IN_OTHER_CASE], "failed")));
+        expect(result[0].reason).toContain(`${ POOL }/${ BIN_IN_OTHER_CASE } differs only in case from ${ POOL }/${ BIN }`);
+        expect(await staged(ctx)).toEqual([BIN_IN_OTHER_CASE]);
+        expect(await pooled(ctx)).toEqual([BIN]);
+        expect(await hashFile(poolPath(ctx, `${ POOL }/${ BIN }`))).toEqual(await hashFile(osPath.join(RPMS, BIN)));
+        expect(poolRows(ctx.db).map(row => row.path)).toEqual([`${ POOL }/${ BIN }`]);
+        expect(count(ctx.db, "rpm_packages")).toBe(1);
+    }));
+
+    test("Sources with first letters differing only in case share their letter directory", withImporter(async ctx => {
+        const second = "srm-hallo-1.0-1.fc42.x86_64.rpm";
+        await stage(ctx, [BIN]);
+        await fs.writeFile(stagedPath(ctx, `${ TARGET }/${ second }`), await withSourceRpm("SRM-hallo-1.0-1.fc42.src.rpm"));
+
+        expect((await importRpm(ctx)).map(f => f.status)).toEqual(["ok", "ok"]);
+
+        expect(poolRows(ctx.db).map(row => row.path).sort()).toEqual([`rpm/fedora/42/Packages/s/srm-hallo/${ second }`, `${ POOL }/${ BIN }`]);
+    }));
+
+    test("One import reads each directory of the repository once", withImporter(async ctx => {
+        setFileNaming(CASE_INSENSITIVE);
+        await stage(ctx, [BIN, DOC]);
+        const readdir = jest.spyOn(fs, "readdir");
+        let reads: string[];
+        try {
+            expect((await importRpm(ctx)).map(f => f.status)).toEqual(["ok", "ok"]);
+            reads = readdir.mock.calls.map(([dir]) => String(dir)).filter(dir => dir === ctx.paths.repoDir || dir.startsWith(`${ ctx.paths.repoDir }${ osPath.sep }`));
+        } finally {
+            readdir.mockRestore();
+        }
+        expect(reads.length).toBeGreaterThan(0);
+        expect(reads).toEqual([...new Set(reads)]);
+    }));
+
+    test("Where case does not count, a distribution differing only in case from a published one imports into it", withImporter(async ctx => {
+        setFileNaming(CASE_INSENSITIVE);
+        await stage(ctx, [BIN]);
+        await importRpm(ctx);
+        await fs.rm(stagedPath(ctx, "rpm"), { recursive: true });
+        const target = "rpm/Fedora/42";
+        await stage(ctx, [DOC], { target });
+
+        expect(await importRpm(ctx)).toEqual(expected(target, [DOC], "ok"));
+
+        expect(await staged(ctx, target)).toEqual([]);
+        expect(await fs.readdir(poolPath(ctx, "rpm"))).toEqual(["fedora"]);
+        expect(await pooled(ctx)).toEqual([DOC, BIN].sort());
+        expect(count(ctx.db, "releases")).toBe(1);
+        expect(count(ctx.db, "pool_files")).toBe(2);
+        expect(count(ctx.db, "staged_digests")).toBe(0);
+    }));
+
+    test.each([
+        ["rpm/Fedora/42", "fedora", "42"],
+        ["rpm/fedora/Rawhide", "fedora", "rawhide"],
+    ])("Where case does not count, an rpm placed in %s lands in lower case, reported as staged", (target, distro, release) => withImporter(async ctx => {
+        setFileNaming(CASE_INSENSITIVE);
+        await stage(ctx, [BIN], { target });
+
+        expect(await importRpm(ctx)).toEqual(expected(target, [BIN], "ok"));
+
+        expect(await pooled(ctx, `rpm/${ distro }/${ release }/Packages/s/srm-hello`)).toEqual([BIN]);
+        expect(await fs.readdir(poolPath(ctx, "rpm"))).toEqual([distro]);
+        expect(await fs.readdir(poolPath(ctx, `rpm/${ distro }`))).toEqual([release]);
+        expect(packages(ctx.db)).toEqual([`${ distro } ${ release } ${ BIN } srm-hello 0 1.0 1.fc42 x86_64 srm-hello 1.0-1.fc42`]);
+    })());
+
+    test("Where case counts, an rpm placed in rpm/Fedora/42 stays in that spelling", withImporter(async ctx => {
+        setFileNaming(CASE_SENSITIVE);
+        const target = "rpm/Fedora/42";
+        await stage(ctx, [BIN], { target });
+
+        expect(await importRpm(ctx)).toEqual(expected(target, [BIN], "ok"));
+
+        expect(await fs.readdir(poolPath(ctx, "rpm"))).toEqual(["Fedora"]);
+        expect(await pooled(ctx, "rpm/Fedora/42/Packages/s/srm-hello")).toEqual([BIN]);
+        expect(packages(ctx.db)).toEqual([`Fedora 42 ${ BIN } srm-hello 0 1.0 1.fc42 x86_64 srm-hello 1.0-1.fc42`]);
+    }));
+
+    const OTHER_THAN_ASCII = `f${ String.fromCodePoint(0xE9) }dora`;
+
+    test.each([CASE_INSENSITIVE, CASE_SENSITIVE])("With %j, an rpm placed in the distribution named as the keyring fails", naming => withImporter(async ctx => {
+        setFileNaming(naming);
+        const target = "rpm/RPM-GPG-KEY.asc/42";
+        await stage(ctx, [BIN], { target });
+
+        const result = await importRpm(ctx);
+
+        expect(result).toEqual(failed(expected(target, [BIN], "failed")));
+        expect(result[0].reason).toContain(`${ target }: "RPM-GPG-KEY.asc" cannot be a distribution, the format has a keyring of that name`);
+        expect(await staged(ctx, target)).toEqual([BIN]);
+        expect(count(ctx.db, "releases")).toBe(0);
+    })());
+
+    test.each([`rpm/${ OTHER_THAN_ASCII }/42`, `rpm/fedora/${ OTHER_THAN_ASCII }`])("Where case does not count, an rpm placed in %s fails, moves nothing and adds no row", target => withImporter(async ctx => {
+        setFileNaming(CASE_INSENSITIVE);
+        await stage(ctx, [BIN], { target });
+
+        const result = await importRpm(ctx);
+
+        expect(result).toEqual(failed(expected(target, [BIN], "failed")));
+        expect(result[0].reason).toContain(`${ JSON.stringify(OTHER_THAN_ASCII) }: ${ NOT_IN_LOWER_CASE }`);
+        expect(await staged(ctx, target)).toEqual([BIN]);
+        expect(count(ctx.db, "pool_files")).toBe(0);
+        expect(count(ctx.db, "releases")).toBe(0);
+    })());
+
+    test("Where case counts, an rpm placed below a name other than ASCII imports", withImporter(async ctx => {
+        setFileNaming(CASE_SENSITIVE);
+        const target = `rpm/${ OTHER_THAN_ASCII }/42`;
+        await stage(ctx, [BIN], { target });
+
+        expect(await importRpm(ctx)).toEqual(expected(target, [BIN], "ok"));
+    }));
+
+    test("A pool file waiting for garbage collection still conflicts, and the import goes through once it is gone", withImporter(async (ctx, catalog) => {
+        setFileNaming(CASE_INSENSITIVE);
+        await stage(ctx, [BIN]);
+        await importRpm(ctx);
+        catalog.remove({ source: "srm-hello" }, NOW, false);
+        await publishRpm(ctx);
+        await stageInOtherCase(ctx);
+        const rows = fullPoolRows(ctx.db);
+        expect(rows.map(row => row.removed_at)).toEqual([NOW]);
+
+        const result = await importRpm(ctx);
+
+        expect(result).toEqual(failed(expected(TARGET, [BIN_IN_OTHER_CASE], "failed")));
+        expect(result[0].reason).toContain(`${ POOL }/${ BIN_IN_OTHER_CASE } differs only in case from ${ POOL }/${ BIN }`);
+        expect(await staged(ctx)).toEqual([BIN_IN_OTHER_CASE]);
+        expect(await pooled(ctx)).toEqual([BIN]);
+        expect(fullPoolRows(ctx.db)).toEqual(rows);
+        expect(count(ctx.db, "rpm_packages")).toBe(0);
+
+        expect((await runGc({ ...ctx, now: () => NOW + GC_GRACE_SECONDS })).pool).toEqual([`${ POOL }/${ BIN }`]);
+
+        expect(await importRpm(ctx)).toEqual(expected(TARGET, [BIN_IN_OTHER_CASE], "ok"));
+        expect(await pooled(ctx)).toEqual([BIN_IN_OTHER_CASE]);
+        expect(await hashFile(poolPath(ctx, `${ POOL }/${ BIN_IN_OTHER_CASE }`))).toEqual(await hashFile(osPath.join(RPMS, DOC)));
+    }));
+
+    notWindowsTest("Off Windows names differing only in case are different files", withImporter(async ctx => {
+        await stage(ctx, [BIN]);
+        await importRpm(ctx);
+        await stageInOtherCase(ctx);
+
+        expect(await importRpm(ctx)).toEqual(expected(TARGET, [BIN_IN_OTHER_CASE], "ok"));
+
+        expect(await pooled(ctx)).toEqual([BIN_IN_OTHER_CASE, BIN]);
+        expect(count(ctx.db, "pool_files")).toBe(2);
     }));
 
     test("Same filename from another source moves the file and reports the replacement", withImporter(async (ctx, catalog) => {

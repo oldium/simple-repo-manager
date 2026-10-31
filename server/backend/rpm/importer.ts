@@ -1,14 +1,17 @@
-import osPath from "path";
 import fs from "fs/promises";
+import { caseChecker } from "../case-conflict.ts";
+import type { CaseChecker } from "../case-conflict.ts";
 import { repoFile } from "../context.ts";
 import type { BackendContext } from "../context.ts";
 import { moveFile } from "../publish-fs.ts";
-import { StagedDigests, importFailure, stagingDirs } from "../staging.ts";
+import { StagedDigests, checkStagedDirectories, importFailure, stagingDirs } from "../staging.ts";
 import type { StagingDir } from "../staging.ts";
 import { RpmCatalog } from "./catalog.ts";
 import { readRpm } from "./inputs.ts";
+import { repoDirectoryName } from "../../lib/file-naming.ts";
 import logger from "../../lib/logger.ts";
 import type { ImportFile } from "../../lib/repo-service.ts";
+import { toOsPath } from "../../lib/safe-path.ts";
 
 const NOT_RPM_REASON = "not an .rpm file";
 
@@ -18,27 +21,31 @@ type Target = { distro: string; release: string };
 
 /** Only <distro>/<release> itself */
 function targetOf(segments: string[]): Target | undefined {
-    return segments.length === 2 ? { distro: segments[0], release: segments[1] } : undefined;
+    return segments.length === 2 ? { distro: repoDirectoryName(segments[0]), release: repoDirectoryName(segments[1]) } : undefined;
 }
 
 class RpmImporter {
     private readonly ctx: BackendContext;
     private readonly catalog: RpmCatalog;
     private readonly staged: StagedDigests;
+    private readonly checkCase: CaseChecker;
 
     constructor(ctx: BackendContext) {
         this.ctx = ctx;
         this.catalog = new RpmCatalog(ctx.db);
         this.staged = new StagedDigests(ctx.db);
+        this.checkCase = caseChecker(ctx.paths.repoDir);
     }
 
     /** Catalogs the package and moves it to the pool; returns the failure reason, or undefined when the file is in */
     async importPackage(dir: StagingDir<Target>, target: Target, name: string): Promise<string | undefined> {
         const relPath = `${ dir.rel }/${ name }`;
-        const location = osPath.join(dir.dir, name);
         try {
+            checkStagedDirectories(dir.rel);
+            const location = toOsPath(dir.dir, name);
             const stat = await fs.stat(location);
             const input = await readRpm(location, name, target, await this.staged.digests(relPath, location, stat), stat);
+            await this.checkCase([input.file.path]);
             const outcome = this.catalog.applyPackage(input, this.ctx.now());
             if (outcome.replacedPath !== undefined && outcome.replacedPath !== input.file.path) {
                 logger.info(`${ relPath } replaced ${ outcome.replacedPath }`);

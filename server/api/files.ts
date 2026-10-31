@@ -20,6 +20,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { Eta } from "eta";
 import { initEta, renderDistroConfigs } from "../lib/render.ts";
 import { mimeTypeFor } from "../lib/mime.ts";
+import { urlPathProblem } from "../lib/safe-path.ts";
 
 function filterHidden(): RequestHandler {
     return (req: Request, _res: Response, next: NextFunction) => {
@@ -27,7 +28,17 @@ function filterHidden(): RequestHandler {
         if (!parsed || !parsed.pathname) {
             return next('router');
         }
-        const dir = path.normalize(decodeURIComponent(parsed.pathname));
+        let decoded: string;
+        try {
+            decoded = decodeURIComponent(parsed.pathname);
+        } catch {
+            return next('router');
+        }
+        // Ahead of anything that touches the disk: on Windows Release::$DATA would open the file
+        if (urlPathProblem(decoded) !== undefined) {
+            return next('router');
+        }
+        const dir = path.normalize(decoded);
         if (!dir.startsWith('/.well-known/') && (dir.includes("/.") || dir.startsWith("."))) {
             return next('router');
         }
@@ -83,8 +94,8 @@ function renderDirEntry(file: File) {
     );
 }
 
-function renderBreadcrumb(locals: Locals): string {
-    const dirs = locals.directory.split("/").slice(1, -1)
+function renderBreadcrumb(directory: string): string {
+    const dirs = directory.split("/").slice(1, -1)
     return dirs.reduce<{ herePath: string, result: string[] }>(
         ({ herePath, result }, part) => {
             result.push(
@@ -101,11 +112,13 @@ function htmlTemplate(paths: Paths, gpg: Gpg, eta: Eta, cssFilePath: string, ico
     return async (locals: Locals): Promise<string> => {
         const files: string[] = [];
         const req = getRequest()!;
+        // A double slash in the URL names the same directory
+        const directory = path.normalize(locals.directory);
 
         locals.fileList.map(renderDirEntry.bind(null)).filter(Boolean).forEach((f) => files.push(f));
-        const pathBreadcrumb = renderBreadcrumb(locals);
-        const configs = await renderDistroConfigs(req, paths, gpg, eta, locals.directory);
-        const view = locals.directory === "/" && files.length === 0
+        const pathBreadcrumb = renderBreadcrumb(directory);
+        const configs = await renderDistroConfigs(req, paths, gpg, eta, directory);
+        const view = directory === "/" && files.length === 0
             ? `<div class="view view-empty">
       <span class="icon icon-empty"></span>
       <p class="title">The repository is empty</p>
@@ -127,7 +140,7 @@ function htmlTemplate(paths: Paths, gpg: Gpg, eta: Eta, cssFilePath: string, ico
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@100..900&display=swap">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..24,400,0,-25..0&icon_names=${ escapeHtml(
             iconNames.join(",")) }&display=block'">
-  <title>Listing ${ locals.directory === "/" ? "repositories" : escapeHtml(locals.directory.slice(0, -1)) }</title>
+  <title>Listing ${ directory === "/" ? "repositories" : escapeHtml(directory.slice(0, -1)) }</title>
 </head>
 <body class="directory">
   <div class="content">

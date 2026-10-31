@@ -15,6 +15,7 @@ import type { DebUploadInput, PoolFile } from "../../../server/backend/deb/catal
 import { contentsRecords } from "../../../server/backend/deb/contents.ts";
 import { importDebian } from "../../../server/backend/deb/importer.ts";
 import { binarySortKey } from "../../../server/backend/deb/stanzas.ts";
+import { RELEASE_FILES } from "../../../server/lib/validations.ts";
 
 // The publisher must see the spied modules, so it is imported after the mocks are registered; the catalog keeps the real ones
 const chunked = await import("../../../server/backend/chunked.ts");
@@ -734,6 +735,16 @@ describe("Tests for publishDebian", () => {
         expect(await publishDebian(ctx)).toEqual(["debian/trixie"]);
         expect(await expectSigned(ctx)).toContain("\nDate: Tue, 14 Nov 2023 22:15:00 UTC\n");
         expect(releaseRow(ctx.db).published_date).toBe(NOW + 100);
+    }));
+
+    test("Next to the components only the files a component must not be named as are written", withPublisher(async ctx => {
+        await importAll(ctx, TRIXIE);
+        await publishDebian(ctx);
+
+        const entries = await fs.readdir(dists(ctx, "debian", "trixie"), { withFileTypes: true });
+
+        expect(entries.filter(entry => !entry.isDirectory()).map(entry => entry.name).sort()).toEqual([...RELEASE_FILES].sort());
+        expect(entries.filter(entry => entry.isDirectory()).map(entry => entry.name)).toEqual(["main"]);
     }));
 
     test("Without a signing key only Release is written", withPublisher(async ctx => {

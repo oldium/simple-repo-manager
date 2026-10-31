@@ -2,6 +2,8 @@
 
 import { createFiles, withLocalTmpDir } from "../utils.ts";
 import createTestApp from "../testapp.ts";
+import logger from "../../server/lib/logger.ts";
+import { jest } from "@jest/globals";
 import osPath from "path";
 import dedent from "dedent";
 import request from "supertest";
@@ -123,6 +125,24 @@ const GPG_PUBLIC_KEYS = [
 ];
 
 describe('Test repository keyring files', () => {
+    test("Check that the file naming line is logged right before the signing key line", withLocalTmpDir(async () => {
+        await createFiles({ "gpg-repo-private-key.asc": GPG_PRIVATE_KEYS[0] });
+        const info = jest.spyOn(logger, "info");
+
+        try {
+            await createTestApp({
+                gpg: { gpgRepoPrivateKeyFile: "gpg-repo-private-key.asc" },
+                fileNaming: { caseSensitive: false, shortNames: true },
+            });
+            const lines = info.mock.calls.map(([line]) => String(line));
+            const fileNames = lines.indexOf("File names: case-insensitive (configured), 8.3 short names on (configured), up to 240 bytes (auto)");
+            expect(fileNames).toBeGreaterThanOrEqual(0);
+            expect(lines[fileNames + 1]).toMatch(/^Signing repository metadata with /);
+        } finally {
+            info.mockRestore();
+        }
+    }));
+
     test("Check that repository GPG public key is created", withLocalTmpDir(async () => {
         await createFiles({
             "gpg-repo-private-key.asc": GPG_PRIVATE_KEYS[0],

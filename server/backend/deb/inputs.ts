@@ -3,7 +3,7 @@ import fs from "fs/promises";
 import { MAX_CONTROL_SIZE } from "../archive.ts";
 import type { Stanza } from "../control.ts";
 import type { Digests, HashName } from "../hash.ts";
-import { checkPathSegment, checkSafeName } from "../staging.ts";
+import { checkFileName, checkSafeName, checkVersion } from "../staging.ts";
 import type { DebBinaryInput, PoolFile } from "./catalog.ts";
 import { inspectDeb, parseDsc } from "./inspect.ts";
 import type { DscFile } from "./inspect.ts";
@@ -46,7 +46,7 @@ export async function readControlFile(file: string): Promise<string> {
 
 export function checkSourceVersion(sv: SourceVersion, file: string): void {
     checkSafeName("debName", sv.source, `Source of ${ file }`);
-    checkPathSegment(sv.version, `Version of ${ file }`);
+    checkVersion(sv.version, `Version of ${ file }`);
 }
 
 /** The Architecture list of a .changes, where "source" and "all" sit next to the binary architectures */
@@ -73,8 +73,10 @@ export async function readBinary(located: LocatedFile, kind: DebBinaryInput["kin
     const version = requiredField(control, "Version");
     const architecture = requiredField(control, "Architecture");
     checkSafeName("debName", packageName, `Package of ${ located.name }`);
-    checkPathSegment(version, `Version of ${ located.name }`);
+    checkVersion(version, `Version of ${ located.name }`);
     checkSafeName("debBinaryArchitecture", architecture, `Architecture of ${ located.name }`);
+    // The longest index name built from it: one that does not fit would stop every later publish of the release
+    checkFileName(`Contents-udeb-${ architecture }.gz`, `Architecture of ${ located.name }`);
     const { file } = located;
     const stanza = renderPackagesStanza(control, { filename: `${ poolDir }/${ located.name }`, size: file.size, md5: file.md5, sha256: file.sha256 }, located);
     return { kind, package: packageName, version, architecture, section: located.section, stanza, file, paths };
@@ -101,7 +103,7 @@ export async function readSource(dsc: LocatedFile, expected: SourceVersion, pool
     }
     const files: PoolFile[] = [dsc.file];
     for (const [name, listed] of parsed.files) {
-        checkPathSegment(name, `file name in ${ dsc.name }`);
+        checkFileName(name, `file name in ${ dsc.name }`);
         const file = await fileOf(name, listed);
         verify(name, file, listed, "does not match the .dsc");
         files.push(file);

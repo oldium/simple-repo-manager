@@ -5,7 +5,9 @@ import fs from "fs/promises";
 import type { FileHandle } from "fs/promises";
 import { Database } from "node:sqlite";
 import { openDatabase, SCHEMA_VERSION, transaction } from "../../server/backend/db.ts";
-import { moveFile, placeFile, removeQuietly, writeFileAtomic } from "../../server/backend/publish-fs.ts";
+import { listFiles, moveFile, placeFile, removeQuietly, writeFileAtomic } from "../../server/backend/publish-fs.ts";
+import { readdirQuietly } from "../../server/backend/gc.ts";
+import logger from "../../server/lib/logger.ts";
 
 const INSERT_RELEASE = "INSERT INTO releases (format, distro, name) VALUES ('deb', 'debian', 'trixie')";
 const COUNT_RELEASES = "SELECT count(*) AS n FROM releases";
@@ -36,6 +38,59 @@ async function withoutWindowsRename(fn: () => Promise<void>): Promise<void> {
 }
 
 const windowsTest = process.platform === "win32" ? test : test.skip;
+
+describe("Tests for walking a directory", () => {
+    // What each system can really hold; Node creates the Windows ones literally
+    const UNREACHABLE = process.platform === "win32" ? ["aux", "dot.", "space "] : ["a\\b", "a\u0001b"];
+
+    async function withUnreachable(): Promise<void> {
+        await fs.mkdir("root/sub", { recursive: true });
+        await fs.writeFile("root/sub/ok.txt", "x");
+        for (const name of UNREACHABLE) {
+            await fs.writeFile(`root/${ name }`, "x");
+            await fs.mkdir(`root/sub/${ name }`);
+            await fs.writeFile(`root/sub/${ name }/inside.txt`, "x");
+        }
+    }
+
+    test("An entry no URL or repo-relative path can reach stays out of the walk", withLocalTmpDir(async () => {
+        await withUnreachable();
+        const warn = jest.spyOn(logger, "warn").mockImplementation(() => logger);
+        try {
+            expect(await listFiles("root")).toEqual(["sub/ok.txt"]);
+            expect(warn).toHaveBeenCalledTimes(UNREACHABLE.length * 2);
+            expect((await readdirQuietly("root")).map(entry => entry.name)).toEqual(["sub"]);
+        } finally {
+            warn.mockRestore();
+        }
+    }));
+
+    test("A device name with an extension is an entry like any", withLocalTmpDir(async () => {
+        await fs.mkdir("root");
+        await fs.writeFile("root/con.txt", "x");
+        await fs.writeFile("root/aux.tar.gz", "x");
+        expect(await listFiles("root")).toEqual(["aux.tar.gz", "con.txt"]);
+        expect((await readdirQuietly("root")).map(entry => entry.name).sort()).toEqual(["aux.tar.gz", "con.txt"]);
+    }));
+
+    test("Paths come back with forward slashes, in name order, and skip sees them too", withLocalTmpDir(async () => {
+        await fs.mkdir("root/b/c", { recursive: true });
+        await fs.mkdir("root/skipped", { recursive: true });
+        await fs.writeFile("root/a.txt", "x");
+        await fs.writeFile("root/b/c/d.txt", "x");
+        await fs.writeFile("root/skipped/e.txt", "x");
+        const seen: string[] = [];
+        expect(await listFiles("root", dir => {
+            seen.push(dir);
+            return dir === "skipped";
+        })).toEqual(["a.txt", "b/c/d.txt"]);
+        expect(seen).toEqual(["b", "b/c", "skipped"]);
+    }));
+
+    test("A missing root lists nothing", withLocalTmpDir(async () => {
+        expect(await listFiles("missing")).toEqual([]);
+    }));
+});
 
 describe("Tests for openDatabase", () => {
     test("Creates schema version 1 with WAL and foreign keys", withLocalTmpDir(async () => {
@@ -414,6 +469,26 @@ describe("Moves across volumes and over open files", () => {
         expect(await fs.readFile("by-hash/new", "utf8")).toBe("from the state directory");
         expect(await fs.readFile("Packages.gz", "utf8")).toBe("from the state directory");
         expect(await tempLeftovers("by-hash")).toEqual([]);
+    }));
+
+    test("moveFile replaces the temp file a crashed move left and uses its place, whatever process that was", withLocalTmpDir(async () => {
+        await fs.writeFile("upload", "whole");
+        await fs.writeFile("target.tmp-0", "half");
+
+        await acrossVolumes("upload", () => moveFile("upload", "target"));
+
+        expect(await fs.readFile("target", "utf8")).toBe("whole");
+        expect(await tempLeftovers(".")).toEqual([]);
+        await expect(fs.stat("upload")).rejects.toThrow(/ENOENT/);
+    }));
+
+    test("A move on one volume needs no temp file", withLocalTmpDir(async () => {
+        await fs.writeFile("upload", "whole");
+
+        await moveFile("upload", "target");
+
+        expect(await fs.readFile("target", "utf8")).toBe("whole");
+        expect(await tempLeftovers(".")).toEqual([]);
     }));
 
     test("moveFile replaces a target a reader still holds open", withLocalTmpDir(async () => {

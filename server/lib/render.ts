@@ -15,6 +15,8 @@ import { getHostname, getUriNoQuery } from "./req.ts";
 import _ from "lodash";
 import dedent from "dedent";
 import { getBackend } from "../backend/index.ts";
+import { repoDirectoryName } from "./file-naming.ts";
+import { toOsPath } from "./safe-path.ts";
 
 const loadedTemplate: Record<string, boolean> = {};
 
@@ -29,7 +31,7 @@ async function locateTemplate(eta: Eta, type: RepoType, distro: string, release:
         if (templateFile && await fsExtra.pathExists(templateFile)) {
             return { templateName: `@${ templateName }`, templateFile }
         } else if (eta.config.views &&
-            await fsExtra.pathExists(osPath.join(eta.config.views, templateName + eta.config.defaultExtension))) {
+            await fsExtra.pathExists(toOsPath(eta.config.views, templateName + eta.config.defaultExtension))) {
             return { templateName }
         }
     }
@@ -189,9 +191,11 @@ export async function renderDistroConfigs(req: Request, paths: Paths, gpg: Gpg, 
     const navigation: string[] = [];
     const configs: string[] = [];
     const tree = getBackend(paths.repoStateDir).repositoryTree();
+    // The file system serves any spelling, the rows hold one
+    const browsed = repoDirectoryName(directory);
 
-    if (directory === "/" || directory.startsWith("/deb/")) {
-        const [, , pathDistro, , pathRelease] = directory.split("/");
+    if (browsed === "/" || browsed.startsWith("/deb/")) {
+        const [, , pathDistro, , pathRelease] = browsed.split("/");
         const repoObj = toRepository("deb", tree.deb, pathDistro, pathRelease, (distroPath, view) => ({
             path: path.join(distroPath, "dists", view.release),
             components: view.components,
@@ -215,8 +219,8 @@ export async function renderDistroConfigs(req: Request, paths: Paths, gpg: Gpg, 
         configs.push(...repoConfigs);
     }
 
-    if (directory === "/" || directory.startsWith("/rpm/")) {
-        const [, , pathDistro, pathRelease] = directory.split("/");
+    if (browsed === "/" || browsed.startsWith("/rpm/")) {
+        const [, , pathDistro, pathRelease] = browsed.split("/");
         const repoObj = toRepository("rpm", tree.rpm, pathDistro, pathRelease, (distroPath, view) => ({
             path: path.join(distroPath, view.release),
         }));

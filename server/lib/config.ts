@@ -9,6 +9,7 @@ import fsExtra from "fs-extra";
 import proxyAddr from "proxy-addr";
 import { Access, requireAccess } from "./fs.ts";
 import { parseHumanJsonArray, parseHumanJsonObject } from "./json.ts";
+import type { FileNamingSettings, NamingSetting } from "./file-naming.ts";
 
 export type Certificate = { cert: Buffer; key: Buffer } | { cert?: undefined; key?: undefined };
 
@@ -28,6 +29,7 @@ export type AppConfig = {
     paths: Paths,
     gpg: Gpg,
     upload: UploadOptions,
+    fileNaming: FileNamingSettings,
     instanceLabel?: string,
     publicUrl?: URL,
 }
@@ -191,6 +193,23 @@ const upload: UploadOptions = {
     postField,
 };
 
+function readNamingSetting(name: string): NamingSetting {
+    const value = process.env[name]?.trim() || "auto";
+    if (value === "auto") {
+        return value;
+    }
+    if (value === "true" || value === "false") {
+        return value === "true";
+    }
+    console.error(`${ name } must be auto, true or false: ${ value }`);
+    process.exit(1);
+}
+
+const fileNaming: FileNamingSettings = {
+    caseSensitive: readNamingSetting("REPO_CASE_SENSITIVE"),
+    shortNames: readNamingSetting("REPO_SHORT_NAMES"),
+};
+
 const instanceLabel = process.env.INSTANCE_LABEL?.trim() || undefined;
 
 const publicUrlEnv = process.env.PUBLIC_URL?.trim();
@@ -210,6 +229,7 @@ const app: AppConfig = {
     paths,
     gpg,
     upload,
+    fileNaming,
     instanceLabel,
     publicUrl,
 };

@@ -227,7 +227,7 @@ describe("Test of files reading API", () => {
                     Host: localhost:${ (server.address() as net.AddressInfo).port }\n\n
                     `
             });
-            expect(res1).toMatch(/^HTTP\/1\.1 403 Forbidden/);
+            expect(res1).toMatch(/^HTTP\/1\.1 404 Not Found/);
 
             const res2 = await sendRawHttp(server, {
                 headers: dedent`
@@ -235,7 +235,7 @@ describe("Test of files reading API", () => {
                     Host: localhost:${ (server.address() as net.AddressInfo).port }\n\n
                     `
                 });
-            expect(res2).toMatch(/^HTTP\/1\.1 403 Forbidden/);
+            expect(res2).toMatch(/^HTTP\/1\.1 404 Not Found/);
         } finally {
             await new Promise((resolve) => server.close(resolve));
         }

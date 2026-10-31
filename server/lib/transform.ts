@@ -3,7 +3,7 @@ import fsExtra from "fs-extra";
 import fs from "node:fs/promises";
 import etag from "etag";
 import fresh from "fresh";
-import path from "node:path/posix";
+import osPath from "node:path";
 import type { Environment } from "./config.ts";
 
 export type TransformFn = (content: string) => Promise<string> | string;
@@ -40,7 +40,7 @@ export function transformMiddleware(file: string, transform: TransformFn, enviro
             if (fresh(req.headers, { 'etag': tag, 'last-modified': lastModified })) {
                 res.status(304).end();
             } else {
-                res.type(path.extname(file)).send(content);
+                res.type(osPath.extname(file)).send(content);
             }
         }
     };

@@ -1,15 +1,18 @@
+import osPath from "path";
 import fs from "fs/promises";
 import type { Dirent } from "fs";
 import type { Database } from "node:sqlite";
+import { entryNames } from "./case-conflict.ts";
 import { repoFile } from "./context.ts";
 import type { BackendContext } from "./context.ts";
 import { REFERENCING_TABLES as DEB_TABLES } from "./deb/catalog.ts";
 import { debPublishedPaths, md5LinkPath } from "./deb/publisher.ts";
 import { Pool } from "./pool.ts";
 import type { Format } from "./pool.ts";
-import { errorCode, removeEmptyParents, removeQuietly, statQuietly } from "./publish-fs.ts";
+import { errorCode, isUsableEntry, removeEmptyParents, removeQuietly, statQuietly } from "./publish-fs.ts";
 import { REFERENCING_TABLES as RPM_TABLES } from "./rpm/catalog.ts";
 import { rpmPublishedPaths } from "./rpm/publisher.ts";
+import { fileNaming } from "../lib/file-naming.ts";
 import logger from "../lib/logger.ts";
 
 export const GC_INTERVAL_MS = 3600000;
@@ -66,11 +69,16 @@ export function isPoolRoot(rel: string): boolean {
     return poolRoot(`${ rel }/file`) === rel;
 }
 
-/** Deletes a pool file, then the directories it leaves empty up to its pool root; only the deletion itself can fail */
+/** Deletes a pool file, then the directories it leaves empty up to its pool root; only the listing and the deletion can fail */
 export async function deletePoolFile(ctx: BackendContext, poolPath: string): Promise<void> {
     const root = poolRoot(poolPath);
     const file = repoFile(ctx, poolPath);
-    await removeQuietly(file);
+    // Where case does not count, unlink would also take the same name in another case, a later upload's live file
+    if (fileNaming().caseSensitive || (await entryNames(osPath.dirname(file))).includes(osPath.basename(file))) {
+        await removeQuietly(file);
+    } else {
+        logger.warn(`${ poolPath } is not on disk under this name, so only its row goes`);
+    }
     if (root === undefined) {
         logger.warn(`${ poolPath } is not below a pool directory; its parent directories are kept`);
         return;
@@ -98,7 +106,7 @@ export function currentIndexPaths(db: Database): Set<string> {
 
 export async function readdirQuietly(dir: string): Promise<Dirent[]> {
     try {
-        return await fs.readdir(dir, { withFileTypes: true });
+        return (await fs.readdir(dir, { withFileTypes: true })).filter(entry => isUsableEntry(dir, entry.name));
     } catch (err) {
         if (errorCode(err) !== "ENOENT") {
             throw err;

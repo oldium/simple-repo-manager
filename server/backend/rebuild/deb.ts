@@ -4,6 +4,7 @@ import fs from "fs/promises";
 import { promisify } from "util";
 import zlib from "zlib";
 import type { Database } from "node:sqlite";
+import { caseTwinProblem } from "../case-conflict.ts";
 import { field, parseControl, parseFileList, stripClearsign } from "../control.ts";
 import type { ListedFile, Stanza } from "../control.ts";
 import { DebCatalog } from "../deb/catalog.ts";
@@ -13,10 +14,12 @@ import { binarySource, requiredField } from "../deb/stanzas.ts";
 import type { SectionPriority } from "../deb/stanzas.ts";
 import { hashFile } from "../hash.ts";
 import type { Digests } from "../hash.ts";
-import { errorCode, listFiles, statQuietly } from "../publish-fs.ts";
-import { checkPathSegment } from "../staging.ts";
+import { errorCode, isTempName, listFiles, statQuietly } from "../publish-fs.ts";
+import { checkFileName } from "../staging.ts";
 import { RepoValidationError } from "../../lib/errors.ts";
+import { fileNaming, isRepoDirectoryName, NOT_IN_LOWER_CASE } from "../../lib/file-naming.ts";
 import logger from "../../lib/logger.ts";
+import { toOsPath } from "../../lib/safe-path.ts";
 
 const gunzip = promisify(zlib.gunzip);
 
@@ -73,7 +76,7 @@ function cellOf(segments: string[]): { component: string; architecture: string; 
 
 function checkRelativePath(value: string, what: string): void {
     for (const segment of value.split("/")) {
-        checkPathSegment(segment, what);
+        checkFileName(segment, what);
     }
 }
 
@@ -88,6 +91,7 @@ class DebRebuild {
     private readonly listings = new Map<string, Promise<string[]>>();
     private readonly changes = new Map<string, Promise<Changes | undefined>>();
     private readonly referenced = new Set<string>();
+    private readonly upperCase = new Set<string>();
 
     constructor(db: Database, repoDir: string, now: number, problems: string[]) {
         this.repoDir = repoDir;
@@ -107,6 +111,10 @@ class DebRebuild {
             } catch (err) {
                 this.problem(index.rel, err);
             }
+        }
+        const twin = caseTwinProblem(this.listedPaths());
+        if (twin !== undefined) {
+            this.problems.push(twin);
         }
         const shared = this.sharedVersions();
         for (const key of [...this.groups.keys()].sort(compare)) {
@@ -137,8 +145,21 @@ class DebRebuild {
         return shared;
     }
 
+    /** Every pool path the indexes list */
+    private listedPaths(): string[] {
+        const paths: string[] = [];
+        for (const g of this.groups.values()) {
+            paths.push(...g.binaries.keys());
+            const source = g.sourcePackage;
+            if (source !== undefined) {
+                paths.push(...source.files.map(listed => `deb/${ g.distro }/${ source.directory }/${ listed.name }`));
+            }
+        }
+        return paths;
+    }
+
     private location(rel: string): string {
-        return osPath.join(this.repoDir, ...rel.split("/"));
+        return toOsPath(this.repoDir, rel);
     }
 
     private problem(rel: string, err: unknown): void {
@@ -150,7 +171,7 @@ class DebRebuild {
         const candidates = new Map<string, string[]>();
         for (const rel of await listFiles(osPath.join(this.repoDir, "deb"), dir => dir.split("/")[1] === "pool" || dir.endsWith("/by-hash"))) {
             const segments = rel.split("/");
-            if (segments.length > 4 && segments[1] === "dists" && INDEX_BASES.some(base => segments[segments.length - 1].startsWith(base))) {
+            if (segments.length > 4 && segments[1] === "dists" && !isTempName(rel) && INDEX_BASES.some(base => segments[segments.length - 1].startsWith(base))) {
                 const dir = segments.slice(0, -1).join("/");
                 candidates.set(dir, [...candidates.get(dir) ?? [], segments[segments.length - 1]]);
             }
@@ -208,6 +229,7 @@ class DebRebuild {
         const architecture = requiredField(stanza, "Architecture");
         const filename = requiredField(stanza, "Filename");
         checkRelativePath(filename, "Filename segment");
+        this.checkPoolDirectory(index, path.dirname(filename));
         const size = Number(requiredField(stanza, "Size"));
         if (!Number.isInteger(size) || size < 0) {
             throw new RepoValidationError(`Malformed Size: ${ field(stanza, "Size") as string }`);
@@ -229,9 +251,10 @@ class DebRebuild {
         const version = requiredField(stanza, "Version");
         const directory = requiredField(stanza, "Directory");
         checkRelativePath(directory, "Directory segment");
+        this.checkPoolDirectory(index, directory);
         const files = parseFileList(requiredField(stanza, "Checksums-Sha256"), false);
         for (const listed of files) {
-            checkPathSegment(listed.name, "file name in Checksums-Sha256");
+            checkFileName(listed.name, "file name in Checksums-Sha256");
         }
         const dscs = files.filter(listed => listed.name.endsWith(".dsc"));
         if (dscs.length !== 1) {
@@ -244,18 +267,32 @@ class DebRebuild {
         group.sourcePackage = { indexPath: index.rel, stanza, directory, dscName: dscs[0].name, files };
     }
 
+    /** The catalog keeps the spelling the index has, also after the directory on disk was renamed to lower case */
+    private checkPoolDirectory(index: IndexFile, directory: string): void {
+        const rel = `deb/${ index.distro }/${ directory }`;
+        if (!isRepoDirectoryName(directory) && !this.upperCase.has(rel)) {
+            this.upperCase.add(rel);
+            this.problems.push(`${ rel }, listed in ${ index.rel }: ${ NOT_IN_LOWER_CASE }`);
+        }
+    }
+
     /** The file's digests, hashed once, or why there are none: "missing" or the error */
     private digestsOf(poolPath: string): Promise<Digests | string> {
         let digests = this.digests.get(poolPath);
         if (digests === undefined) {
-            digests = this.hash(this.location(poolPath));
+            digests = this.hash(poolPath);
             this.digests.set(poolPath, digests);
         }
         return digests;
     }
 
-    private async hash(file: string): Promise<Digests | string> {
+    private async hash(poolPath: string): Promise<Digests | string> {
         try {
+            // Where case does not count stat also finds the file under another case
+            if (!fileNaming().caseSensitive && !(await this.listing(path.dirname(poolPath))).includes(path.basename(poolPath))) {
+                return "missing";
+            }
+            const file = this.location(poolPath);
             const stat = await statQuietly(file);
             return stat === undefined ? "missing" : stat.isFile() ? await hashFile(file) : "not a regular file";
         } catch (err) {
@@ -307,7 +344,7 @@ class DebRebuild {
             requiredField(stanza, "Source");
             const files = new Map<string, SectionPriority>();
             for (const listed of parseFileList(requiredField(stanza, "Files"), true)) {
-                checkPathSegment(listed.name, "file name in Files");
+                checkFileName(listed.name, "file name in Files");
                 files.set(listed.name, { section: listed.section ?? "", priority: listed.priority ?? "" });
             }
             const digests = await this.digestsOf(poolPath);
@@ -479,7 +516,7 @@ class DebRebuild {
     private async warnUnreferenced(): Promise<void> {
         for (const rel of await listFiles(osPath.join(this.repoDir, "deb"), dir => dir.split("/")[1] === "dists")) {
             const poolPath = `deb/${ rel }`;
-            if (rel.split("/")[1] === "pool" && !this.referenced.has(poolPath)) {
+            if (rel.split("/")[1] === "pool" && !this.referenced.has(poolPath) && !isTempName(rel)) {
                 logger.warn(`${ poolPath }: referenced by no index or upload, left in place`);
             }
         }

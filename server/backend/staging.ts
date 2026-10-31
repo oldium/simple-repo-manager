@@ -8,7 +8,10 @@ import type { Digests } from "./hash.ts";
 import type { Format } from "./pool.ts";
 import { byName, statQuietly } from "./publish-fs.ts";
 import { RepoValidationError } from "../lib/errors.ts";
+import { isRepoDirectoryName, NOT_IN_LOWER_CASE, repoDirectoryName } from "../lib/file-naming.ts";
 import logger, { getCorrelationId } from "../lib/logger.ts";
+import { ONLY_DOTS, segmentProblem } from "../lib/safe-path.ts";
+import { distroProblem } from "../lib/validations.ts";
 
 /** A directory below process/<format> with files; rel is the import-style path, target what the format reads off the segments */
 export type StagingDir<T> = { rel: string; dir: string; files: string[]; target?: T };
@@ -19,8 +22,8 @@ type StagedRow = Digests & { mtime_ms: number };
 const SAFE_NAMES = {
     debName: /^[a-z0-9][a-z0-9+.-]+$/,
     debArchitecture: /^[a-z0-9][a-z0-9-]*$/,
-    // In a .changes, "source" stands for the source package
-    debBinaryArchitecture: /^(?!source$)[a-z0-9][a-z0-9-]*$/,
+    // In a .changes, "source" stands for the source package, and udeb- would share Contents-udeb-<architecture> with the udebs
+    debBinaryArchitecture: /^(?!source$|udeb-)[a-z0-9][a-z0-9-]*$/,
     rpmName: /^[A-Za-z0-9][A-Za-z0-9._+-]*$/,
 };
 
@@ -39,8 +42,7 @@ export async function stagingDirs<T>(incomingDir: string, format: Format, target
 
     const root = osPath.join(incomingDir, "process", format);
     const dirs: StagingDir<T>[] = [];
-    const walk = async (segments: string[]): Promise<void> => {
-        const dir = osPath.join(root, ...segments);
+    const walk = async (dir: string, segments: string[]): Promise<void> => {
         const entries = (await fs.readdir(dir, { withFileTypes: true })).sort(byName);
         const files = entries.filter(e => e.isFile()).map(e => e.name);
         if (files.length > 0) {
@@ -48,14 +50,14 @@ export async function stagingDirs<T>(incomingDir: string, format: Format, target
         }
         for (const entry of entries) {
             if (entry.isDirectory()) {
-                await walk([...segments, entry.name]);
+                await walk(osPath.join(dir, entry.name), [...segments, entry.name]);
             }
         }
     };
     if (await statQuietly(root) === undefined) {
         return [];
     }
-    await walk([]);
+    await walk(root, []);
     return dirs;
 }
 
@@ -64,16 +66,45 @@ function malformed(what: string, value: string): RepoValidationError {
     return new RepoValidationError(`Malformed ${ what }: ${ JSON.stringify(value) }`);
 }
 
-// Names become pool path segments, so a separator or ".." must never get through
-export function checkPathSegment(value: string, what: string): void {
-    if (value.length === 0 || value === "." || value === ".." || UNSAFE_IN_SEGMENT.test(value)) {
+function isPlain(value: string): boolean {
+    return value.length > 0 && !ONLY_DOTS.test(value) && !UNSAFE_IN_SEGMENT.test(value);
+}
+
+export function checkVersion(value: string, what: string): void {
+    if (!isPlain(value)) {
         throw malformed(what, value);
     }
 }
 
-export function checkSafeName(kind: keyof typeof SAFE_NAMES, value: string, what: string): void {
+function checkOnPlatform(value: string, what: string, platform: NodeJS.Platform): void {
+    const problem = segmentProblem(value, platform);
+    if (problem !== undefined) {
+        throw new RepoValidationError(`Malformed ${ what }: ${ problem }`);
+    }
+}
+
+// A file name, unlike a version with its epoch colon, also has to be one this OS can create
+export function checkFileName(value: string, what: string, platform: NodeJS.Platform = process.platform): void {
+    if (!isPlain(value)) {
+        throw malformed(what, value);
+    }
+    checkOnPlatform(value, what, platform);
+}
+
+export function checkSafeName(kind: keyof typeof SAFE_NAMES, value: string, what: string, platform: NodeJS.Platform = process.platform): void {
     if (!SAFE_NAMES[kind].test(value)) {
         throw malformed(what, value);
+    }
+    checkOnPlatform(value, what, platform);
+}
+
+/** A folder placed by hand met no upload check, and the catalog commits before the publish, which must not fail on these names then. A problem names them as found. */
+export function checkStagedDirectories(rel: string): void {
+    const [format, ...names] = rel.split("/");
+    const other = names.find(name => !isRepoDirectoryName(repoDirectoryName(name)));
+    const problem = other === undefined ? distroProblem(format, names) : `${ JSON.stringify(other) }: ${ NOT_IN_LOWER_CASE }`;
+    if (problem !== undefined) {
+        throw new RepoValidationError(`${ rel }: ${ problem }`);
     }
 }
 

@@ -9,7 +9,10 @@ import multer from "multer";
 import type { Paths, UploadOptions } from "../../lib/config.ts";
 import osPath from "node:path";
 import path from "node:path/posix";
-import { validateDistro, validateFilename } from "../../lib/validations.ts";
+import { invalidDistroMessage, invalidFilenameMessage, validateDistro, validateFilename } from "../../lib/validations.ts";
+import { repoDirectoryName } from "../../lib/file-naming.ts";
+import { toOsPath } from "../../lib/safe-path.ts";
+import { RepoValidationError } from "../../lib/errors.ts";
 import logger from "../../lib/logger.ts";
 import type { FileResponse } from "../../lib/res.ts";
 import { sendErrorResponse, sendUploadResponse } from "../../lib/res.ts";
@@ -38,7 +41,7 @@ class HashingDiskStorage implements StorageEngine {
     }
 
     _handleFile(req: Request, file: Express.Multer.File, cb: (error?: unknown, info?: Partial<UploadedFile>) => void): void {
-        const tempPath = osPath.join(this.tmpDir, tempName(req.socket));
+        const tempPath = toOsPath(this.tmpDir, tempName(req.socket));
         if (file.stream.destroyed) {
             // A multer 2.5 code, not yet in @types/multer 2.3
             cb(new multer.MulterError("STREAM_DESTROYED" as ErrorCode));
@@ -157,12 +160,12 @@ class PostHandler {
 
         logger.debug(`Processing ${ files.length } files`);
 
-        const distroComponents = [distro, release].concat(
-            component ? [component].concat(subcomponent ? [subcomponent] : []) : []);
+        const requested = [distro, release].concat(component ? [component].concat(subcomponent ? [subcomponent] : []) : []);
+        const distroComponents = requested.map(name => repoDirectoryName(name));
         if (!validateDistro(type, distroComponents)) {
-            logger.warn(`Invalid distro: ${ distroComponents.join('/') }`);
+            logger.warn(`Invalid distro: ${ requested.join('/') }`);
             await this.deleteFiles(files);
-            sendErrorResponse(res, 400, `Unknown or invalid distro: ${ type }/${ distroComponents.join('/') }`);
+            sendErrorResponse(res, 400, invalidDistroMessage(type, requested));
             return;
         }
 
@@ -173,7 +176,7 @@ class PostHandler {
         // Store results for each file processed in the batch
         const fileResponses: FileResponse[] = [];
 
-        let clientError = false;
+        const clientErrors: string[] = [];
         let serverError = false;
 
         // Process each uploaded file sequentially (using for...of loop with await)
@@ -181,31 +184,33 @@ class PostHandler {
             const originalFilename = file.originalname;
 
             const tempPath = file.path;
-            const targetDir = osPath.join(this.paths.incomingDir, 'staging', type, ...distroComponents);
-            const targetPath = osPath.join(targetDir, originalFilename);
 
             const relPath = path.join(type, ...distroComponents, originalFilename);
-            const filePath: Omit<FileResponse, "status"> = {
-                filename: originalFilename,
-                path: relPath
-            };
+            const sentPath = [type, ...requested, originalFilename].join('/');
 
             try {
                 let status: FileResponse["status"];
                 if (!validateFilename(type, originalFilename)) {
-                    clientError = true;
+                    clientErrors.push(invalidFilenameMessage(originalFilename));
                     logger.warn(`Invalid filename: ${ originalFilename }`);
                     status = 'failed';
                     await fsExtra.remove(tempPath);
                 } else {
-                    await stageUpload({ tempPath, targetDir, targetPath, relPath, repoStateDir: this.paths.repoStateDir, digests: file.digests });
+                    const stagingDir = osPath.join(this.paths.incomingDir, 'staging');
+                    const targetPath = toOsPath(stagingDir, relPath);
+                    await stageUpload({ tempPath, stagingDir, targetDir: osPath.dirname(targetPath), targetPath, relPath, sentPath, repoStateDir: this.paths.repoStateDir, digests: file.digests });
                     status = 'ok';
                 }
-                fileResponses.push({ ...filePath, status });
+                fileResponses.push({ filename: originalFilename, path: status === 'ok' ? relPath : sentPath, status });
             } catch (err: unknown) {
-                serverError = true;
-                logger.error(`Failed to process ${ originalFilename }:`, { err });
-                fileResponses.push({ ...filePath, status: 'failed' });
+                if (err instanceof RepoValidationError) {
+                    clientErrors.push(err.message);
+                    logger.warn(`Refused ${ originalFilename }: ${ err.message }`);
+                } else {
+                    serverError = true;
+                    logger.error(`Failed to process ${ originalFilename }:`, { err });
+                }
+                fileResponses.push({ filename: originalFilename, path: sentPath, status: 'failed' });
 
                 // Attempt to clean up the temporary file for this specific failure
                 await fsExtra.remove(tempPath).catch(cleanupErr => {
@@ -215,8 +220,8 @@ class PostHandler {
         }
 
         // Send final response based on overall success
-        if (clientError) {
-            sendUploadResponse(res, 400, 'One or more files failed to upload', fileResponses);
+        if (clientErrors.length > 0) {
+            sendUploadResponse(res, 400, `One or more files failed to upload: ${ clientErrors.join('; ') }`, fileResponses);
         } else if (serverError) {
             sendUploadResponse(res, 500, 'One or more files failed to upload', fileResponses);
         } else {

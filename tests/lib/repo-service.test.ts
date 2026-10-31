@@ -151,6 +151,22 @@ describe("RepoService.prepareUpload", () => {
             ["not allowed.deb"]
         )).toThrow(/Invalid filename/);
     }));
+
+    test("Offers no slot Windows would refuse, on Windows only", withLocalTmpDir(async () => {
+        const refusedName = () => service().prepareUpload({ format: "deb", distribution: "debian", release: "bookworm", component: "main" }, ["x.tar.a:b"]);
+        const reservedDistro = () => service().prepareUpload({ format: "deb", distribution: "aux", release: "bookworm", component: "main" }, ["x.deb"]);
+        if (process.platform === "win32") {
+            expect(refusedName).toThrow('Invalid filename: x.tar.a:b: "x.tar.a:b" holds a character or an ending that Windows refuses in a file name');
+            expect(reservedDistro).toThrow('Unknown or invalid distro: deb/aux/bookworm/main: "aux" is a reserved name on Windows');
+        } else {
+            expect(refusedName()).toHaveLength(1);
+            expect(reservedDistro()).toHaveLength(1);
+        }
+    }));
+
+    test("Offers a slot for a device name with an extension on any OS", withLocalTmpDir(async () => {
+        expect(service().prepareUpload({ format: "deb", distribution: "debian", release: "bookworm", component: "main" }, ["con.deb"])).toHaveLength(1);
+    }));
 });
 
 describe("RepoServiceUnavailableError carries format", () => {

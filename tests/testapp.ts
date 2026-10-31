@@ -35,6 +35,12 @@ export default async function createTestApp(partialConfig?: DeepPartial<AppConfi
             trustProxy: undefined,
             ...partialConfig?.security
         },
+        // The platform's own answer, whatever the volume under the tests does
+        fileNaming: {
+            caseSensitive: process.platform !== "win32",
+            shortNames: process.platform === "win32",
+            ...partialConfig?.fileNaming
+        },
         instanceLabel: partialConfig?.instanceLabel,
     };
     return await createApp(appConfig, environment ?? "test");

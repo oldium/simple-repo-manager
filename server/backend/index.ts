@@ -16,7 +16,7 @@ import { describeSigningKey, loadSigningKey } from "./pgp.ts";
 import { isFormat, Pool } from "./pool.ts";
 import type { Format } from "./pool.ts";
 import { listFiles, statQuietly } from "./publish-fs.ts";
-import { rebuildFromDisk } from "./rebuild/index.ts";
+import { rebuildFromDisk, removeEmptyDirectories, subdirectories } from "./rebuild/index.ts";
 import { reconcile, repairPublished } from "./reconcile.ts";
 import { closing, opened, opening } from "./registry.ts";
 import { RpmCatalog, REFERENCING_TABLES as RPM_TABLES } from "./rpm/catalog.ts";
@@ -24,6 +24,7 @@ import type { RpmReleaseView } from "./rpm/catalog.ts";
 import { importRpm } from "./rpm/importer.ts";
 import { publishRpm } from "./rpm/publisher.ts";
 import { RepoValidationError } from "../lib/errors.ts";
+import { fileNaming, isRepoDirectoryName } from "../lib/file-naming.ts";
 import { moveAll } from "../lib/fs.ts";
 import lock from "../lib/lock.ts";
 import logger from "../lib/logger.ts";
@@ -31,6 +32,7 @@ import type {
     ImportResult, ListFilesFilter, RemovalFile, RemovalFilter, RemovalResult, RepoFile, RepositoryFilter, RepositoryRef,
     SourcePackage, SourcePackageFilter,
 } from "../lib/repo-service.ts";
+import { reservedNameProblem } from "../lib/validations.ts";
 
 export { closeBackends } from "./registry.ts";
 export type { Listing, Page } from "./paging.ts";
@@ -74,6 +76,20 @@ class Mutex {
             tail = this.tail;
             await tail;
         } while (tail !== this.tail);
+    }
+}
+
+/** An emptied hand-placed process/rpm/Fedora/42 would give a later upload that spelling on a case-insensitive volume */
+async function sweepProcess(incomingDir: string): Promise<void> {
+    try {
+        for (const format of FORMATS) {
+            const root = osPath.join(incomingDir, "process", format);
+            for (const name of await subdirectories(root)) {
+                await removeEmptyDirectories(osPath.join(root, name));
+            }
+        }
+    } catch (err) {
+        logger.warn("Empty directories in incoming/process could not be swept", { err });
     }
 }
 
@@ -299,6 +315,7 @@ export class Backend {
     /** Imports what incoming/process holds, then publishes */
     private async importProcess(): Promise<ImportResult> {
         const files = [...await importDebian(this.ctx), ...await importRpm(this.ctx)];
+        await sweepProcess(this.ctx.paths.incomingDir);
         await this.publish();
         return { ok: files.every(f => f.status !== "failed"), files };
     }
@@ -328,6 +345,37 @@ async function hasPublishedTree(repoDir: string): Promise<boolean> {
     return false;
 }
 
+/** A data directory moved from where case counts, or the setting flipped: rpm/Fedora and rpm/fedora would be two releases in one folder */
+function checkOneSpelling({ deb, rpm }: ReturnType<Backend["repositoryTree"]>): void {
+    const isOther = (name: string): boolean => !isRepoDirectoryName(name);
+    const names = [
+        ...deb.flatMap(({ distro, release, components }) => [
+            ...(isOther(distro) || isOther(release) ? [`deb/${ distro }/${ release }`] : []),
+            ...components.filter(isOther).map(component => `deb/${ distro }/${ release }/${ component }`),
+        ]),
+        ...rpm.filter(({ distro, release }) => isOther(distro) || isOther(release)).map(({ distro, release }) => `rpm/${ distro }/${ release }`),
+    ];
+    if (names.length > 0) {
+        throw new Error(`The database holds ${ names.join(", ") }, which this file system cannot keep apart from another name, as it does not tell case apart. `
+            + "See File Names in the README.");
+    }
+}
+
+/** A data directory moved from where case counts, or the setting flipped: a component release is the file Release there */
+function checkOwnNames({ deb, rpm }: ReturnType<Backend["repositoryTree"]>): void {
+    const problemOf = (type: string, names: string[]): string[] => {
+        const problem = reservedNameProblem(type, names);
+        return problem === undefined ? [] : [`${ type }/${ names.join("/") }: ${ problem }`];
+    };
+    const problems = [
+        ...deb.flatMap(({ distro, release, components }) => components.flatMap(component => problemOf("deb", [distro, release, ...component.split("/")]))),
+        ...rpm.flatMap(({ distro, release }) => problemOf("rpm", [distro, release])),
+    ];
+    if (problems.length > 0) {
+        throw new Error(`The database holds names the server itself writes: ${ problems.join("; ") }. See File Names in the README.`);
+    }
+}
+
 async function open(paths: BackendPaths, signingKeyFile: string | undefined, options: OpenOptions, key: string): Promise<Backend> {
     const signingKey = await loadSigningKey(signingKeyFile);
     if (signingKeyFile !== undefined && signingKey === undefined) {
@@ -354,6 +402,10 @@ async function open(paths: BackendPaths, signingKeyFile: string | undefined, opt
     const db = openDatabase(dbFile);
     const backend = new Backend({ db, paths, signingKey, now });
     try {
+        if (!fileNaming().caseSensitive) {
+            checkOneSpelling(backend.repositoryTree());
+        }
+        checkOwnNames(backend.repositoryTree());
         await backend.start(signingKeyFile !== undefined);
     } catch (err) {
         db.close();

@@ -14,6 +14,7 @@ import { errorCode, readQuietly, removeQuietly, writeFileAtomic } from "../publi
 import { contentsRecords } from "./contents.ts";
 import { getEnv } from "../../lib/env.ts";
 import logger from "../../lib/logger.ts";
+import { RELEASE_FILES } from "../../lib/validations.ts";
 
 export type ReleaseInfo = {
     distro: string; release: string; origin?: string; description?: string; date: Date; architectures: string[]; components: string[];
@@ -27,8 +28,6 @@ type IndexKind = "packages" | "debug" | "installer" | "sources" | "contents" | "
 const KIND_ORDER: IndexKind[] = ["packages", "debug", "installer", "sources", "contents", "contents-udeb"];
 
 const BINARY_KINDS: Partial<Record<IndexKind, string>> = { packages: "deb", debug: "ddeb", installer: "udeb" };
-
-const RELEASE_FILES = ["Release", "InRelease", "Release.gpg"];
 
 type ReleaseRow = { id: number; distro: string; name: string; published_date: number | null; origin: string | null; description: string | null };
 
@@ -327,12 +326,11 @@ class DebPublisher {
         const liveMd5Links = new Set(rows.map(row => md5LinkPath(row.stored_path, row.md5)));
         const base = distsPath(r);
         const root = repoFile(this.ctx, base);
-        const walk = async (segments: string[]): Promise<void> => {
-            const dir = osPath.join(root, ...segments);
+        const walk = async (dir: string, segments: string[]): Promise<void> => {
             for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
                 if (entry.isDirectory()) {
                     if (entry.name !== "by-hash") {
-                        await walk([...segments, entry.name]);
+                        await walk(osPath.join(dir, entry.name), [...segments, entry.name]);
                     }
                 } else if (entry.isFile() && ownedIndexName(segments, entry.name, components) && !expected.has(path.join(...segments, entry.name))) {
                     const file = osPath.join(dir, entry.name);
@@ -346,7 +344,7 @@ class DebPublisher {
             }
         };
         try {
-            await walk([]);
+            await walk(root, []);
         } catch (err) {
             if (errorCode(err) !== "ENOENT") {
                 throw err;

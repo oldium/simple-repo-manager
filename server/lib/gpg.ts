@@ -6,8 +6,7 @@ import osPath from "path";
 import path from "path/posix";
 import fs from "fs/promises";
 import { loadSigningKey } from "../backend/pgp.ts";
-
-const KEYRING_FILES = { deb: "archive-keyring.asc", rpm: "RPM-GPG-KEY.asc" } as const;
+import { KEYRING_FILES } from "./validations.ts";
 
 async function addPublicKeyToRepo(repoKeyFile: string, publicKey: openpgp.PublicKey) {
     let existingContent = "";

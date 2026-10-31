@@ -5,7 +5,10 @@ import fs from "fs";
 import assert from "node:assert";
 import type { Writable } from "stream";
 import { tempName } from "../../lib/fs.ts";
-import { validateDistro, validateFilename } from "../../lib/validations.ts";
+import { invalidDistroMessage, invalidFilenameMessage, validateDistro, validateFilename } from "../../lib/validations.ts";
+import { repoDirectoryName } from "../../lib/file-naming.ts";
+import { toOsPath } from "../../lib/safe-path.ts";
+import { RepoValidationError } from "../../lib/errors.ts";
 import osPath from "path";
 import path from "node:path/posix";
 import logger from "../../lib/logger.ts";
@@ -42,30 +45,27 @@ class PutHandler {
     ): void {
         const { distro, release, component, subcomponent, filename } = req.params;
 
-        const distroComponents = [distro, release].concat(
-            component ? [component].concat(subcomponent ? [subcomponent] : []) : []);
+        const requested = [distro, release].concat(component ? [component].concat(subcomponent ? [subcomponent] : []) : []);
+        const distroComponents = requested.map(name => repoDirectoryName(name));
         if (!validateDistro(type, distroComponents)) {
-            logger.warn(`Invalid distro: ${ distroComponents.join('/') }`);
-            sendErrorResponse(res, 400, `Unknown or invalid distro: ${ type }/${ distroComponents.join('/') }`);
+            logger.warn(`Invalid distro: ${ requested.join('/') }`);
+            sendErrorResponse(res, 400, invalidDistroMessage(type, requested));
             return;
         }
 
         const relPath = path.join(type, ...distroComponents, filename);
-        const filePath: Omit<FileResponse, "status"> = {
-            filename,
-            path: relPath
-        };
+        const sentPath = [type, ...requested, filename].join('/');
 
         logger.info(`Received PUT upload request for ${ type }/${ distroComponents.join('/') }: ${ filename }`);
 
         if (!validateFilename(type, filename)) {
             logger.warn(`Invalid filename: ${ filename }`);
-            sendUploadResponse(res, 400, `Invalid filename: ${ filename }`, [{ ...filePath, status: 'failed' }]);
+            sendUploadResponse(res, 400, invalidFilenameMessage(filename), [{ filename, path: sentPath, status: 'failed' }]);
             return;
         }
 
         // Generate temporary filename using IP:Port (same logic as storage engine)
-        const tempPath: string = osPath.join(this.paths.incomingDir, 'tmp', tempName(req.socket));
+        const tempPath: string = toOsPath(osPath.join(this.paths.incomingDir, 'tmp'), tempName(req.socket));
 
         const writeStream = fs.createWriteStream(tempPath, {
             flags: 'w',
@@ -104,7 +104,7 @@ class PutHandler {
 
         const maySetResponse = (status: number, message: string, uploadStatus: FileResponse["status"]) => {
             if (!response) {
-                response = { status, message, files: [{ ...filePath, status: uploadStatus }] };
+                response = { status, message, files: [{ filename, path: uploadStatus === 'ok' ? relPath : sentPath, status: uploadStatus }] };
             }
         }
 
@@ -138,21 +138,27 @@ class PutHandler {
 
             writeStream.off('error', onWriteError);
 
-            const targetDir = osPath.join(this.paths.incomingDir, 'staging', type, ...distroComponents);
-            const targetPath = osPath.join(targetDir, filename);
-
             try {
+                const stagingDir = osPath.join(this.paths.incomingDir, 'staging');
+                const targetPath = toOsPath(stagingDir, relPath);
+                const targetDir = osPath.dirname(targetPath);
+
                 // Attempt to move the completed temporary file
                 // targetPaths were already validated earlier; the hash flushed before the write stream could finish
                 assert(digests !== undefined);
-                await stageUpload({ tempPath, targetDir, targetPath, relPath, repoStateDir: this.paths.repoStateDir, digests });
+                await stageUpload({ tempPath, stagingDir, targetDir, targetPath, relPath, sentPath, repoStateDir: this.paths.repoStateDir, digests });
 
                 // Send success response ONLY AFTER successful move
                 maySetResponse(201, 'File uploaded successfully', 'ok');
             } catch (err: unknown) {
-                logger.error(`Error finalizing PUT upload for ${ tempPath }:`, { err });
                 cleanupTempFile(); // Clean up temp file on move failure
-                maySetResponse(500, 'Failed to finalize upload', 'failed');
+                if (err instanceof RepoValidationError) {
+                    logger.warn(`Refused ${ filename }: ${ err.message }`);
+                    maySetResponse(400, err.message, 'failed');
+                } else {
+                    logger.error(`Error finalizing PUT upload for ${ tempPath }:`, { err });
+                    maySetResponse(500, 'Failed to finalize upload', 'failed');
+                }
             }
 
             sendResponse();

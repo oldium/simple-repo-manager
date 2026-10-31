@@ -9,6 +9,7 @@ import { IndexPublisher } from "./index-publish.ts";
 import { isTempName, listFiles, removeQuietly, statQuietly } from "./publish-fs.ts";
 import { publishRpm, reconcileRpm } from "./rpm/publisher.ts";
 import logger from "../lib/logger.ts";
+import { toOsPath } from "../lib/safe-path.ts";
 
 /** keyConfigured: a signing key file is configured; with no key loaded, existing signatures then stay (the file is missing, not withdrawn) */
 export type ReconcileOptions = { keyConfigured?: boolean };
@@ -157,9 +158,8 @@ class Reconciler {
     async dropVanishedStaged(): Promise<string[]> {
         const gone: string[] = [];
         for (const row of this.s.stagedPaths.all() as { rel_path: string }[]) {
-            const segments = row.rel_path.split("/");
-            const staged = await statQuietly(osPath.join(this.ctx.paths.incomingDir, "staging", ...segments));
-            const processed = await statQuietly(osPath.join(this.ctx.paths.incomingDir, "process", ...segments));
+            const staged = await statQuietly(toOsPath(osPath.join(this.ctx.paths.incomingDir, "staging"), row.rel_path));
+            const processed = await statQuietly(toOsPath(osPath.join(this.ctx.paths.incomingDir, "process"), row.rel_path));
             if (staged === undefined && processed === undefined) {
                 gone.push(row.rel_path);
             }
@@ -196,7 +196,7 @@ class Reconciler {
         }
         const tmpDir = osPath.join(this.ctx.paths.repoStateDir, "tmp");
         for (const rel of await listFiles(tmpDir)) {
-            const file = osPath.join(tmpDir, ...rel.split("/"));
+            const file = toOsPath(tmpDir, rel);
             await removeQuietly(file);
             logger.info(`Deleted ${ file }: an index write that never finished`);
             deleted.push(file);
@@ -238,7 +238,7 @@ export async function reconcile(ctx: BackendContext, o: ReconcileOptions = {}): 
     const wrote = published.length > 0 || repaired.length > 0;
     const restamped = wrote ? reconciler.restampRemoved() : [];
     const restampedIndexes = wrote ? reconciler.restampSuperseded() : [];
-    // A start must not cost a directory per source, so a temp that a crashed move across devices leaves in a pool stays
+    // A start must not cost a directory per source; the import of what is still in process replaces a temp a crashed move left in a pool
     const files = await listFiles(ctx.paths.repoDir, isPoolRoot);
     const superseded = reconciler.supersedeOrphans(files);
     const shadows = await reconciler.sweepShadows();

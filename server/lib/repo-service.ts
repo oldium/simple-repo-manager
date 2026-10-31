@@ -5,7 +5,8 @@ import type { Listing, Page } from "../backend/paging.ts";
 import { isFormat } from "../backend/pool.ts";
 import type { Format } from "../backend/pool.ts";
 import { RepoInternalError, RepoNotFoundError, RepoServiceUnavailableError, RepoValidationError } from "./errors.ts";
-import { validateDistro, validateFilename } from "./validations.ts";
+import { repoDirectoryName } from "./file-naming.ts";
+import { invalidDistroMessage, invalidFilenameMessage, validateDistro, validateFilename } from "./validations.ts";
 import type { RemovalFile, RepoFile } from "./repo-types.ts";
 
 export type { RemovalFile, RepoFile } from "./repo-types.ts";
@@ -100,6 +101,15 @@ export interface ServerStatus {
     };
 }
 
+/** The filter in the spelling the database holds */
+function inRepoSpelling<F extends RepositoryFilter>(filter: F): F {
+    return {
+        ...filter,
+        distribution: filter.distribution && repoDirectoryName(filter.distribution),
+        release: filter.release && repoDirectoryName(filter.release),
+    };
+}
+
 export class RepoService {
     private readonly paths: Paths;
     private readonly gpg: Gpg;
@@ -113,12 +123,12 @@ export class RepoService {
 
     public async listRepositories(filter: RepositoryFilter = {}): Promise<RepositoryRef[]> {
         const format = this.enabledFormat(filter.format);
-        return (await this.backend()).listRepositories({ ...filter, format });
+        return (await this.backend()).listRepositories({ ...inRepoSpelling(filter), format });
     }
 
     public async listSourcePackages(filter: SourcePackageFilter, page: Page = {}): Promise<Listing<SourcePackage>> {
         const format = this.enabledFormat(filter.format);
-        return (await this.backend()).listSourcePackages({ ...filter, format }, page);
+        return (await this.backend()).listSourcePackages({ ...inRepoSpelling(filter), format }, page);
     }
 
     public prepareUpload(target: UploadTarget, filenames: string[]): UploadSlot[] {
@@ -137,16 +147,17 @@ export class RepoService {
             throw new RepoValidationError("component/subcomponent are only valid for format=deb");
         }
 
-        const distroParts: string[] = [target.distribution, target.release];
+        const requested: string[] = [target.distribution, target.release];
         if (target.format === "deb") {
             if (!target.component) {
                 throw new RepoValidationError("component is required for format=deb");
             }
-            distroParts.push(target.component);
-            if (target.subcomponent) distroParts.push(target.subcomponent);
+            requested.push(target.component);
+            if (target.subcomponent) requested.push(target.subcomponent);
         }
+        const distroParts = requested.map(name => repoDirectoryName(name));
         if (!validateDistro(target.format, distroParts)) {
-            throw new RepoValidationError("Invalid distribution/release/component path");
+            throw new RepoValidationError(invalidDistroMessage(target.format, requested));
         }
 
         if (filenames.length === 0) {
@@ -156,7 +167,7 @@ export class RepoService {
         const slots: UploadSlot[] = [];
         for (const filename of filenames) {
             if (!validateFilename(target.format, filename)) {
-                throw new RepoValidationError(`Invalid filename '${ filename }'`);
+                throw new RepoValidationError(invalidFilenameMessage(filename));
             }
             const segments = ["/api/v1/upload", target.format, ...distroParts, filename];
             const relativePath = segments.join("/");
@@ -183,7 +194,7 @@ export class RepoService {
         const format = this.enabledFormat(filter.format);
         const backend = await this.backend();
         this.assertRepository(backend, format, filter);
-        const listing = backend.listPackageFiles({ ...filter, format }, page);
+        const listing = backend.listPackageFiles({ ...inRepoSpelling(filter), format }, page);
         const targets = new Set(listing.items.map(f => `${ f.format }/${ f.distribution }/${ f.release }`));
         const result: ListFilesResult = { files: listing.items.map(f => ({ filename: f.filename, path: f.path })), touchedTargets: targets.size };
         if (listing.nextCursor !== undefined) {
@@ -199,7 +210,7 @@ export class RepoService {
         const format = this.enabledFormat(filter.format);
         const backend = await this.backend();
         this.assertRepository(backend, format, filter);
-        const result = await backend.remove({ ...filter, format });
+        const result = await backend.remove({ ...inRepoSpelling(filter), format });
         const failed = result.files.filter(f => f.status === "failed").length;
         if (failed > 0) {
             throw new RepoInternalError(
@@ -240,12 +251,13 @@ export class RepoService {
         return wantDeb && wantRpm ? undefined : wantDeb ? "deb" : "rpm";
     }
 
-    /** A distribution or release named explicitly must exist; the backend answers empty for one that does not */
+    /** A distribution or release named explicitly must exist, the backend answers empty for one that does not; the error shows it as sent */
     private assertRepository(backend: Backend, format: Format | undefined, filter: RepositoryFilter): void {
         if (filter.distribution === undefined && filter.release === undefined) {
             return;
         }
-        if (backend.listRepositories({ format, distribution: filter.distribution, release: filter.release }).length === 0) {
+        const { distribution, release } = inRepoSpelling(filter);
+        if (backend.listRepositories({ format, distribution, release }).length === 0) {
             throw new RepoNotFoundError(`No such repository ${ filter.format ?? "-" }/${ filter.distribution ?? "-" }/${ filter.release ?? "-" }`);
         }
     }

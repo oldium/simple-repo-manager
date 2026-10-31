@@ -17,7 +17,10 @@ import { removeEmptyParents } from "../../server/backend/publish-fs.ts";
 import { RpmCatalog, rpmPoolPath } from "../../server/backend/rpm/catalog.ts";
 import type { RpmPackageInput } from "../../server/backend/rpm/catalog.ts";
 import { publishRpm } from "../../server/backend/rpm/publisher.ts";
+import { resetFileNaming, setFileNaming } from "../../server/lib/file-naming.ts";
 import logger from "../../server/lib/logger.ts";
+
+const windowsTest = process.platform === "win32" ? test : test.skip;
 
 const FIXTURES = fileURLToPath(new URL("../fixtures/", import.meta.url));
 const TRIXIE = osPath.join(FIXTURES, "packages", "deb", "debian", "trixie", "main");
@@ -574,5 +577,83 @@ describe("Tests for startGc", () => {
         }
         // What the timer hands to exclusive is a collection run
         await expect(runs[0]()).resolves.toEqual({ pool: [], index: [] });
+    }));
+});
+
+describe("Tests for the deletion of a pool file where case does not count", () => {
+    const POOL = "rpm/fedora/42/Packages/n/networkmanager";
+    const REMOVED = `${ POOL }/NetworkManager-1.56.0-1.fc44.x86_64.rpm`;
+    const LIVE = `${ POOL }/networkmanager-1.56.0-1.fc44.x86_64.rpm`;
+    const ONLY_THE_ROW = `${ REMOVED } is not on disk under this name, so only its row goes`;
+
+    afterEach(() => {
+        resetFileNaming();
+        jest.restoreAllMocks();
+    });
+
+    /** A removed row whose file went in a kill before the row or by hand, and a later upload of the name in another case */
+    async function reuploadedInOtherCase(ctx: Ctx): Promise<void> {
+        insertPoolRow(ctx.db, fakeFile(REMOVED), STALE);
+        await writeRepoFile(ctx, LIVE);
+    }
+
+    test("The collection leaves the file of another spelling, forgets the row and logs it", withGc(async ctx => {
+        setFileNaming({ caseSensitive: false, shortNames: false });
+        await reuploadedInOtherCase(ctx);
+        const warn = jest.spyOn(logger, "warn").mockReturnValue(logger);
+
+        expect(await runGc(ctx)).toEqual({ pool: [REMOVED], index: [] });
+
+        expect(warn).toHaveBeenCalledWith(ONLY_THE_ROW);
+        expect(await fs.readdir(repoFile(ctx, POOL))).toEqual([path.basename(LIVE)]);
+        expect(poolRows(ctx.db)).toEqual([]);
+    }));
+
+    windowsTest("On this volume the old spelling reaches the live file, and neither the collection nor a removal takes it", withGc(async ctx => {
+        await reuploadedInOtherCase(ctx);
+        expect(await exists(repoFile(ctx, REMOVED))).toBe(true);
+        const warn = jest.spyOn(logger, "warn").mockReturnValue(logger);
+
+        await deletePoolFile(ctx, REMOVED);
+        expect(await fs.readdir(repoFile(ctx, POOL))).toEqual([path.basename(LIVE)]);
+
+        expect(await runGc(ctx)).toEqual({ pool: [REMOVED], index: [] });
+        expect(await fs.readdir(repoFile(ctx, POOL))).toEqual([path.basename(LIVE)]);
+        expect(warn).toHaveBeenCalledWith(ONLY_THE_ROW);
+    }));
+
+    test("The exact name still goes, with the directories it leaves empty", withGc(async ctx => {
+        setFileNaming({ caseSensitive: false, shortNames: false });
+        insertPoolRow(ctx.db, fakeFile(REMOVED), STALE);
+        await writeRepoFile(ctx, REMOVED);
+        const warn = jest.spyOn(logger, "warn").mockReturnValue(logger);
+
+        expect(await runGc(ctx)).toEqual({ pool: [REMOVED], index: [] });
+
+        expect(warn).not.toHaveBeenCalled();
+        expect(await exists(repoFile(ctx, "rpm/fedora/42/Packages/n"))).toBe(false);
+        expect(poolRows(ctx.db)).toEqual([]);
+    }));
+
+    test("A directory that cannot be listed fails the deletion, which keeps the row for the next run", withGc(async ctx => {
+        setFileNaming({ caseSensitive: false, shortNames: false });
+        await writeRepoFile(ctx, REMOVED);
+        const denied = Object.assign(new Error("access denied"), { code: "EACCES" });
+        const readdir = jest.spyOn(fs, "readdir").mockRejectedValue(denied);
+
+        await expect(deletePoolFile(ctx, REMOVED)).rejects.toBe(denied);
+
+        readdir.mockRestore();
+        expect(await exists(repoFile(ctx, REMOVED))).toBe(true);
+    }));
+
+    test("Where case counts nothing is listed and nothing is logged", withGc(async ctx => {
+        setFileNaming({ caseSensitive: true, shortNames: false });
+        insertPoolRow(ctx.db, fakeFile(REMOVED), STALE);
+        const warn = jest.spyOn(logger, "warn").mockReturnValue(logger);
+
+        expect(await runGc(ctx)).toEqual({ pool: [REMOVED], index: [] });
+
+        expect(warn).not.toHaveBeenCalled();
     }));
 });

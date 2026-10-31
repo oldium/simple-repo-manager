@@ -87,6 +87,35 @@ This will build the local Docker image (from `Dockerfile`) and start local
 server listening at http://localhost (port 80 is forwarded to container port
 3000\) with local folder `./data` mounted to `/app/data` in the container.
 
+### Windows 11
+
+The server also runs natively on Windows 11, build 22000 or newer, built and
+started as in [Manual Build](#manual-build). Limits on Windows:
+
+* Names Windows cannot hold are refused: device names like `con`, names with
+  `:`, `*` or `?`, a trailing dot or space, and, where the volume has
+  [8.3 short names](#file-names), names like `git~1`. The upload answers `400`,
+  the import fails and such a URL gets `404`.
+* Where case does not count, as usual on Windows, names differing only in case
+  would be one file, so the second one fails. Uploading a failed file again, in
+  any case, replaces it.
+* Where case does not count, distributions, releases and components are kept in
+  lower-case ASCII, see [File Names](#file-names).
+* Where case does not count, a Debian component cannot be named `release` or
+  `inrelease`.
+* A process reading a published file without sharing delete access makes its
+  publishing fail; the next import, removal or hourly garbage collection repairs
+  it.
+* Ctrl+C, Ctrl+Break, closing the console window or terminal tab, and End Task
+  in Task Manager stop the server cleanly, but closing gives it only the few
+  seconds Windows allows. The server cannot run as a Windows service yet, so
+  logging off or shutting down ends it at once. The next start repairs what is
+  left.
+* With a data directory moved from Linux, a name Windows refuses in a release,
+  an index or an RPM path stops the start, and a Debian source package with such
+  a name cannot be served. See
+  [Rebuilding the Repository Database](#rebuilding-the-repository-database).
+
 [npm]: https://github.com/npm/cli/pull/8703#issuecomment-3452682658
 
 [vscode-devcontainer]: https://code.visualstudio.com/docs/devcontainers/containers
@@ -349,7 +378,17 @@ The packages API is designed to be used by tools like `dput`, `dput-ng` and
 `curl`. It can be optionally protected by basic authentication. See the
 [Configuration](#configuration) section for more details.
 
-The packages upload API is prefixed with `/api/v1/upload`.
+The packages upload API is prefixed with `/api/v1/upload`. A file name, like a
+distribution, release or component, can be at most
+[240 bytes long](#file-names), less where the file system takes less. On a
+case-insensitive file system a distribution, release or component is accepted in
+any case, here, in `prepare_upload` and in the filters of the listing and removal
+APIs, and is stored and reported in lower case, while a file name keeps its case.
+A name the server itself writes answers `400`, as its files would mix with the
+ones of the upload: a Debian component `source`, `by-hash`, `debug`,
+`debian-installer` or `binary-<anything>` at any level, and `Release`, `InRelease`
+or `Release.gpg` as the first level, there in any case where case does not count.
+An error names the path as the client sent it.
 
 The response to all the Upload API requests below the `/api/v1/upload` path is
 always JSON with the following fields:
@@ -1120,6 +1159,59 @@ DEB_ORIGIN_UBUNTU=My Ubuntu Repository
 DEB_DESCRIPTION_UBUNTU=My Ubuntu Repository for Ubuntu distributions
 ```
 
+### File Names
+
+The server follows how the file system holding `REPO_DIR` and `INCOMING_DIR`
+treats names. Each setting is `auto` (the default), `true` or `false`, any other
+value refuses the start:
+
+* `REPO_CASE_SENSITIVE`: whether names differing only in case are different
+  files.
+* `REPO_SHORT_NAMES`: whether files have 8.3 short names. A name of that shape,
+  like `git~1`, is then refused, as it could reach or overwrite another file.
+
+> [!WARNING]
+> A setting overrides what the file system really does. `REPO_SHORT_NAMES=false`
+> on a volume that really has short names lets a name like `srm-he~1.deb`
+> overwrite another file, here `srm-hello_1.0-1_amd64.deb`.
+> `REPO_CASE_SENSITIVE=true` on a volume that is not case-sensitive lets
+> `SRM-hello-1.0-1.fc42.x86_64.rpm` overwrite `srm-hello-1.0-1.fc42.x86_64.rpm`,
+> with both imports reporting success.
+
+With `auto`, on Windows the server asks both directories: case-sensitive only
+when both are, short names when either has them. Other systems answer
+case-sensitive and no short names. The start log names both answers and whether
+each is `auto` or configured, and warns when an answer is only the default
+because the directory could not be asked.
+
+The server also asks both directories, on Windows and Linux, for the longest
+name their file systems take, and keeps 15 bytes of it for temporary files. On
+the usual file systems that is 255, so names can have 240 bytes, which is also
+the upper bound. The start log names the result. Below 97 the published files
+would not fit, so the server refuses to start. The length of a whole path needs
+no care: on Windows every file access can reach about 32767 characters, with
+`LongPathsEnabled` or without, and on Linux 4096 bytes, while the longest path
+below `REPO_DIR` has about 1300 bytes.
+
+A Linux container cannot ask what is behind its bind mount. With `./data` on
+NTFS aliases and case-only overwrites really happen, so set both:
+
+```dotenv
+REPO_CASE_SENSITIVE=false
+REPO_SHORT_NAMES=true
+```
+
+Where case does not count, a data directory moved from Linux or a setting
+flipped to `false` can hold a distribution, release or component with upper
+case or letters other than ASCII, or a Debian component `release`. The server
+then refuses to start and names it. Rename such a directory to lower-case ASCII
+and start with `--rebuild`. Where an index names the directory, as
+with a Debian component, the rebuild refuses that as well, so upload its packages
+again to an empty repository.
+
+Turning 8.3 names off on a volume keeps the short names files already have until
+`fsutil 8dot3name strip` runs.
+
 ### Installation Instructions HTML Templates
 
 The installation instructions are shown on every page and are rendered by HTML
@@ -1569,13 +1661,18 @@ docker compose up --detach
 The rebuild runs before the server starts serving. It reads the published
 indexes of every Debian-like release and checks every package file against
 them, and it reads every `.rpm` of every RedHat-like release. Any problem, like
-an unreadable package, a checksum mismatch or a missing file, aborts the
-rebuild: nothing on disk changes, the server logs every problem found and
-refuses to start. Otherwise, the RPMs move to the
-`Packages/<first character>/<source name>/` layout, every release is published
-again, and the new database replaces the old one. Index files that are no
-longer needed are deleted after one day. A release without packages stays
-published, with empty indexes.
+an unreadable package, a checksum mismatch, a missing file, a name
+[Windows refuses](#windows-11), a Debian component named as something the server
+[writes itself](#packages-upload-api), a link to a directory the rebuild does not
+follow or, where case does not count, a distribution, release or component not in
+lower-case ASCII, aborts the rebuild: nothing on disk changes, the server logs
+every problem found and refuses to start. A symbolic link or a junction works as
+`REPO_DIR`, `deb` or `rpm`, and at or below `deb/<distribution>/pool` and
+`rpm/<distribution>/<release>/repodata`. Otherwise, the RPMs move to the lower-case
+`Packages/<first character>/<source name>/` layout, temp files a crash left are
+deleted, every release is published again, and the new database replaces the old
+one. Index files that are no longer needed are deleted after one day. A release
+without packages stays published, with empty indexes.
 
 The published tree does not record removals that are still waiting for the
 garbage collection, so a rebuild during that day has two limits:

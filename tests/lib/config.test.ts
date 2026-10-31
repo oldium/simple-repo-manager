@@ -365,6 +365,42 @@ describe("Test environment variables and config.ts", () => {
         }
     }));
 
+    test("Check that the file naming settings default to auto", withLocalTmpDir(async () => {
+        process.env.NODE_ENV = "production";
+
+        const { default: config } = await import("../../server/lib/config.ts");
+
+        expect(config.app.fileNaming).toEqual({ caseSensitive: "auto", shortNames: "auto" });
+    }));
+
+    describe.each([["REPO_CASE_SENSITIVE", "caseSensitive"], ["REPO_SHORT_NAMES", "shortNames"]] as const)("Check %s", (name, field) => {
+        test.each<[string, boolean | "auto"]>([["auto", "auto"], ["true", true], ["false", false], [" true ", true], ["", "auto"], ["  ", "auto"]])("%j is taken as %j", (value, expected) => withLocalTmpDir(async () => {
+            process.env.NODE_ENV = "production";
+            process.env[name] = value;
+
+            const { default: config } = await import("../../server/lib/config.ts");
+
+            expect(config.app.fileNaming).toEqual({ caseSensitive: "auto", shortNames: "auto", [field]: expected });
+        })());
+
+        test.each(["yes", "no", "TRUE", "Auto", "1", "0", "on"])("%j stops the server", value => withLocalTmpDir(async () => {
+            process.env.NODE_ENV = "production";
+            process.env[name] = value;
+
+            const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+            const exitSpy = jest.spyOn(process, "exit").mockImplementation((code) => {
+                throw new Error(`process.exit(${ code })`);
+            });
+            try {
+                await expect(import("../../server/lib/config.ts")).rejects.toThrow("process.exit(1)");
+                expect(errorSpy).toHaveBeenCalledWith(`${ name } must be auto, true or false: ${ value }`);
+            } finally {
+                exitSpy.mockRestore();
+                errorSpy.mockRestore();
+            }
+        })());
+    });
+
     test("Check that host name is translated to IP", withLocalTmpDir(async () => {
         process.env.NODE_ENV = "production";
         process.env.HTTP_HOST = "one.example.com, two.example.com";

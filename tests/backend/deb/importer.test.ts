@@ -8,15 +8,26 @@ import { openDatabase } from "../../../server/backend/db.ts";
 import { hashFile } from "../../../server/backend/hash.ts";
 import type { Digests } from "../../../server/backend/hash.ts";
 import type { BackendContext } from "../../../server/backend/context.ts";
+import { DebCatalog } from "../../../server/backend/deb/catalog.ts";
 import { importDebian } from "../../../server/backend/deb/importer.ts";
 import { readControlFile } from "../../../server/backend/deb/inputs.ts";
-import { checkPathSegment, checkSafeName } from "../../../server/backend/staging.ts";
+import { publishDebian } from "../../../server/backend/deb/publisher.ts";
+import { checkSafeName, checkVersion } from "../../../server/backend/staging.ts";
 import { RepoValidationError } from "../../../server/lib/errors.ts";
+import { NOT_IN_LOWER_CASE, resetFileNaming, setFileNaming } from "../../../server/lib/file-naming.ts";
 import logger from "../../../server/lib/logger.ts";
 import type { ImportFile } from "../../../server/lib/repo-service.ts";
 
+const windowsTest = process.platform === "win32" ? test : test.skip;
+const notWindowsTest = process.platform === "win32" ? test.skip : test;
+
+const CASE_INSENSITIVE = { caseSensitive: false, shortNames: false };
+const CASE_SENSITIVE = { caseSensitive: true, shortNames: false };
+
+afterEach(resetFileNaming);
+
 const FIXTURES = fileURLToPath(new URL("../../fixtures/", import.meta.url));
-const GOLDEN = osPath.join(FIXTURES, "golden");
+const GOLDEN =osPath.join(FIXTURES, "golden");
 const NOW = 1700000000;
 const MIB = 1024 * 1024;
 const SKIPPED = "no .changes file references it";
@@ -281,12 +292,12 @@ describe("Tests for the name checks", () => {
         expect(() => checkSafeName(kind, value, "x")).toThrow(new RepoValidationError(`Malformed x: ${ JSON.stringify(value) }`));
     });
 
-    test.each(["2:3.0-1", "22-1+tpm1u0+deb14", "1.0~rc1+dfsg-1", "1.0^git1", "1_0", "1..2", "srm-hello_1.0.orig.tar.gz"])("A path segment may be %s", value => {
-        expect(() => checkPathSegment(value, "x")).not.toThrow();
+    test.each(["2:3.0-1", "22-1+tpm1u0+deb14", "1.0~rc1+dfsg-1", "1.0^git1", "1_0", "1..2"])("A version may be %s", value => {
+        expect(() => checkVersion(value, "x")).not.toThrow();
     });
 
-    test.each(["", ".", "..", "1/0", "1\\0", "1 0", "1\t0", "1\n", "1\u0001", "1\u007f", "1\u0085", "1 ", "1 "])("A path segment may not be %j", value => {
-        expect(() => checkPathSegment(value, "x")).toThrow(new RepoValidationError(`Malformed x: ${ JSON.stringify(value) }`));
+    test.each(["", ".", "..", "1/0", "1\\0", "1 0", "1\t0", "1\n", "1\u0001", "1\u007f", "1\u0085", "1 ", "1 "])("A version may not be %j", value => {
+        expect(() => checkVersion(value, "x")).toThrow(new RepoValidationError(`Malformed x: ${ JSON.stringify(value) }`));
     });
 });
 
@@ -712,6 +723,9 @@ describe("Tests for importDebian", () => {
         ["a Source that climbs out of the pool", {
             changes: text => text.replace("Source: srm-hello", "Source: ../../../evil"), reason: `Malformed Source of ${ TRIXIE.changes }: "../../../evil"`, whole: true,
         }],
+        ["a Source over the length limit", {
+            changes: text => text.replace("Source: srm-hello", `Source: ${ "a".repeat(241) }`), reason: `Malformed Source of ${ TRIXIE.changes }: "${ "a".repeat(64) }…" is longer than 240 bytes`, whole: true,
+        }],
         ["a Source starting with a dash", { changes: text => text.replace("Source: srm-hello", "Source: -evil"), reason: `Malformed Source of ${ TRIXIE.changes }: "-evil"`, whole: true }],
         ["a Source starting with a dot", { changes: text => text.replace("Source: srm-hello", "Source: .evil"), reason: `Malformed Source of ${ TRIXIE.changes }: ".evil"`, whole: true }],
         ["a Source with a space", { changes: text => text.replace("Source: srm-hello", "Source: ev il"), reason: `Malformed Source of ${ TRIXIE.changes }: "ev il"`, whole: true }],
@@ -757,6 +771,364 @@ describe("Tests for importDebian", () => {
         expect(count(ctx.db, "releases")).toBe(0);
     })());
 
+    test("A source named aux fails where its pool directory cannot exist, and moves nothing", withImporter(async ctx => {
+        const names = await stage(ctx, TRIXIE, { record: false });
+        await edit(ctx, `${ TRIXIE.target }/${ TRIXIE.changes }`, text => text.replace("Source: srm-hello", "Source: aux"));
+        await recordAll(ctx, TRIXIE.target);
+
+        const result = await importDebian(ctx);
+
+        expect(result).toEqual(failed(expected(TRIXIE.target, names, "failed")));
+        // Elsewhere the name is fine and only the .deb built from another source is in the way
+        expect(reasons(result)[0]).toContain(process.platform === "win32" ? `Malformed Source of ${ TRIXIE.changes }: "aux" is a reserved name on Windows` : `is built from srm-hello 1.0-1, not aux 1.0-1`);
+        expect(await staged(ctx, TRIXIE.target)).toEqual(names);
+        expect(await pooled(ctx)).toEqual([]);
+        expect(count(ctx.db, "pool_files")).toBe(0);
+        expect(count(ctx.db, "releases")).toBe(0);
+    }));
+
+    test("A listed file with the shape of a short name fails where it could alias another, and moves nothing", withImporter(async ctx => {
+        const names = await stage(ctx, TRIXIE, { record: false });
+        await edit(ctx, `${ TRIXIE.target }/${ TRIXIE.changes }`, text => text.replaceAll(` ${ ORIG }`, " git~1.xz"));
+        await recordAll(ctx, TRIXIE.target);
+
+        const result = await importDebian(ctx);
+
+        expect(result.find(f => f.filename === TRIXIE.changes)?.reason).toContain(process.platform === "win32"
+            ? 'Malformed file name in Files: "git~1.xz" has the shape of a Windows 8.3 short name'
+            : "git~1.xz is neither uploaded nor in the pool");
+        expect(await staged(ctx, TRIXIE.target)).toEqual(names);
+        expect(await pooled(ctx)).toEqual([]);
+        expect(count(ctx.db, "pool_files")).toBe(0);
+    }));
+
+    test("A file named like a device with an extension imports on any OS", withImporter(async ctx => {
+        await stage(ctx, TRIXIE, { record: false });
+        const renamed = "con.buildinfo";
+        await fs.rename(stagedPath(ctx, `${ TRIXIE.target }/${ BUILDINFO }`), stagedPath(ctx, `${ TRIXIE.target }/${ renamed }`));
+        await edit(ctx, `${ TRIXIE.target }/${ TRIXIE.changes }`, text => text.replaceAll(` ${ BUILDINFO }`, ` ${ renamed }`));
+        await recordAll(ctx, TRIXIE.target);
+
+        expect((await importDebian(ctx)).filter(f => f.status !== "ok")).toEqual([]);
+
+        expect(await staged(ctx, TRIXIE.target)).toEqual([]);
+        expect(await pooled(ctx)).toContain(renamed);
+    }));
+
+    test("One import reads each directory of the repository once", withImporter(async ctx => {
+        setFileNaming(CASE_INSENSITIVE);
+        const names = await stage(ctx, TRIXIE);
+        const readdir = jest.spyOn(fs, "readdir");
+        let reads: string[];
+        try {
+            expect(await importDebian(ctx)).toEqual(expected(TRIXIE.target, names, "ok"));
+            reads = readdir.mock.calls.map(([dir]) => String(dir)).filter(dir => dir === ctx.paths.repoDir || dir.startsWith(`${ ctx.paths.repoDir }${ osPath.sep }`));
+        } finally {
+            readdir.mockRestore();
+        }
+        expect(reads.length).toBeGreaterThan(0);
+        expect(reads).toEqual([...new Set(reads)]);
+    }));
+
+    test.each<[string, string]>([
+        ["distribution", "deb/Debian/trixie/main"],
+        ["release", "deb/debian/Trixie/main"],
+        ["component", "deb/debian/trixie/Main"],
+    ])("Where case does not count, a %s differing only in case from a published one imports into it", (_, target) => withImporter(async ctx => {
+        setFileNaming(CASE_INSENSITIVE);
+        await stage(ctx, TRIXIE);
+        await importDebian(ctx);
+        await publishDebian(ctx);
+        await fs.rm(stagedPath(ctx, "deb"), { recursive: true });
+        const names = await stage(ctx, TRIXIE, { target });
+        const rows = poolRows(ctx.db);
+
+        expect(await importDebian(ctx)).toEqual(expected(target, names, "ok"));
+
+        expect(await staged(ctx, target)).toEqual([]);
+        expect(await pooled(ctx)).toEqual(names);
+        expect(poolRows(ctx.db)).toEqual(rows);
+        expect(count(ctx.db, "releases")).toBe(1);
+        expect(count(ctx.db, "staged_digests")).toBe(0);
+        expect(sources(ctx.db)).toEqual(["main srm-hello 1.0-1"]);
+    })());
+
+    test.each<[string, string, string]>([
+        ["deb/Debian/Trixie/Main", "main", HELLO_POOL],
+        ["deb/debian/trixie/Updates/Main", "updates/main", "deb/debian/pool/updates/main/s/srm-hello"],
+    ])("Where case does not count, a bundle placed in %s lands in lower case, reported as staged", (target, component, pool) => withImporter(async ctx => {
+        setFileNaming(CASE_INSENSITIVE);
+        const names = await stage(ctx, TRIXIE, { target });
+
+        expect(await importDebian(ctx)).toEqual(expected(target, names, "ok"));
+        await publishDebian(ctx);
+
+        expect(await pooled(ctx, pool)).toEqual(names);
+        expect(await fs.readdir(poolPath(ctx, "deb"))).toEqual(["debian"]);
+        expect(await fs.readdir(poolPath(ctx, "deb/debian/dists"))).toEqual(["trixie"]);
+        expect(await fs.readdir(poolPath(ctx, `deb/debian/dists/trixie/${ component }`))).toContain("binary-amd64");
+        expect(sources(ctx.db)).toEqual([`${ component } srm-hello 1.0-1`]);
+    })());
+
+    test("Where case counts, a bundle placed in deb/Debian/Trixie/Main stays in that spelling", withImporter(async ctx => {
+        setFileNaming(CASE_SENSITIVE);
+        const target = "deb/Debian/Trixie/Main";
+        const names = await stage(ctx, TRIXIE, { target, record: false });
+        await edit(ctx, `${ target }/${ TRIXIE.changes }`, text => text.replace("Distribution: trixie", "Distribution: Trixie"));
+
+        expect(await importDebian(ctx)).toEqual(expected(target, names, "ok"));
+        await publishDebian(ctx);
+
+        expect(await pooled(ctx, "deb/Debian/pool/Main/s/srm-hello")).toEqual(names);
+        expect(await fs.readdir(poolPath(ctx, "deb"))).toEqual(["Debian"]);
+        expect(await fs.readdir(poolPath(ctx, "deb/Debian/dists"))).toEqual(["Trixie"]);
+        expect(await fs.readdir(poolPath(ctx, "deb/Debian/dists/Trixie/Main"))).toContain("binary-amd64");
+        expect(sources(ctx.db)).toEqual(["Main srm-hello 1.0-1"]);
+    }));
+
+    test("Where case does not count, a .changes must still name the release in lower case", withImporter(async ctx => {
+        setFileNaming(CASE_INSENSITIVE);
+        const target = "deb/debian/Trixie/main";
+        const names = await stage(ctx, TRIXIE, { target, record: false });
+        await edit(ctx, `${ target }/${ TRIXIE.changes }`, text => text.replace("Distribution: trixie", "Distribution: Trixie"));
+
+        const result = await importDebian(ctx);
+
+        expect(result).toEqual(failed(expected(target, names, "failed")));
+        expect(reasons(result)).toEqual([expect.stringContaining('Distribution "Trixie" does not contain trixie')]);
+        expect(await staged(ctx, target)).toEqual(names);
+        expect(await pooled(ctx)).toEqual([]);
+        expect(count(ctx.db, "releases")).toBe(0);
+    }));
+
+    /** The bundle failed, with nothing moved and no row, so the next publish has nothing to fail on */
+    async function expectRefused(ctx: BackendContext, target: string, names: string[], reason: string): Promise<void> {
+        const result = await importDebian(ctx);
+
+        expect(result).toEqual(failed(expected(target, names, "failed")));
+        expect(reasons(result)).toEqual([expect.stringContaining(reason)]);
+        expect(await staged(ctx, target)).toEqual(names);
+        expect(count(ctx.db, "pool_files")).toBe(0);
+        expect(count(ctx.db, "releases")).toBe(0);
+        expect(await publishDebian(ctx)).toEqual([]);
+    }
+
+    test.each(["release", "Release", "INRELEASE", "InRelease", "Release.gpg", "release/main", "Release/Main"])("Where case does not count, a bundle placed in the component %s fails, named as placed", component => withImporter(async ctx => {
+        setFileNaming(CASE_INSENSITIVE);
+        const target = `deb/Debian/trixie/${ component }`;
+        const names = await stage(ctx, TRIXIE, { target });
+
+        await expectRefused(ctx, target, names, `${ target }: ${ JSON.stringify(component.split("/")[0]) } cannot be a component, the release has a file of that name`);
+    })());
+
+    test("Where case counts, a bundle placed in the component release imports, as the release has only a Release", withImporter(async ctx => {
+        setFileNaming(CASE_SENSITIVE);
+        const target = "deb/debian/trixie/release";
+        const names = await stage(ctx, TRIXIE, { target });
+
+        expect(await importDebian(ctx)).toEqual(expected(target, names, "ok"));
+
+        expect(sources(ctx.db)).toEqual(["release srm-hello 1.0-1"]);
+    }));
+
+    test.each(["Release", "InRelease"])("Where case counts, a bundle placed in the component %s fails all the same", component => withImporter(async ctx => {
+        setFileNaming(CASE_SENSITIVE);
+        const target = `deb/debian/trixie/${ component }`;
+        const names = await stage(ctx, TRIXIE, { target });
+
+        await expectRefused(ctx, target, names, `${ target }: "${ component }" cannot be a component, the release has a file of that name`);
+    })());
+
+    test.each([CASE_INSENSITIVE, CASE_SENSITIVE])("With %j, a sub-component release is no file of the release and publishes", naming => withImporter(async ctx => {
+        setFileNaming(naming);
+        const target = "deb/debian/trixie/main/release";
+        const names = await stage(ctx, TRIXIE, { target });
+
+        expect(await importDebian(ctx)).toEqual(expected(target, names, "ok"));
+
+        expect(await publishDebian(ctx)).toEqual(["debian/trixie"]);
+        expect(sources(ctx.db)).toEqual(["main/release srm-hello 1.0-1"]);
+    })());
+
+    describe.each([CASE_INSENSITIVE, CASE_SENSITIVE])("With %j", naming => {
+        test.each([["source", "source"], ["debug", "debug"], ["by-hash", "by-hash"], ["main/source", "source"], ["main/by-hash", "by-hash"], ["main/debug", "debug"], ["main/debian-installer", "debian-installer"],
+            ["main/binary-amd64", "binary-amd64"], ["main/Contents-amd64.gz", "Contents-amd64.gz"], ["a/b/source/c", "source"]])("A bundle placed in the component %s fails, the publish writes that name", (component, name) => withImporter(async ctx => {
+            setFileNaming(naming);
+            const target = `deb/debian/trixie/${ component }`;
+            const names = await stage(ctx, TRIXIE, { target });
+
+            await expectRefused(ctx, target, names, `${ target }: ${ JSON.stringify(name) } cannot be a component, the publish writes that name below a component`);
+        })());
+
+        test("A bundle placed in the distribution named as the keyring fails", withImporter(async ctx => {
+            setFileNaming(naming);
+            const target = "deb/archive-keyring.asc/trixie/main";
+            const names = await stage(ctx, TRIXIE, { target });
+
+            await expectRefused(ctx, target, names, `${ target }: "archive-keyring.asc" cannot be a distribution, the format has a keyring of that name`);
+        }));
+    });
+
+    test("Where case counts, a bundle placed in the sub-component Source imports", withImporter(async ctx => {
+        setFileNaming(CASE_SENSITIVE);
+        const target = "deb/debian/trixie/main/Source";
+        const names = await stage(ctx, TRIXIE, { target });
+
+        expect(await importDebian(ctx)).toEqual(expected(target, names, "ok"));
+    }));
+
+    test("Where case does not count, a bundle placed in the sub-component Source fails, named as placed", withImporter(async ctx => {
+        setFileNaming(CASE_INSENSITIVE);
+        const target = "deb/Debian/trixie/main/Source";
+        const names = await stage(ctx, TRIXIE, { target });
+
+        await expectRefused(ctx, target, names, `${ target }: "Source" cannot be a component`);
+    }));
+
+    test("With short names, a hand-placed release of that shape fails before the catalog commits", withImporter(async ctx => {
+        setFileNaming({ caseSensitive: false, shortNames: true });
+        const target = "deb/debian/foo~1/main";
+        const names = await stage(ctx, TRIXIE, { target, record: false });
+        await edit(ctx, `${ target }/${ TRIXIE.changes }`, text => text.replace("Distribution: trixie", "Distribution: foo~1"));
+
+        await expectRefused(ctx, target, names, '"foo~1" has the shape of a Windows 8.3 short name');
+    }));
+
+    test("Without short names, a release of that shape imports", withImporter(async ctx => {
+        setFileNaming(CASE_SENSITIVE);
+        const target = "deb/debian/foo~1/main";
+        const names = await stage(ctx, TRIXIE, { target, record: false });
+        await edit(ctx, `${ target }/${ TRIXIE.changes }`, text => text.replace("Distribution: trixie", "Distribution: foo~1"));
+
+        expect(await importDebian(ctx)).toEqual(expected(target, names, "ok"));
+    }));
+
+    const OTHER_THAN_ASCII = `f${ String.fromCodePoint(0xE9) }dora`;
+
+    test.each([`deb/${ OTHER_THAN_ASCII }/trixie/main`, `deb/debian/${ OTHER_THAN_ASCII }/main`, `deb/debian/trixie/${ OTHER_THAN_ASCII }`, `deb/debian/trixie/main/${ OTHER_THAN_ASCII }`])("Where case does not count, a bundle placed in %s fails", target => withImporter(async ctx => {
+        setFileNaming(CASE_INSENSITIVE);
+        const names = await stage(ctx, TRIXIE, { target });
+
+        await expectRefused(ctx, target, names, `${ OTHER_THAN_ASCII }": ${ NOT_IN_LOWER_CASE }`);
+    })());
+
+    test("A problem names the folder as found, not as the repository would hold it", withImporter(async ctx => {
+        setFileNaming(CASE_INSENSITIVE);
+        const target = `deb/Debian/Trixie/${ OTHER_THAN_ASCII }`;
+        const names = await stage(ctx, TRIXIE, { target });
+
+        await expectRefused(ctx, target, names, `${ target }: "${ OTHER_THAN_ASCII }": ${ NOT_IN_LOWER_CASE }`);
+    }));
+
+    test("A name the platform refuses is named as found, in no path of the repository", withImporter(async ctx => {
+        setFileNaming(CASE_INSENSITIVE);
+        const target = `deb/Debian/Trixie/${ "M".repeat(241) }`;
+        const names = await stage(ctx, TRIXIE, { target });
+
+        await expectRefused(ctx, target, names, `"${ "M".repeat(64) }…" is longer than 240 bytes`);
+    }));
+
+    test("Where case counts, a bundle placed below a name other than ASCII imports", withImporter(async ctx => {
+        setFileNaming(CASE_SENSITIVE);
+        const target = `deb/debian/trixie/${ OTHER_THAN_ASCII }`;
+        const names = await stage(ctx, TRIXIE, { target });
+
+        expect(await importDebian(ctx)).toEqual(expected(target, names, "ok"));
+    }));
+
+    const BUILDINFO_IN_OTHER_CASE = "SRM-hello_1.0-1_amd64.buildinfo";
+
+    /** The trixie bundle again, its .buildinfo under the name in another case and with other content */
+    async function stageBuildinfoInOtherCase(ctx: BackendContext): Promise<string[]> {
+        const names = await stage(ctx, TRIXIE, { record: false });
+        const renamed = stagedPath(ctx, `${ TRIXIE.target }/${ BUILDINFO_IN_OTHER_CASE }`);
+        await fs.rename(stagedPath(ctx, `${ TRIXIE.target }/${ BUILDINFO }`), renamed);
+        await fs.appendFile(renamed, "Build-Tainted-By:\n rebuilt\n");
+        const digests = await hashFile(renamed);
+        await edit(ctx, `${ TRIXIE.target }/${ TRIXIE.changes }`, text => relisted(text, BUILDINFO, digests).replaceAll(` ${ BUILDINFO }`, ` ${ BUILDINFO_IN_OTHER_CASE }`));
+        await recordAll(ctx, TRIXIE.target);
+        return names.map(name => name === BUILDINFO ? BUILDINFO_IN_OTHER_CASE : name).sort();
+    }
+
+    test("A listed file differing only in case from a pool file fails the bundle, moves nothing and adds no row", withImporter(async ctx => {
+        setFileNaming(CASE_INSENSITIVE);
+        const original = await stage(ctx, TRIXIE);
+        await importDebian(ctx);
+        const rows = poolRows(ctx.db);
+        const names = await stageBuildinfoInOtherCase(ctx);
+
+        const result = await importDebian(ctx);
+
+        expect(result).toEqual(failed(expected(TRIXIE.target, names, "failed")));
+        expect(reasons(result)).toEqual([expect.stringContaining(`${ HELLO_POOL }/${ BUILDINFO_IN_OTHER_CASE } differs only in case from ${ HELLO_POOL }/${ BUILDINFO }`)]);
+        expect(await staged(ctx, TRIXIE.target)).toEqual(names);
+        expect(await pooled(ctx)).toEqual(original);
+        expect(await hashFile(poolPath(ctx, `${ HELLO_POOL }/${ BUILDINFO }`))).toEqual(await hashFile(osPath.join(TRIXIE.dir, BUILDINFO)));
+        expect(poolRows(ctx.db)).toEqual(rows);
+
+        expect((await importDebian(ctx)).map(f => f.status)).toEqual(Array(7).fill("failed"));
+    }));
+
+    test("A pool file waiting for garbage collection still conflicts", withImporter(async ctx => {
+        setFileNaming(CASE_INSENSITIVE);
+        const original = await stage(ctx, TRIXIE);
+        await importDebian(ctx);
+        new DebCatalog(ctx.db).remove({ source: "srm-hello" }, NOW, false);
+        const rows = poolRows(ctx.db);
+        expect(rows.map(row => row.removed_at)).toEqual(Array(7).fill(NOW));
+        const names = await stageBuildinfoInOtherCase(ctx);
+
+        const result = await importDebian(ctx);
+
+        expect(result).toEqual(failed(expected(TRIXIE.target, names, "failed")));
+        expect(reasons(result)).toEqual([expect.stringContaining(`${ HELLO_POOL }/${ BUILDINFO_IN_OTHER_CASE } differs only in case from ${ HELLO_POOL }/${ BUILDINFO }`)]);
+        expect(await staged(ctx, TRIXIE.target)).toEqual(names);
+        expect(await pooled(ctx)).toEqual(original);
+        expect(poolRows(ctx.db)).toEqual(rows);
+        expect(sources(ctx.db)).toEqual([]);
+    }));
+
+    windowsTest("A .changes listing two names differing only in case fails, moves nothing and adds no row", withImporter(async ctx => {
+        const names = await stage(ctx, TRIXIE, { record: false });
+        await edit(ctx, `${ TRIXIE.target }/${ TRIXIE.changes }`, text =>
+            text.split("\n").flatMap(line => isListLine(line, BUILDINFO) ? [line, line.replace(` ${ BUILDINFO }`, ` ${ BUILDINFO_IN_OTHER_CASE }`)] : [line]).join("\n"));
+        await recordAll(ctx, TRIXIE.target);
+
+        const result = await importDebian(ctx);
+
+        expect(result).toEqual(failed(expected(TRIXIE.target, names, "failed")));
+        expect(reasons(result)).toEqual([expect.stringContaining(`${ BUILDINFO_IN_OTHER_CASE } is neither uploaded nor in the pool`)]);
+        expect(await staged(ctx, TRIXIE.target)).toEqual(names);
+        expect(await pooled(ctx)).toEqual([]);
+        expect(count(ctx.db, "pool_files")).toBe(0);
+        expect(count(ctx.db, "releases")).toBe(0);
+    }));
+
+    test("A .changes naming a staged file in another case fails and leaves the staged file unclaimed", withImporter(async ctx => {
+        const doc = "srm-hello-doc_1.0-1_all.deb";
+        const names = await stage(ctx, TRIXIE, { record: false });
+        await edit(ctx, `${ TRIXIE.target }/${ TRIXIE.changes }`, text => text.replaceAll(` ${ doc }`, " SRM-hello-doc_1.0-1_all.deb"));
+        await recordAll(ctx, TRIXIE.target);
+
+        const result = await importDebian(ctx);
+
+        expect(result.find(f => f.filename === TRIXIE.changes)?.reason).toContain("SRM-hello-doc_1.0-1_all.deb is neither uploaded nor in the pool");
+        expect(result.find(f => f.filename === doc)?.status).toBe("skipped");
+        expect(await staged(ctx, TRIXIE.target)).toEqual(names);
+        expect(await pooled(ctx)).toEqual([]);
+        expect(count(ctx.db, "pool_files")).toBe(0);
+    }));
+
+    notWindowsTest("Off Windows names differing only in case are different files", withImporter(async ctx => {
+        await stage(ctx, TRIXIE);
+        await importDebian(ctx);
+        const names = await stageBuildinfoInOtherCase(ctx);
+
+        expect(await importDebian(ctx)).toEqual(expected(TRIXIE.target, names, "ok"));
+
+        expect(await pooled(ctx)).toEqual(expect.arrayContaining([BUILDINFO, BUILDINFO_IN_OTHER_CASE]));
+    }));
+
     test.each<[keyof typeof CONTROL, string]>([
         ["Package", "../../../evil"], ["Package", "-evil"], ["Package", ".evil"], ["Package", "ev il"], ["Package", "Evil"], ["Package", "e"],
         ["Architecture", "../../../evil"], ["Architecture", "-evil"], ["Architecture", "ev il"], ["Architecture", "source"], ["Architecture", "x86_64"],
@@ -786,6 +1158,36 @@ describe("Tests for importDebian", () => {
         expect(result).toEqual(failed(expected(TRIXIE.target, names, "failed")));
         expect(reasons(result)).toEqual([expect.stringContaining(reason)]);
     })());
+
+    test("An Architecture starting with udeb- fails, its Contents would be the one of the udebs", withImporter(async ctx => {
+        const names = await stageWithControl(ctx, { Architecture: "udeb-amd64" });
+
+        const result = await importDebian(ctx);
+
+        expect(result).toEqual(failed(expected(TRIXIE.target, names, "failed")));
+        expect(reasons(result)).toEqual([expect.stringContaining(`Malformed Architecture of ${ DEB }: "udeb-amd64"`)]);
+        expect(count(ctx.db, "releases")).toBe(0);
+    }));
+
+    test("An Architecture too long for the index names fails before anything is recorded", withImporter(async ctx => {
+        const names = await stageWithControl(ctx, { Architecture: "a".repeat(224) });
+
+        const result = await importDebian(ctx);
+
+        expect(result).toEqual(failed(expected(TRIXIE.target, names, "failed")));
+        expect(reasons(result)).toEqual([expect.stringContaining(`Malformed Architecture of ${ DEB }: "Contents-udeb-${ "a".repeat(50) }…" is longer than 240 bytes`)]);
+        expect(await staged(ctx, TRIXIE.target)).toEqual(names);
+        expect(count(ctx.db, "releases")).toBe(0);
+    }));
+
+    test("The longest Architecture imports and publishes", withImporter(async ctx => {
+        const names = await stageWithControl(ctx, { Architecture: "a".repeat(223) });
+
+        expect(await importDebian(ctx)).toEqual(expected(TRIXIE.target, names, "ok"));
+        await publishDebian(ctx);
+
+        expect(await fs.readdir(osPath.join(ctx.paths.repoDir, "deb", "debian", "dists", "trixie", "main"))).toContain(`binary-${ "a".repeat(223) }`);
+    }));
 
     test("A .deb with every character policy allows imports", withImporter(async ctx => {
         const names = await stageWithControl(ctx, { Package: "libstdc++6.1", Version: "1:1.0~rc1+dfsg-1", Architecture: "hurd-i386" });
