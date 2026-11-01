@@ -21,6 +21,7 @@ import type { Eta } from "eta";
 import { renderDistroConfigs } from "../lib/render.ts";
 import { mimeTypeFor } from "../lib/mime.ts";
 import { urlPathProblem } from "../lib/safe-path.ts";
+import { WEBMCP_SCRIPT_URL, webMcpScript } from "./mcp/webmcp.ts";
 
 function filterHidden(): RequestHandler {
     return (req: Request, _res: Response, next: NextFunction) => {
@@ -108,7 +109,7 @@ function renderBreadcrumb(directory: string): string {
         .join('<span class="separator">/</span>');
 }
 
-function htmlTemplate(paths: Paths, gpg: Gpg, eta: Eta, cssFilePath: string, iconNames: string[]) {
+function htmlTemplate(paths: Paths, gpg: Gpg, eta: Eta, cssFilePath: string, iconNames: string[], publicRead: boolean) {
     return async (locals: Locals): Promise<string> => {
         const files: string[] = [];
         const req = getRequest()!;
@@ -139,7 +140,8 @@ function htmlTemplate(paths: Paths, gpg: Gpg, eta: Eta, cssFilePath: string, ico
   <link rel="stylesheet" href="${ cssFilePath }">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@100..900&display=swap">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..24,400,0,-25..0&icon_names=${ escapeHtml(
-            iconNames.join(",")) }&display=block'">
+            iconNames.join(",")) }&display=block'">${ publicRead ? `
+  <script src="${ WEBMCP_SCRIPT_URL }" defer></script>` : "" }
   <title>Listing ${ directory === "/" ? "repositories" : escapeHtml(directory.slice(0, -1)) }</title>
 </head>
 <body class="directory">
@@ -182,17 +184,17 @@ function getRequest() {
     return asyncLocalStorage.getStore()?.req;
 }
 
-function serveHtmlTemplateIndex(paths: Paths, gpg: Gpg, eta: Eta, cssFileUrl: string, iconNames: string[]): RequestHandler {
+function serveHtmlTemplateIndex(paths: Paths, gpg: Gpg, eta: Eta, cssFileUrl: string, iconNames: string[], publicRead: boolean): RequestHandler {
     const serve = serveIndex(paths.repoDir, {
         icons: false,
-        template: util.callbackify(htmlTemplate(paths, gpg, eta, cssFileUrl, iconNames))
+        template: util.callbackify(htmlTemplate(paths, gpg, eta, cssFileUrl, iconNames, publicRead))
     });
     return (req: Request, res: Response, next: NextFunction) => {
         asyncLocalStorage.run<void>({ req }, () => serve(req, res, next));
     }
 }
 
-export default async function files(paths: Paths, gpg: Gpg, environment: Environment, eta: Eta) {
+export default async function files(paths: Paths, gpg: Gpg, environment: Environment, eta: Eta, publicRead: boolean) {
     const publicDir = getPublicDir(environment);
     const cssFilePath = osPath.join(publicDir, "style.css");
     const faviconFilePath = osPath.join(publicDir, "favicon.svg");
@@ -209,9 +211,15 @@ export default async function files(paths: Paths, gpg: Gpg, environment: Environ
     const router = express.Router({ strict: true });
     router.get(cssFileUrl, transformMiddleware(cssFilePath, cssTransform, environment));
     router.get("/favicon.svg", serveMiddleware(faviconFilePath, environment));
+    if (publicRead) {
+        const script = webMcpScript();
+        router.get(WEBMCP_SCRIPT_URL, (_req: Request, res: Response) => {
+            res.set("Cache-Control", environment !== "production" ? "no-cache" : "public, max-age=3600").type("js").send(script);
+        });
+    }
     router.use(filterHidden());
     router.use(serveStatic(paths.repoDir, { index: false, setHeaders: setRepoFileHeaders }),
-        serveHtmlTemplateIndex(paths, gpg, eta, cssFileUrl, iconNames)
+        serveHtmlTemplateIndex(paths, gpg, eta, cssFileUrl, iconNames, publicRead)
     );
     return router;
 }

@@ -63,7 +63,7 @@ export default async function createApp(config: AppConfig, environment: Environm
 
     app.use("/api", api(config, eta));
 
-    app.use(await files(config.paths, config.gpg, environment, eta));
+    app.use(await files(config.paths, config.gpg, environment, eta, config.upload.publicRead));
     app.use(unexpectedErrorHandler());
 
     return app;

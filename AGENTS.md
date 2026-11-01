@@ -121,6 +121,8 @@ status: "ok"|"skipped"|"failed", reason? }] }`. Other tools, all
 callable the same way: `server_status`, `list_repositories`,
 `list_source_packages`, `search_packages`, `list_package_files`, `prepare_upload`,
 `get_setup_instructions`, `remove_package`. See `server/api/mcp/tools.ts` for the schemas.
+With `API_PUBLIC_READ`, `/webmcp.js` offers the read tools to agents in the browser
+(`server/api/mcp/webmcp.ts`); the Jest tests run it against a stand-in for the browser API.
 
 A small helper for tallying responses:
 
@@ -238,6 +240,14 @@ curl -sS -X POST http://127.0.0.1:80/api/v1/mcp \
 docker compose exec simple-repo-manager bash -lc \
   'find /app/data/repo/deb -type f | head'
 ```
+
+## End-to-end scripts
+
+From the repository root, each writing to `tmp/`:
+
+- `bash tests/e2e/verify-native.sh`: the migration of a captured 2.x tree, uploads, removal and `docker kill` on the Compose stack, with real clients.
+- `bash tests/e2e/chunk-compat.sh <golden tree>`: real apt and dnf against chunked indexes.
+- `node tests/e2e/native-windows.mjs`: on Windows after `npm run build`, the server running natively on NTFS, with real clients in containers.
 
 ## Capturing slow output
 

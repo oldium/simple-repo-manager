@@ -31,7 +31,8 @@ Features:
   `.buildinfo`) so they can be re-uploaded to another server.
 * 🤖 Contains an embedded MCP (Model Context Protocol) server with a
   source-package-name oriented interface for agent clients.
-* 🔓 Optionally opens the listing API and the MCP read tools to everybody,
+* 🔓 Optionally opens the listing API and the MCP read tools to everybody, also
+  to agents in the browser through WebMCP,
   while uploads and removals stay protected.
 * ✂️ Separates distributions (Debian vs. Ubuntu) and for RedHat-like
   repositories also releases (Fedora 41 vs. 42).
@@ -868,6 +869,12 @@ Status codes:
 Simple Repo Manager exposes a Model Context Protocol endpoint at `POST /api/v1/mcp` using the official Streamable HTTP transport. The endpoint is stateless (no session IDs, no resumable streams) and requires the same authentication as the rest of the `/api/v1/*` tree. Use the URL without a trailing slash: `/api/v1/mcp/` is always checked like an upload, even with `API_PUBLIC_READ`.
 
 With `API_PUBLIC_READ=true` (see [Configuration Examples](#configuration-examples)), callers without credentials can connect too and get only the [read tools](#tools). The write tools appear only for requests that pass the IP allowlist and the credentials check.
+
+### Agents in the browser
+
+With `API_PUBLIC_READ=true`, the browse pages also offer the read tools through [WebMCP][webmcp], so that an agent in the browser can use them on the page, with nothing to configure: find a package, get its download link, or get the setup of a repository. Browsers without WebMCP ignore it, and it needs HTTPS. Without `API_PUBLIC_READ` the pages do not offer it. The write tools are never offered this way.
+
+[webmcp]: https://webmachinelearning.github.io/webmcp/
 
 ### Identifying the instance
 
