@@ -261,7 +261,8 @@ name=My Repository
 baseurl=https://my-repo.example.com/rpm/fedora/41/
 enabled=1
 gpgcheck=1
-gpgpkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-my-repo
+repo_gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-my-repo
 EOF
 ```
 
@@ -934,7 +935,7 @@ docker run --detach \
   --name simple-repo-manager \
   --publish 80:3000 \
   --read-only --tmpfs /tmp \
-  --env UPLOAD_FIELD_NAME=file \
+  --env UPLOAD_POST_FIELD=file \
   --volume ./data:/app/data \
   simple-repo-manager
 ```
@@ -979,7 +980,7 @@ services:
 you can override the environment variables in the `.env` file:
 
 ```dotenv
-UPLOAD_FIELD_NAME=file
+UPLOAD_POST_FIELD=file
 ```
 
 or directly in the `compose.yml` file, or in the `compose.override.yml` file as
@@ -989,7 +990,7 @@ in the following example:
 services:
   simple-repo-manager:
     environment:
-      UPLOAD_FIELD_NAME: file
+      UPLOAD_POST_FIELD: file
 ```
 
 > [!NOTE]
@@ -1087,7 +1088,7 @@ API_BEARER_AUTH=s3cret-token-abcdef0123456789
 Use different field for POST uploads, e.g. `file`:
 
 ```dotenv
-UPLOAD_FIELD_NAME=file
+UPLOAD_POST_FIELD=file
 ```
 
 Use different directories for data, e.g. `/data/incoming`, `/data/repo` and
