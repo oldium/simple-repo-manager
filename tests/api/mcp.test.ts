@@ -125,20 +125,8 @@ describe("MCP server", () => {
         ]);
     }));
 
-    test("tools/list returns only server_status when both backends disabled", withLocalTmpDir(async () => {
-        const app = await createTestApp({ upload: { enabledApi: { deb: false, rpm: false } } });
-        const response = await request(app)
-            .post("/api/v1/mcp")
-            .set("Content-Type", "application/json")
-            .set("Accept", "application/json, text/event-stream")
-            .send(jsonRpc("tools/list"));
-        expect(response.status).toBe(200);
-        const names = response.body.result.tools.map((t: { name: string }) => t.name);
-        expect(names).toEqual(["server_status"]);
-    }));
-
-    test("server_status reports per-backend flags regardless of config", withLocalTmpDir(async () => {
-        const app = await createTestApp({ upload: { enabledApi: { deb: false, rpm: true } } });
+    test("server_status reports both formats", withLocalTmpDir(async () => {
+        const app = await createTestApp();
         const response = await request(app)
             .post("/api/v1/mcp")
             .set("Content-Type", "application/json")
@@ -149,45 +137,10 @@ describe("MCP server", () => {
         expect(response.body.result.structuredContent).toEqual({
             message: "Package repository API is running",
             api: {
-                deb: { enabled: false },
+                deb: { enabled: true },
                 rpm: { enabled: true },
             },
         });
-    }));
-
-    test("format enum narrows to enabled backends in partial-disable", withLocalTmpDir(async () => {
-        const app = await createTestApp({ upload: { enabledApi: { deb: true, rpm: false } } });
-        const response = await request(app)
-            .post("/api/v1/mcp")
-            .set("Content-Type", "application/json")
-            .set("Accept", "application/json, text/event-stream")
-            .send(jsonRpc("tools/list"));
-        expect(response.status).toBe(200);
-        const prepareUpload = response.body.result.tools.find((t: { name: string }) => t.name === "prepare_upload");
-        expect(prepareUpload.inputSchema.properties.format.enum).toEqual(["deb"]);
-    }));
-
-    test("prepare_upload with disabled format is rejected at schema layer", withLocalTmpDir(async () => {
-        const app = await createTestApp({ upload: { enabledApi: { deb: true, rpm: false } } });
-        const response = await request(app)
-            .post("/api/v1/mcp")
-            .set("Content-Type", "application/json")
-            .set("Accept", "application/json, text/event-stream")
-            .send(jsonRpc("tools/call", {
-                name: "prepare_upload",
-                arguments: {
-                    format: "rpm",
-                    distribution: "fedora",
-                    release: "40",
-                    filenames: ["x.rpm"],
-                },
-            }));
-        expect(response.status).toBe(200);
-        // Pin whichever shape the SDK emits — JSON-RPC-level error OR tool-level isError.
-        // The load-bearing assertion is that no handler runs successfully.
-        const isRpcError = response.body.error !== undefined;
-        const isToolError = response.body.result?.isError === true;
-        expect(isRpcError || isToolError).toBe(true);
     }));
 
     test("list_repositories lists the imported rpm repository", withLocalTmpDir(async () => {
@@ -298,27 +251,6 @@ describe("MCP server", () => {
         expect(response.status).toBe(200);
         expect(response.body.result.instructions).toMatch(/deb and rpm/);
         expect(response.body.result.serverInfo.description).toMatch(/deb, rpm/);
-    }));
-
-    test("initialize signals zero backends when both disabled", withLocalTmpDir(async () => {
-        const app = await createTestApp({ upload: { enabledApi: { deb: false, rpm: false } } });
-        const response = await request(app)
-            .post("/api/v1/mcp")
-            .set("Content-Type", "application/json")
-            .set("Accept", "application/json, text/event-stream")
-            .send({
-                jsonrpc: "2.0",
-                id: 1,
-                method: "initialize",
-                params: {
-                    protocolVersion: "2025-06-18",
-                    capabilities: {},
-                    clientInfo: { name: "test", version: "1.0" },
-                },
-            });
-        expect(response.status).toBe(200);
-        expect(response.body.result.instructions).toMatch(/No repository backends are enabled/);
-        expect(response.body.result.serverInfo.description).toMatch(/Enabled backends: none/);
     }));
 
     test("logs tool call input and ok result for empty-input tool", withLocalTmpDir(async () => {
@@ -447,27 +379,6 @@ describe("MCP server", () => {
         expect(response.body.result.instructions).toMatch(/deb and rpm/);
     }));
 
-    test("initialize names disabled backend in partial-disable instructions", withLocalTmpDir(async () => {
-        const app = await createTestApp({ upload: { enabledApi: { deb: true, rpm: false } } });
-        const response = await request(app)
-            .post("/api/v1/mcp")
-            .set("Content-Type", "application/json")
-            .set("Accept", "application/json, text/event-stream")
-            .send({
-                jsonrpc: "2.0",
-                id: 1,
-                method: "initialize",
-                params: {
-                    protocolVersion: "2025-06-18",
-                    capabilities: {},
-                    clientInfo: { name: "test", version: "1.0" },
-                },
-            });
-        expect(response.status).toBe(200);
-        expect(response.body.result.instructions).toMatch(/rpm backend is disabled/);
-        expect(response.body.result.serverInfo.description).toMatch(/Enabled backends: deb/);
-    }));
-
     test("list_package_files returns resource_link blocks with https download URIs (rpm)", withLocalTmpDir(async () => {
         const app = await createTestApp();
         const names = await importRpmFixtures(app);
@@ -563,17 +474,6 @@ describe("MCP server", () => {
         expect(isRpcError || isToolError).toBe(true);
     }));
 
-    test("list_package_files is absent when both backends disabled", withLocalTmpDir(async () => {
-        const app = await createTestApp({ upload: { enabledApi: { deb: false, rpm: false } } });
-        const response = await request(app)
-            .post("/api/v1/mcp")
-            .set("Content-Type", "application/json")
-            .set("Accept", "application/json, text/event-stream")
-            .send(jsonRpc("tools/list"));
-        expect(response.status).toBe(200);
-        const names = response.body.result.tools.map((t: { name: string }) => t.name);
-        expect(names).not.toContain("list_package_files");
-    }));
 });
 
 describe("MCP tools by access", () => {
@@ -714,10 +614,6 @@ describe("MCP tools by access", () => {
             .toBe("Use these tools to list deb and rpm packages from the configured repositories.");
         expect(authenticated.body.result.instructions)
             .toBe("Use these tools to list, upload, import, and remove deb and rpm packages from the configured repositories.");
-
-        const debOnly = await createTestApp({ upload: { publicRead: true, bearerAuth: BEARER, enabledApi: { rpm: false } } });
-        expect((await mcpPost(debOnly, "initialize", INITIALIZE)).body.result.instructions)
-            .toBe("Use these tools to list deb packages. The rpm backend is disabled in the current server configuration.");
     }));
 });
 

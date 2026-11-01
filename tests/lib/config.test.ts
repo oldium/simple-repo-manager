@@ -20,8 +20,6 @@ describe("Test environment variables and config.ts", () => {
         expect(config.app.paths.repoStateDir).toEqual("data/repo-state");
         expect(config.app.paths.repoDir).toEqual("data/repo");
         expect(config.app.gpg.gpgRepoPrivateKeyFile).not.toBeDefined();
-        expect(config.app.upload.enabledApi.deb).toEqual(true);
-        expect(config.app.upload.enabledApi.rpm).toEqual(true);
         expect(config.app.upload.allowedIps).not.toBeDefined();
         expect(config.app.upload.basicAuth).not.toBeDefined();
         expect(config.app.upload.sizeLimit).not.toBeDefined();
@@ -91,13 +89,12 @@ describe("Test environment variables and config.ts", () => {
 
         const { default: logger } = await import("../../server/lib/logger.ts");
         const warnSpy = jest.spyOn(logger, "warn");
-        const { default: config } = await import("../../server/lib/config.ts");
+        await import("../../server/lib/config.ts");
 
         expect(warnSpy.mock.calls.map(([message]) => message)).toEqual([
             "Deprecated REPREPRO_BIN is set but no longer used; please remove it from the environment",
             "Deprecated GNUPGHOME is set but no longer used; please remove it from the environment",
         ]);
-        expect(config.app.upload.enabledApi).toEqual({ deb: true, rpm: true });
     }));
 
     test("Check trusted proxy IP for single address", withLocalTmpDir(async () => {

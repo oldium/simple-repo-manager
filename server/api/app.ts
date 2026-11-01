@@ -21,13 +21,9 @@ function unexpectedErrorHandler() {
 
 export default async function createApp(config: AppConfig, environment: Environment) {
     await fsExtra.ensureDir(osPath.join(config.paths.incomingDir, 'tmp'));
-    if (config.upload.enabledApi.deb) {
-        await fsExtra.ensureDir(osPath.join(config.paths.incomingDir, 'staging', 'deb'));
-        await fsExtra.ensureDir(osPath.join(config.paths.incomingDir, 'process', 'deb'));
-    }
-    if (config.upload.enabledApi.rpm) {
-        await fsExtra.ensureDir(osPath.join(config.paths.incomingDir, 'staging', 'rpm'));
-        await fsExtra.ensureDir(osPath.join(config.paths.incomingDir, 'process', 'rpm'));
+    for (const format of ["deb", "rpm"]) {
+        await fsExtra.ensureDir(osPath.join(config.paths.incomingDir, 'staging', format));
+        await fsExtra.ensureDir(osPath.join(config.paths.incomingDir, 'process', format));
     }
 
     // A directory that does not exist yet could only answer with the Windows default
@@ -37,10 +33,8 @@ export default async function createApp(config: AppConfig, environment: Environm
     await openBackend(config.paths, config.gpg.gpgRepoPrivateKeyFile, { rebuild: process.argv.includes("--rebuild") });
     if (config.gpg.gpgRepoPrivateKeyFile) {
         // The keyring lives in the format dirs, which a fresh install lacks; made after openBackend so they never pass for a published tree
-        for (const format of ["deb", "rpm"] as const) {
-            if (config.upload.enabledApi[format]) {
-                await fsExtra.ensureDir(osPath.join(config.paths.repoDir, format));
-            }
+        for (const format of ["deb", "rpm"]) {
+            await fsExtra.ensureDir(osPath.join(config.paths.repoDir, format));
         }
     }
     await gpgInit(config);

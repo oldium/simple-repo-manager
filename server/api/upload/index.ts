@@ -3,7 +3,6 @@ import express from "express";
 import post from "./post.ts";
 import put from "./put.ts";
 import { writeAuthMiddleware } from "../../lib/auth.ts";
-import { enablingMiddleware } from "../../lib/req.ts";
 import type { AppConfig } from "../../lib/config.ts";
 import { sendErrorResponse } from "../../lib/res.ts";
 import { logResponseMiddleware } from "../../lib/logger.ts";
@@ -33,18 +32,10 @@ export default function router(config: AppConfig) {
         router.use(...auth);
     }
 
-    router.use(enablingMiddleware(
-        config.upload.enabledApi.deb || config.upload.enabledApi.rpm,
-        'The upload functionality is disabled'));
-
     router.use('/deb',
-        enablingMiddleware(config.upload.enabledApi.deb,
-            "The Debian upload functionality is disabled"),
         post.deb(config.paths, config.upload),
         put.deb(config.paths, config.upload));
     router.use('/rpm',
-        enablingMiddleware(config.upload.enabledApi.rpm,
-            "The RedHat upload functionality is disabled"),
         post.rpm(config.paths, config.upload),
         put.rpm(config.paths, config.upload));
 

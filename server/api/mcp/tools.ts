@@ -8,11 +8,6 @@ import logger from "../../lib/logger.ts";
 import { mimeTypeFor } from "../../lib/mime.ts";
 import { MAX_PAGE_SIZE } from "../../backend/paging.ts";
 
-export interface EnabledBackends {
-    deb: boolean;
-    rpm: boolean;
-}
-
 const pageSchema = {
     limit: z.number().int().min(1).max(MAX_PAGE_SIZE)
         .describe(`Maximum number of results, 1 to ${ MAX_PAGE_SIZE }. Omit for the largest page.`).optional(),
@@ -45,7 +40,6 @@ export function registerTools(
     server: McpServer,
     service: RepoService,
     req: Request,
-    enabled: EnabledBackends,
     writeAllowed: boolean
 ) {
     // Always-available status probe.
@@ -55,12 +49,8 @@ export function registerTools(
         inputSchema: {},
     }, withLogging("server_status", async () => {
         const status = service.getStatus();
-        const parts: string[] = [];
-        if (status.api.deb.enabled) parts.push("deb");
-        if (status.api.rpm.enabled) parts.push("rpm");
-        const label = parts.length === 0 ? "none" : parts.join(", ");
         return successResult(
-            `Repository manager is running. Enabled backends: ${ label }.`,
+            "Repository manager is running. Enabled backends: deb, rpm.",
             {
                 message: status.message,
                 api: {
@@ -71,22 +61,13 @@ export function registerTools(
         );
     }));
 
-    // No repo tools when nothing is reachable — tools/list is an honest inventory.
-    if (!enabled.deb && !enabled.rpm) return;
-
-    // Narrowed format enum: list only enabled values. At this point we know at
-    // least one is enabled (the early return above guarantees it).
-    const formatEnum = enabled.deb && enabled.rpm
-        ? z.enum(["deb", "rpm"])
-        : enabled.deb
-            ? z.enum(["deb"])
-            : z.enum(["rpm"]);
+    const formatEnum = z.enum(["deb", "rpm"]);
 
     server.registerTool("list_repositories", {
         title: "List repositories",
         description: "List configured (format, distribution, release) triples, optionally filtered.",
         inputSchema: {
-            format: formatEnum.describe("Repository format filter. Omit to include all enabled backends.").optional(),
+            format: formatEnum.describe("Repository format filter. Omit to include both.").optional(),
             distribution: z.string().min(1).describe("Distribution name filter (e.g. 'debian', 'fedora'). Omit to match any.").optional(),
             release: z.string().min(1).describe("Release name filter (e.g. 'bookworm', '40'). Omit to match any.").optional(),
         },
@@ -106,7 +87,7 @@ export function registerTools(
         title: "List source packages",
         description: "List source packages across matching repositories.",
         inputSchema: {
-            format: formatEnum.describe("Repository format filter. Omit to include all enabled backends.").optional(),
+            format: formatEnum.describe("Repository format filter. Omit to include both.").optional(),
             distribution: z.string().min(1).describe("Distribution name filter. Omit to match any.").optional(),
             release: z.string().min(1).describe("Release name filter. Omit to match any.").optional(),
             source: z.string().min(1).describe("Source package name filter. Omit to return every source.").optional(),
@@ -135,7 +116,7 @@ export function registerTools(
             + "present. Each result includes a direct HTTPS download URL "
             + "that can be fetched without authentication.",
         inputSchema: {
-            format: formatEnum.describe("Repository format filter. Omit to include all enabled backends.").optional(),
+            format: formatEnum.describe("Repository format filter. Omit to include both.").optional(),
             distribution: z.string().min(1).describe("Distribution name filter. Omit to match any.").optional(),
             release: z.string().min(1).describe("Release name filter. Omit to match any.").optional(),
             source: z.string().min(1).describe("Source package name."),
@@ -272,7 +253,7 @@ export function registerTools(
         title: "Remove package",
         description: "Remove a package across one or many (format, distribution, release) triples.",
         inputSchema: {
-            format: formatEnum.describe("Repository format filter. Omit to remove from every enabled backend.").optional(),
+            format: formatEnum.describe("Repository format filter. Omit to remove from both.").optional(),
             distribution: z.string().min(1).describe("Distribution name filter. Omit to match any.").optional(),
             release: z.string().min(1).describe("Release name filter. Omit to match any.").optional(),
             source: z.string().min(1).describe("Source package name to remove."),

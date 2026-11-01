@@ -25,11 +25,6 @@ export default async function createTestApp(partialConfig?: DeepPartial<AppConfi
             sizeLimit: undefined,
             postField: "package",
             ...partialConfig?.upload,
-            enabledApi: {
-                deb: true,
-                rpm: true,
-                ...partialConfig?.upload?.enabledApi
-            }
         },
         security: {
             trustProxy: undefined,

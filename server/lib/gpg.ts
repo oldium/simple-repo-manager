@@ -39,7 +39,7 @@ export async function gpgDebPublicKeyPath(repoDir: string, gpg: Gpg) {
 export async function gpgInit(config: AppConfig) {
     const formats: (keyof typeof KEYRING_FILES)[] = [];
     for (const format of ["deb", "rpm"] as const) {
-        if (config.upload.enabledApi[format] && await fsExtra.pathExists(osPath.join(config.paths.repoDir, format))) {
+        if (await fsExtra.pathExists(osPath.join(config.paths.repoDir, format))) {
             formats.push(format);
         }
     }

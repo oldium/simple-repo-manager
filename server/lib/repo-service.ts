@@ -4,7 +4,7 @@ import { openBackend } from "../backend/index.ts";
 import type { Listing, Page } from "../backend/paging.ts";
 import { isFormat } from "../backend/pool.ts";
 import type { Format } from "../backend/pool.ts";
-import { RepoInternalError, RepoNotFoundError, RepoServiceUnavailableError, RepoValidationError } from "./errors.ts";
+import { RepoInternalError, RepoNotFoundError, RepoValidationError } from "./errors.ts";
 import { repoDirectoryName } from "./file-naming.ts";
 import { invalidDistroMessage, invalidFilenameMessage, validateDistro, validateFilename } from "./validations.ts";
 import type { RemovalFile, RepoFile } from "./repo-types.ts";
@@ -122,12 +122,12 @@ export class RepoService {
     }
 
     public async listRepositories(filter: RepositoryFilter = {}): Promise<RepositoryRef[]> {
-        const format = this.enabledFormat(filter.format);
+        const format = this.knownFormat(filter.format);
         return (await this.backend()).listRepositories({ ...inRepoSpelling(filter), format });
     }
 
     public async listSourcePackages(filter: SourcePackageFilter, page: Page = {}): Promise<Listing<SourcePackage>> {
-        const format = this.enabledFormat(filter.format);
+        const format = this.knownFormat(filter.format);
         return (await this.backend()).listSourcePackages({ ...inRepoSpelling(filter), format }, page);
     }
 
@@ -135,14 +135,6 @@ export class RepoService {
         if (!isFormat(target.format)) {
             throw new RepoValidationError(`Unknown format '${ target.format }'`);
         }
-        const enabled = target.format === "deb" ? this.upload.enabledApi.deb : this.upload.enabledApi.rpm;
-        if (!enabled) {
-            throw new RepoServiceUnavailableError(
-                `The ${ target.format } repository API is not enabled`,
-                { format: target.format }
-            );
-        }
-
         if (target.format === "rpm" && (target.component || target.subcomponent)) {
             throw new RepoValidationError("component/subcomponent are only valid for format=deb");
         }
@@ -181,9 +173,6 @@ export class RepoService {
     }
 
     public async importRepository(): Promise<ImportResult> {
-        if (!this.upload.enabledApi.deb && !this.upload.enabledApi.rpm) {
-            throw new RepoServiceUnavailableError("No repository API is enabled");
-        }
         return (await this.backend()).importStaged();
     }
 
@@ -191,7 +180,7 @@ export class RepoService {
         if (!filter.source) {
             throw new RepoValidationError("source is required");
         }
-        const format = this.enabledFormat(filter.format);
+        const format = this.knownFormat(filter.format);
         const backend = await this.backend();
         this.assertRepository(backend, format, filter);
         const listing = backend.listPackageFiles({ ...inRepoSpelling(filter), format }, page);
@@ -207,7 +196,7 @@ export class RepoService {
         if (!filter.source) {
             throw new RepoValidationError("source is required");
         }
-        const format = this.enabledFormat(filter.format);
+        const format = this.knownFormat(filter.format);
         const backend = await this.backend();
         this.assertRepository(backend, format, filter);
         const result = await backend.remove({ ...inRepoSpelling(filter), format });
@@ -225,8 +214,8 @@ export class RepoService {
         return {
             message: "Package repository API is running",
             api: {
-                deb: { enabled: this.upload.enabledApi.deb },
-                rpm: { enabled: this.upload.enabledApi.rpm },
+                deb: { enabled: true },
+                rpm: { enabled: true },
             },
         };
     }
@@ -235,20 +224,11 @@ export class RepoService {
         return openBackend(this.paths, this.gpg.gpgRepoPrivateKeyFile);
     }
 
-    /** The format to ask the backend for: the wanted one, or both when none is named and both are enabled */
-    private enabledFormat(format: Format | undefined): Format | undefined {
+    private knownFormat(format: Format | undefined): Format | undefined {
         if (format !== undefined && !isFormat(format)) {
             throw new RepoValidationError(`Unknown format '${ format }'`);
         }
-        const wantDeb = (!format || format === "deb") && this.upload.enabledApi.deb;
-        const wantRpm = (!format || format === "rpm") && this.upload.enabledApi.rpm;
-        if (!wantDeb && !wantRpm) {
-            if (format) {
-                throw new RepoServiceUnavailableError(`The ${ format } repository API is not enabled`, { format });
-            }
-            throw new RepoServiceUnavailableError("No repository API is enabled");
-        }
-        return wantDeb && wantRpm ? undefined : wantDeb ? "deb" : "rpm";
+        return format;
     }
 
     /** A distribution or release named explicitly must exist, the backend answers empty for one that does not; the error shows it as sent */

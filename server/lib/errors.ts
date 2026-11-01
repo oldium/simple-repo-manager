@@ -13,13 +13,7 @@ export class RepoError extends Error {
 
 export class RepoValidationError extends RepoError { }
 export class RepoNotFoundError extends RepoError { }
-export class RepoServiceUnavailableError extends RepoError {
-    public readonly format?: "deb" | "rpm";
-    constructor(message: string, options?: { cause?: unknown; format?: "deb" | "rpm" }) {
-        super(message, options);
-        this.format = options?.format;
-    }
-}
+export class RepoServiceUnavailableError extends RepoError { }
 
 export class RepoInternalError extends RepoError {
     public readonly files?: RemovalFile[];

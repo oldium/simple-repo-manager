@@ -49,13 +49,7 @@ export type Paths = {
     templateDir?: string,
 }
 
-export type EnabledApi = {
-    deb: boolean,
-    rpm: boolean,
-}
-
 export type UploadOptions = {
-    enabledApi: EnabledApi,
     allowedIps?: IpCheckFn,
     basicAuth?: string[],
     bearerAuth?: string[],
@@ -178,13 +172,7 @@ const sizeLimitEnv = process.env.UPLOAD_SIZE_LIMIT?.trim();
 const sizeLimit = sizeLimitEnv ? parseInt(sizeLimitEnv) : undefined;
 const postField = (process.env.UPLOAD_POST_FIELD && process.env.UPLOAD_POST_FIELD.trim()) || 'package';
 
-const enabledApi = {
-    deb: true,
-    rpm: true,
-}
-
 const upload: UploadOptions = {
-    enabledApi,
     allowedIps,
     basicAuth,
     bearerAuth,

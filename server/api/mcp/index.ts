@@ -29,22 +29,8 @@ export default function mcpRouter(config: AppConfig) {
         if (refusal === "ip") {
             logger.info(`Client ${ req.ip } gets only the MCP read tools: IP not in the allowlist`);
         }
-        const enabled = {
-            deb: config.upload.enabledApi.deb,
-            rpm: config.upload.enabledApi.rpm,
-        };
-        const parts: string[] = [];
-        if (enabled.deb) parts.push("deb");
-        if (enabled.rpm) parts.push("rpm");
-        const enabledLabel = parts.length === 0 ? "none" : parts.join(", ");
-
         const actions = writeAllowed ? "list, upload, import, and remove" : "list";
-        const baseInstructions =
-            parts.length === 2
-                ? `Use these tools to ${ actions } deb and rpm packages from the configured repositories.`
-                : parts.length === 1
-                    ? `Use these tools to ${ actions } ${ parts[0] } packages. The ${ parts[0] === "deb" ? "rpm" : "deb" } backend is disabled in the current server configuration.`
-                    : "No repository backends are enabled on this server. Both deb and rpm are disabled in the current configuration. Call server_status to confirm, then ask an administrator to enable at least one backend and restart the server.";
+        const baseInstructions = `Use these tools to ${ actions } deb and rpm packages from the configured repositories.`;
 
         const { instanceLabel } = config;
         const instructions = instanceLabel
@@ -59,7 +45,7 @@ export default function mcpRouter(config: AppConfig) {
         } = {
             name: "simple-repo-manager",
             version: pkg.version,
-            description: `Repository manager. Enabled backends: ${ enabledLabel }.`,
+            description: "Repository manager. Enabled backends: deb, rpm.",
         };
         if (instanceLabel) serverInfo.title = instanceLabel;
 
@@ -68,7 +54,7 @@ export default function mcpRouter(config: AppConfig) {
             instructions,
         });
 
-        registerTools(server, service, req, enabled, writeAllowed);
+        registerTools(server, service, req, writeAllowed);
 
         const transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: undefined,

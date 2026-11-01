@@ -22,26 +22,6 @@ describe("DELETE invalid requests", () => {
         expect(res.status).toBe(404);
     }));
 
-    test("503 when RPM API disabled", withLocalTmpDir(async () => {
-        const app = await createTestApp({
-            upload: { enabledApi: { rpm: false, deb: true } }
-        });
-        const res = await request(app).delete("/api/v1/repo/rpm/fedora/41/foo/1");
-        expect(res.status).toBe(503);
-        expect(res.headers["retry-after"]).toBeUndefined();
-        expect(res.body.message).toEqual(expect.any(String));
-    }));
-
-    test("503 when Debian API disabled", withLocalTmpDir(async () => {
-        const app = await createTestApp({
-            upload: { enabledApi: { rpm: true, deb: false } }
-        });
-        const res = await request(app).delete("/api/v1/repo/deb/debian/bookworm/foo/1");
-        expect(res.status).toBe(503);
-        expect(res.headers["retry-after"]).toBeUndefined();
-        expect(res.body.message).toEqual(expect.any(String));
-    }));
-
     test("400 when source is `-`", withLocalTmpDir(async () => {
         const app = await createTestApp();
         const res = await request(app).delete("/api/v1/repo/rpm/fedora/41/-/22");

@@ -47,14 +47,10 @@ export function errorResult(err: unknown): ToolResult<ErrorStructured> {
         };
     }
     if (err instanceof RepoServiceUnavailableError) {
-        const structured: { code: "backend_unavailable"; format?: "deb" | "rpm" } = {
-            code: "backend_unavailable",
-        };
-        if (err.format !== undefined) structured.format = err.format;
         return {
             isError: true,
             content: [{ type: "text", text: `Unavailable: ${ err.message }` }],
-            structuredContent: structured,
+            structuredContent: { code: "backend_unavailable" },
         };
     }
     const correlationId = getCorrelationId();

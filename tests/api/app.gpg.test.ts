@@ -157,11 +157,6 @@ describe('Test repository keyring files', () => {
             gpg: {
                 gpgRepoPrivateKeyFile: "gpg-repo-private-key.asc",
             },
-            upload: {
-                enabledApi: {
-                    deb: true,
-                }
-            }
         });
 
         expect(osPath.join("repo", "deb", "archive-keyring.asc")).toPathExist();
@@ -185,11 +180,6 @@ describe('Test repository keyring files', () => {
             gpg: {
                 gpgRepoPrivateKeyFile: "gpg-repo-private-key.asc",
             },
-            upload: {
-                enabledApi: {
-                    deb: true,
-                }
-            }
         });
 
         expect(osPath.join("repo", "deb", "archive-keyring.asc")).toPathExist();
@@ -213,11 +203,6 @@ describe('Test repository keyring files', () => {
             gpg: {
                 gpgRepoPrivateKeyFile: "gpg-repo-private-key.asc",
             },
-            upload: {
-                enabledApi: {
-                    deb: true,
-                }
-            }
         });
 
         expect(osPath.join("repo", "deb", "archive-keyring.asc")).toPathExist();
@@ -248,30 +233,6 @@ describe('Test repository keyring files', () => {
         const rpm = await request(app).get("/rpm/RPM-GPG-KEY.asc");
         expect(rpm.status).toBe(200);
         await expect(rpm.text).toBeGpgKeyMatching(GPG_PUBLIC_KEYS[0]);
-    }));
-
-    test("Check that only an enabled format gets its keyring on a fresh install", withLocalTmpDir(async () => {
-        await createFiles({
-            "gpg-repo-private-key.asc": GPG_PRIVATE_KEYS[0],
-        })
-
-        await createTestApp({
-            paths: {
-                repoDir: "repo",
-            },
-            gpg: {
-                gpgRepoPrivateKeyFile: "gpg-repo-private-key.asc",
-            },
-            upload: {
-                enabledApi: {
-                    rpm: false,
-                }
-            }
-        });
-
-        expect(osPath.join("repo", "deb", "archive-keyring.asc")).toPathExist();
-        await expect(osPath.join("repo", "deb", "archive-keyring.asc")).toBeGpgKeyMatching(GPG_PUBLIC_KEYS[0]);
-        expect(osPath.join("repo", "rpm")).not.toPathExist();
     }));
 
 });
