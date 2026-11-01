@@ -6,6 +6,7 @@ import request from "supertest";
 import * as cheerio from "cheerio";
 import dedent from "dedent";
 import net from "net";
+import * as openpgp from "openpgp";
 import type { Application } from "express";
 import fs from "node:fs/promises";
 import osPath from "path";
@@ -101,6 +102,25 @@ describe("Test of files reading API", () => {
         expect(config).toContain("sudo dnf -q makecache");
         expect(config).not.toContain("undefined");
     }));
+
+    test.each([
+        ["rpm/fedora/42", "rpm-fedora-42", "rpm/RPM-GPG-KEY.asc", "deb"],
+        ["deb/debian/trixie/main", "deb-debian-trixie", "deb/archive-keyring.asc", "rpm"],
+    ])("The setup of %s names its own key, with no directory of the other format", (bundle, section, key, other) => withLocalTmpDir(async () => {
+        const unsigned = await createTestApp({ paths: { repoDir: "repo" } });
+        await uploadBundle(unsigned, bundle);
+        expect((await request(unsigned).post("/api/v1/repo/import")).status).toBe(200);
+        const { privateKey } = await openpgp.generateKey({ type: "curve25519", userIDs: [{ name: "t" }], format: "armored" });
+        await fs.writeFile("key.asc", privateKey);
+        const app = await createTestApp({ paths: { repoDir: "repo" }, gpg: { gpgRepoPrivateKeyFile: "key.asc" } });
+        await fs.rm(osPath.join("repo", other), { recursive: true });
+
+        const res = await request(app).get("/");
+
+        const config = cheerio.load(res.text)(`section#${ section } pre`).text();
+        expect(config).toMatch(new RegExp(`curl -fsSL http://127\\.0\\.0\\.1:\\d+/${ key } `));
+        expect(config).not.toContain(`/${ other }/`);
+    })());
 
     test("A configured but missing key file refuses the start and writes no keyring", withLocalTmpDir(async () => {
         await expect(createTestApp({

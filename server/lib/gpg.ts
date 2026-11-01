@@ -8,6 +8,7 @@ import fs from "fs/promises";
 import { loadSigningKey } from "../backend/pgp.ts";
 import { writeFileAtomic } from "../backend/publish-fs.ts";
 import { KEYRING_FILES } from "./validations.ts";
+import type { RepoType } from "./repo.ts";
 
 async function addPublicKeyToRepo(repoKeyFile: string, publicKey: openpgp.PublicKey) {
     let existingContent = "";
@@ -37,10 +38,11 @@ export async function addPublicKeyToKeyrings(repoDir: string, publicKey: openpgp
     }
 }
 
-export async function gpgDebPublicKeyPath(repoDir: string, gpg: Gpg) {
-    const gpgRepoPublicKeyFile = osPath.join(repoDir, "deb", KEYRING_FILES.deb);
+/** Only the format's own keyring: a repository of one format does without the other's directory */
+export async function gpgPublicKeyPath(repoDir: string, gpg: Gpg, format: RepoType) {
+    const gpgRepoPublicKeyFile = osPath.join(repoDir, format, KEYRING_FILES[format]);
     if (gpg.gpgRepoPrivateKeyFile && await fsExtra.pathExists(gpgRepoPublicKeyFile)) {
-        return path.join("/deb", KEYRING_FILES.deb);
+        return path.join("/", format, KEYRING_FILES[format]);
     } else {
         return undefined;
     }

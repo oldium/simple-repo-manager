@@ -10,7 +10,7 @@ import { getEnv, sanitize } from "./env.ts";
 import logger from "./logger.ts";
 import { fileURLToPath } from "node:url";
 import type { Request } from "express";
-import { gpgDebPublicKeyPath } from "./gpg.ts";
+import { gpgPublicKeyPath } from "./gpg.ts";
 import { getHostname, getUriNoQuery } from "./req.ts";
 import _ from "lodash";
 import dedent from "dedent";
@@ -115,7 +115,7 @@ async function renderDistroConfig<T extends Repository>(req: Request, eta: Eta, 
     if (Object.keys(repoObj.distributions).length !== 0) {
         for (const [distro, distroObj] of Object.entries(debDistros)) {
             for (const [release, releaseObj] of Object.entries(distroObj.releases)) {
-                const gpgPath = await gpgDebPublicKeyPath(repoDir, gpg);
+                const gpgPath = await gpgPublicKeyPath(repoDir, gpg, repoObj.type);
                 const repoSlug = getEnv(`${ repoEnvPrefix }_SLUG`, distro, release) ?? getEnv("SLUG") ?? getHostname(req);
                 const data: RenderData = {
                     gpgUri: gpgPath ? getUriNoQuery(req, gpgPath) : undefined,
