@@ -13,6 +13,8 @@ gpgkey=file://<%= gpgKeyDir %>/<%= gpgKeyFile %>
 <% } -%>
 EOF
 </pre>
-<pre>sudo rpm --import <%= gpgKeyDir %>/<%= gpgKeyFile %> && \
+<pre><% if (gpgUri) { -%>
+sudo rpm --import <%= gpgKeyDir %>/<%= gpgKeyFile %> && \
+<% } -%>
 sudo dnf -q makecache -y --disablerepo='*' --enablerepo=<%= repoDashSlug %>
 </pre>

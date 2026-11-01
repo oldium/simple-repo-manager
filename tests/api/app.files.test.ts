@@ -90,6 +90,18 @@ describe("Test of files reading API", () => {
         expect(debConfig).toMatch(/^URIs: http:\/\/127\.0\.0\.1:\d+\/deb\/debian$/m);
     }));
 
+    test("The RPM setup imports no key when the repository has none", withLocalTmpDir(async () => {
+        const app = await createTestApp({ paths: { repoDir: "repo" } });
+        await uploadBundle(app, "rpm/fedora/42");
+        expect((await request(app).post("/api/v1/repo/import")).status).toBe(200);
+
+        const res = await request(app).get("/");
+
+        const config = cheerio.load(res.text)("section#rpm-fedora-42 pre").text();
+        expect(config).toContain("sudo dnf -q makecache");
+        expect(config).not.toContain("undefined");
+    }));
+
     test("A configured but missing key file refuses the start and writes no keyring", withLocalTmpDir(async () => {
         await expect(createTestApp({
             paths: {

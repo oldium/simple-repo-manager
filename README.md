@@ -1282,7 +1282,9 @@ gpgkey=file://<%= gpgKeyDir %>/<%= gpgKeyFile %>
 <% } -%>
 EOF
 </pre>
-<pre>sudo rpm --import <%= gpgKeyDir %>/<%= gpgKeyFile %> && \
+<pre><% if (gpgUri) { -%>
+sudo rpm --import <%= gpgKeyDir %>/<%= gpgKeyFile %> && \
+<% } -%>
 sudo zypper refresh <%= repoDashSlug %>
 </pre>
 ```
