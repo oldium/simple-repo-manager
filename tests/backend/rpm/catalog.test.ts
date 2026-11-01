@@ -762,6 +762,28 @@ describe("Tests for importRpm", () => {
 });
 
 describe("Tests for RpmCatalog", () => {
+    test("The version filters compare as rpm does, by the parts asked for, and latest keeps the newest of them", withCatalog((_db, catalog) => {
+        for (const [version, rel] of [["22", "1.fc43"], ["23", "1.fc43"], ["24~rc1", "1.fc43"], ["24", "1.fc43"]]) {
+            const filename = `clevis-pin-tpm1-${ version }-${ rel }.x86_64.rpm`;
+            const path = rpmPoolPath("fedora", "43", "clevis", filename);
+            catalog.applyPackage({
+                distro: "fedora", release: "43", filename, name: "clevis-pin-tpm1", epoch: 0, version, rel, arch: "x86_64", sourceName: "clevis",
+                sourceVersion: `${ version }-${ rel }`, file: { path, size: 1, md5: path, sha1: path, sha256: path, sha512: path },
+                primaryXml: "", filelistsXml: "", otherXml: "",
+            }, NOW);
+        }
+        const found = (q: object) => catalog.searchFiles({ name: "*tpm1*", ...q }, {}).items.map(i => i.version);
+
+        expect(found({ version: "24" })).toEqual(["24-1.fc43"]);
+        expect(found({ version: "24~rc1-1.fc43" })).toEqual(["24~rc1-1.fc43"]);
+        expect(found({ latest: true })).toEqual(["24-1.fc43"]);
+        expect(found({ latest: true, version: "22" })).toEqual(["22-1.fc43"]);
+        expect(catalog.searchPackages({ source: "clevis" }, {}).items).toEqual([{
+            distro: "fedora", release: "43", kind: "binary", package: "clevis-pin-tpm1", source: "clevis",
+            versions: ["24-1.fc43", "24~rc1-1.fc43", "23-1.fc43", "22-1.fc43"].map(version => ({ version, architectures: ["x86_64"] })),
+        }]);
+    }));
+
     test("The first-letter and source directories are in lower case, the file name keeps its case", () => {
         expect(rpmPoolPath("fedora", "42", "NetworkManager", "NetworkManager-1.56.0-1.fc42.x86_64.rpm"))
             .toBe("rpm/fedora/42/Packages/n/networkmanager/NetworkManager-1.56.0-1.fc42.x86_64.rpm");

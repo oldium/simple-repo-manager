@@ -24,6 +24,7 @@ const SCHEMA_V1 = dedent`
     CREATE INDEX deb_binaries_order ON deb_binaries (release_id, component, kind, sort_key);
     CREATE INDEX deb_binaries_source ON deb_binaries (release_id, source, source_version);
     CREATE INDEX deb_binaries_file ON deb_binaries (file_id);
+    CREATE INDEX deb_binaries_search ON deb_binaries (release_id, package, version, architecture, kind, source);
     CREATE TABLE deb_binary_paths (release_id INTEGER NOT NULL REFERENCES releases (id), component TEXT NOT NULL, path TEXT NOT NULL,
         binary_id INTEGER NOT NULL REFERENCES deb_binaries (id) ON DELETE CASCADE,
         PRIMARY KEY (release_id, component, path, binary_id)) WITHOUT ROWID;
@@ -43,6 +44,7 @@ const SCHEMA_V1 = dedent`
     CREATE INDEX rpm_packages_order ON rpm_packages (release_id, sort_key);
     CREATE INDEX rpm_packages_source ON rpm_packages (release_id, source_name, source_version);
     CREATE INDEX rpm_packages_file ON rpm_packages (file_id);
+    CREATE INDEX rpm_packages_search ON rpm_packages (release_id, name, filename, source_name);
     CREATE TABLE index_files (id INTEGER PRIMARY KEY, release_id INTEGER NOT NULL REFERENCES releases (id),
         kind TEXT NOT NULL, component TEXT NOT NULL DEFAULT '', architecture TEXT NOT NULL DEFAULT '',
         generation INTEGER NOT NULL DEFAULT 0, stored_path TEXT, size INTEGER, md5 TEXT, sha256 TEXT,

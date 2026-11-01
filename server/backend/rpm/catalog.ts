@@ -1,8 +1,10 @@
 import type { Database } from "node:sqlite";
 import { transaction } from "../db.ts";
 import { KEY_SEP } from "../deb/stanzas.ts";
-import { collectPage } from "../paging.ts";
-import type { FileListing, Page, SourceListing } from "../paging.ts";
+import { collectPage, groupPackages, searchParameters } from "../paging.ts";
+import type { FileListing, FoundPackage, FoundPackageVersions, Listing, PackageKind, PackageQuery, Page, SourceListing } from "../paging.ts";
+import { compareStoredRpmVersions, registerVersionFunctions } from "../versions.ts";
+import type { RpmVersion } from "../versions.ts";
 import { Pool } from "../pool.ts";
 import type { PoolFile } from "../pool.ts";
 import type { MetadataKind } from "./xml.ts";
@@ -33,6 +35,14 @@ export const REFERENCING_TABLES = ["rpm_packages"];
 const METADATA_KINDS: MetadataKind[] = ["primary", "filelists", "other"];
 
 type PackageRow = { id: number; sort_key: string; file_id: number };
+type SearchRow = {
+    filename: string; name: string; epoch: number; version: string; rel: string; arch: string; source_name: string; source_version: string; path: string;
+    found_kind: PackageKind;
+};
+
+function versionText(v: RpmVersion): string {
+    return `${ v.epoch > 0 ? `${ v.epoch }:` : "" }${ v.version }-${ v.release }`;
+}
 
 /** Location of a package below the release directory, as primary.xml's href */
 export function rpmHref(sourceName: string, filename: string): string {
@@ -65,6 +75,26 @@ const VERSION_MATCHES = `(?3 IS NULL OR source_version = ?3 OR (substr(source_ve
     AND length(source_version) > length(?3) + 1
     AND substr(source_version, length(?3) + 2) NOT GLOB ('*[' || char(${ NOT_IN_DIST_TAG.join(", ") }) || ']*')))`;
 
+function packageKind(alias: string): string {
+    return `CASE WHEN ${ alias }.arch = 'src' THEN 'source'
+        WHEN instr(${ alias }.name, '-debuginfo') > 0 OR instr(${ alias }.name, '-debugsource') > 0 THEN 'debug' ELSE 'binary' END`;
+}
+
+function filters(alias: string): string {
+    const evr = `${ alias }.epoch, ${ alias }.version, ${ alias }.rel`;
+    return `(:name IS NULL OR ${ alias }.name LIKE :name ESCAPE '!') AND (:source IS NULL OR ${ alias }.source_name LIKE :source ESCAPE '!')
+        AND (:kinds IS NULL OR ${ packageKind(alias) } IN (SELECT value FROM json_each(:kinds)))
+        AND (:architectures IS NULL OR ${ alias }.arch IN (SELECT value FROM json_each(:architectures)))
+        AND (:version IS NULL OR rpm_version_cmp(${ evr }, :version) = 0)`;
+}
+
+/** latest: no row of the same package passes the same filters with a newer version */
+const FOUND = `
+    FROM rpm_packages r JOIN pool_files p ON p.id = r.file_id
+    WHERE r.release_id = :release AND ${ filters("r") }
+        AND (:latest = 0 OR NOT EXISTS (SELECT 1 FROM rpm_packages n WHERE n.release_id = r.release_id AND n.name = r.name AND n.arch = r.arch
+            AND ${ filters("n") } AND rpm_version_order(n.epoch, n.version, n.rel, r.epoch, r.version, r.rel) > 0))`;
+
 function prepareStatements(db: Database) {
     return {
         selectPackage: db.prepare("SELECT id, sort_key, file_id FROM rpm_packages WHERE release_id = ? AND filename = ?"),
@@ -85,6 +115,10 @@ function prepareStatements(db: Database) {
             SELECT path FROM pool_files WHERE path > ?4 AND id IN (
                 SELECT file_id FROM rpm_packages WHERE release_id = ?1 AND source_name = ?2 AND ${ VERSION_MATCHES })
                 ORDER BY path LIMIT ?5`),
+        // In index order with the page limit, so a page of a name in every row stops at the page limit
+        searchFiles: db.prepare(`
+            SELECT r.filename, r.name, r.epoch, r.version, r.rel, r.arch, r.source_name, r.source_version, p.path, ${ packageKind("r") } AS found_kind
+                ${ FOUND } AND (r.name, r.filename) > (:a1, :a2) ORDER BY r.name, r.filename LIMIT :limit`),
     };
 }
 
@@ -100,6 +134,7 @@ export class RpmCatalog {
     constructor(db: Database) {
         this.db = db;
         this.pool = new Pool(db, "rpm", REFERENCING_TABLES);
+        registerVersionFunctions(db);
         this.s = prepareStatements(db);
     }
 
@@ -175,6 +210,48 @@ export class RpmCatalog {
             (r, after, limit) => (this.s.listFiles.all(r.id, f.source, f.version ?? null, after?.[0] ?? "", limit) as { path: string }[])
                 .map(row => ({ distro: r.distro, release: r.name, path: row.path })),
             i => [i.path]);
+    }
+
+    /** The files of the packages the query finds */
+    searchFiles(q: PackageQuery, page: Page): Listing<FoundPackage> {
+        const listing = collectPage(page, 2, from => this.pool.releaseRows(q.distro, q.release, from), (r, after, limit) => {
+            const rows = this.s.searchFiles.all({ ...searchParameters(q, r.id), a1: after?.[0] ?? "", a2: after?.[1] ?? "", limit }) as SearchRow[];
+            return rows.map(row => ({ distro: r.distro, release: r.name, row }));
+        }, i => [i.row.name, i.row.filename]);
+        return {
+            ...listing,
+            items: listing.items.map(({ distro, release, row }) => ({
+                distro, release, kind: row.found_kind, package: row.name,
+                version: versionText({ epoch: row.epoch, version: row.version, release: row.rel }), architecture: row.arch,
+                source: row.source_name, sourceVersion: row.source_version, path: row.path,
+            })),
+        };
+    }
+
+    /** The packages the query finds, each once, with its versions newest first */
+    searchPackages(q: PackageQuery, page: Page): Listing<FoundPackageVersions> {
+        const listing = collectPage(page, 2, from => this.pool.releaseRows(q.distro, q.release, from), (r, after, limit) => {
+            const rows = this.s.searchFiles.iterate({ ...searchParameters(q, r.id), a1: after?.[0] ?? "", a2: "", limit: -1 });
+            return groupPackages(rows as Iterable<unknown> as Iterable<SearchRow>, after, limit, row => row.name, row => row.found_kind)
+                .map(group => ({ distro: r.distro, release: r.name, group }));
+        }, i => [i.group.package, i.group.kind]);
+        return {
+            ...listing,
+            items: listing.items.map(({ distro, release, group }) => {
+                const versions = new Map<string, { evr: RpmVersion; architectures: string[]; source: string }>();
+                for (const row of group.rows) {
+                    const evr = { epoch: row.epoch, version: row.version, release: row.rel };
+                    const text = versionText(evr);
+                    const seen = versions.get(text) ?? versions.set(text, { evr, architectures: [], source: row.source_name }).get(text)!;
+                    seen.architectures.push(row.arch);
+                }
+                const newest = [...versions.values()].sort((a, b) => compareStoredRpmVersions(b.evr, a.evr));
+                return {
+                    distro, release, kind: group.kind, package: group.package, source: newest[0].source,
+                    versions: newest.map(v => ({ version: versionText(v.evr), architectures: v.architectures.sort() })),
+                };
+            }),
+        };
     }
 
     releases(distro?: string, release?: string): RpmReleaseView[] {

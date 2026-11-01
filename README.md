@@ -867,7 +867,7 @@ Status codes:
 
 Simple Repo Manager exposes a Model Context Protocol endpoint at `POST /api/v1/mcp` using the official Streamable HTTP transport. The endpoint is stateless (no session IDs, no resumable streams) and requires the same authentication as the rest of the `/api/v1/*` tree. Use the URL without a trailing slash: `/api/v1/mcp/` is always checked like an upload, even with `API_PUBLIC_READ`.
 
-With `API_PUBLIC_READ=true` (see [Configuration Examples](#configuration-examples)), callers without credentials can connect too and get only the read tools: `server_status`, `list_repositories`, `list_source_packages` and `list_package_files`. The write tools `prepare_upload`, `import_repository` and `remove_package` appear only for requests that pass the IP allowlist and the credentials check.
+With `API_PUBLIC_READ=true` (see [Configuration Examples](#configuration-examples)), callers without credentials can connect too and get only the [read tools](#tools). The write tools appear only for requests that pass the IP allowlist and the credentials check.
 
 ### Identifying the instance
 
@@ -928,12 +928,14 @@ droid mcp add simple-repo-manager \
 | `server_status` | read | Report server health and the enabled formats. |
 | `list_repositories` | read | Enumerate `(format, distribution, release)` triples, optionally filtered. |
 | `list_source_packages` | read | List source packages across matching triples, paged. |
+| `get_setup_instructions` | read | The setup of one release as markdown: signing key and apt or dnf configuration, from the same [template](#installation-instructions-html-templates) as the browse pages. |
+| `search_packages` | read | Find source and binary packages by their `name` or their `source`, with wildcards, and their kinds, architectures and versions: each file with its `downloadUrl`, or each package once with its versions, paged. |
 | `list_package_files` | read | List files belonging to a source package across matching triples, with per-file `downloadUrl` slots, paged. |
 | `prepare_upload` | write | Return one PUT URL per filename. |
 | `import_repository` | write | Import the staged uploads, with a status per file. |
 | `remove_package` | write | Remove a package across matching triples; `immediate: true` deletes its files at once. |
 
-The paged tools take an optional `limit` (1 to 1000) and `cursor`, the `nextCursor` of the previous result. As with the [Package Listing API](#package-listing-api), the counts in the result text cover only the current page. `remove_package` follows the [Package Removal API](#package-removal-api): without `immediate`, the files stay downloadable for one day.
+The paged tools take an optional `limit` (1 to 1000; without it 1000, and 100 for `search_packages`) and `cursor`, the `nextCursor` of the previous result. `search_packages` matches `name` and `source` exactly, ignoring case, unless they hold the wildcards `*` and `?`. The `kind` of a found package is `binary`, `debug`, `installer` (a udeb) or `source`, whose file is the `.dsc` or `.src.rpm` and whose architecture is `source` or `src`. It compares versions as dpkg and rpm do, but `version` only by the parts given: `version: "22"` finds every build of 22. `latest` keeps the newest of each package for each architecture, and `results: "packages"` lists each package once with its versions, newest first. As with the [Package Listing API](#package-listing-api), the counts in the result text cover only the current page. `remove_package` follows the [Package Removal API](#package-removal-api): without `immediate`, the files stay downloadable for one day.
 
 ### Upload flow
 

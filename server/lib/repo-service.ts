@@ -1,17 +1,18 @@
 import type { Gpg, Paths, UploadOptions } from "./config.ts";
 import type { Backend } from "../backend/index.ts";
 import { openBackend } from "../backend/index.ts";
-import type { Listing, Page } from "../backend/paging.ts";
+import type { Listing, PackageKind, Page } from "../backend/paging.ts";
 import { isFormat } from "../backend/pool.ts";
 import type { Format } from "../backend/pool.ts";
 import { RepoInternalError, RepoNotFoundError, RepoValidationError } from "./errors.ts";
 import { repoDirectoryName } from "./file-naming.ts";
+import { askedVersion } from "../backend/versions.ts";
 import { invalidDistroMessage, invalidFilenameMessage, validateDistro, validateFilename } from "./validations.ts";
 import type { RemovalFile, RepoFile } from "./repo-types.ts";
 
 export type { RemovalFile, RepoFile } from "./repo-types.ts";
 export type { Format } from "../backend/pool.ts";
-export type { Listing, Page } from "../backend/paging.ts";
+export type { Listing, PackageKind, Page } from "../backend/paging.ts";
 
 export interface RepositoryRef {
     format: Format;
@@ -32,6 +33,36 @@ export interface SourcePackageFilter extends RepositoryFilter {
 export interface SourcePackage extends RepositoryRef {
     source: string;
     version: string;
+}
+
+/** name and source take the wildcards * and ?; at least one of them is given */
+export interface PackageSearchFilter extends RepositoryFilter {
+    name?: string;
+    source?: string;
+    kind?: PackageKind[];
+    architecture?: string[];
+    version?: string;
+    latest?: boolean;
+}
+
+export interface FoundPackage extends RepositoryRef {
+    kind: PackageKind;
+    package: string;
+    version: string;
+    /** A source package's is source for Debian, src for RPM */
+    architecture: string;
+    source: string;
+    sourceVersion: string;
+    filename: string;
+    path: string;
+}
+
+/** A package once per release, its versions newest first */
+export interface FoundPackageVersions extends RepositoryRef {
+    kind: PackageKind;
+    package: string;
+    source: string;
+    versions: { version: string; architectures: string[] }[];
 }
 
 export interface UploadTarget extends RepositoryRef {
@@ -129,6 +160,29 @@ export class RepoService {
     public async listSourcePackages(filter: SourcePackageFilter, page: Page = {}): Promise<Listing<SourcePackage>> {
         const format = this.knownFormat(filter.format);
         return (await this.backend()).listSourcePackages({ ...inRepoSpelling(filter), format }, page);
+    }
+
+    public async searchFiles(filter: PackageSearchFilter, page: Page = {}): Promise<Listing<FoundPackage>> {
+        const backend = await this.searchBackend(filter);
+        return backend.searchFiles({ ...inRepoSpelling(filter), format: filter.format }, page);
+    }
+
+    public async searchPackages(filter: PackageSearchFilter, page: Page = {}): Promise<Listing<FoundPackageVersions>> {
+        const backend = await this.searchBackend(filter);
+        return backend.searchPackages({ ...inRepoSpelling(filter), format: filter.format }, page);
+    }
+
+    private async searchBackend(filter: PackageSearchFilter): Promise<Backend> {
+        if (!filter.name && !filter.source) {
+            throw new RepoValidationError("name or source is required");
+        }
+        if (filter.version !== undefined) {
+            askedVersion(filter.version);
+        }
+        const format = this.knownFormat(filter.format);
+        const backend = await this.backend();
+        this.assertRepository(backend, format, filter);
+        return backend;
     }
 
     public prepareUpload(target: UploadTarget, filenames: string[]): UploadSlot[] {

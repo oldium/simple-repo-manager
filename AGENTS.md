@@ -119,8 +119,8 @@ curl -sS -X POST http://127.0.0.1:80/api/v1/mcp \
 `structuredContent` carries `{ ok: boolean, files: [{ filename, path,
 status: "ok"|"skipped"|"failed", reason? }] }`. Other tools, all
 callable the same way: `server_status`, `list_repositories`,
-`list_source_packages`, `list_package_files`, `prepare_upload`,
-`remove_package`. See `server/api/mcp/tools.ts` for the schemas.
+`list_source_packages`, `search_packages`, `list_package_files`, `prepare_upload`,
+`get_setup_instructions`, `remove_package`. See `server/api/mcp/tools.ts` for the schemas.
 
 A small helper for tallying responses:
 

@@ -6,6 +6,7 @@ import { readAuthMiddleware, writeAuthMiddleware } from "../lib/auth.ts";
 import upload from "./upload/index.ts";
 import { sendErrorResponse } from "../lib/res.ts";
 import type { ParamsDictionary } from "express-serve-static-core";
+import type { Eta } from "eta";
 import repo from "./repo.ts";
 import mcpRouter from "./mcp/index.ts";
 import { RepoService } from "../lib/repo-service.ts";
@@ -76,7 +77,7 @@ function accessGate(readAuth: RequestHandler[], writeAuth: RequestHandler[]): Re
     };
 }
 
-export default function router(config: AppConfig) {
+export default function router(config: AppConfig, eta: Eta) {
     const router = express.Router({ strict: true });
 
     router.use(logResponseMiddleware());
@@ -102,7 +103,7 @@ export default function router(config: AppConfig) {
         repo.list(config.paths, config.gpg, config.upload));
     v1.get('/repo/:format/:distribution/:release/:source',
         repo.list(config.paths, config.gpg, config.upload));
-    v1.use('/mcp', mcpRouter(config));
+    v1.use('/mcp', mcpRouter(config, eta));
 
     router.all('/', unknownApiMiddleware());
     router.use(unexpectedErrorHandler());

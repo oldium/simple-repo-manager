@@ -10,6 +10,7 @@ import { gpgInit } from "../lib/gpg.ts";
 import { openBackend } from "../backend/index.ts";
 import { resolveFileNaming } from "../lib/file-naming.ts";
 import api from "./api.ts";
+import { initEta } from "../lib/render.ts";
 
 function unexpectedErrorHandler() {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -58,9 +59,11 @@ export default async function createApp(config: AppConfig, environment: Environm
         res.send('Package Uploader API (TypeScript) is running.');
     });
 
-    app.use("/api", api(config));
+    const eta = await initEta(config.paths.templateDir, environment);
 
-    app.use(await files(config.paths, config.gpg, environment));
+    app.use("/api", api(config, eta));
+
+    app.use(await files(config.paths, config.gpg, environment, eta));
     app.use(unexpectedErrorHandler());
 
     return app;

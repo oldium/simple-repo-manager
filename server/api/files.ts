@@ -18,7 +18,7 @@ import serveStatic from "serve-static";
 import parseurl from "parseurl";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Eta } from "eta";
-import { initEta, renderDistroConfigs } from "../lib/render.ts";
+import { renderDistroConfigs } from "../lib/render.ts";
 import { mimeTypeFor } from "../lib/mime.ts";
 import { urlPathProblem } from "../lib/safe-path.ts";
 
@@ -182,10 +182,7 @@ function getRequest() {
     return asyncLocalStorage.getStore()?.req;
 }
 
-async function serveHtmlTemplateIndex(paths: Paths, gpg: Gpg,
-    environment: Environment, cssFileUrl: string, iconNames: string[]): Promise<RequestHandler> {
-    const eta = await initEta(paths.templateDir, environment);
-
+function serveHtmlTemplateIndex(paths: Paths, gpg: Gpg, eta: Eta, cssFileUrl: string, iconNames: string[]): RequestHandler {
     const serve = serveIndex(paths.repoDir, {
         icons: false,
         template: util.callbackify(htmlTemplate(paths, gpg, eta, cssFileUrl, iconNames))
@@ -195,7 +192,7 @@ async function serveHtmlTemplateIndex(paths: Paths, gpg: Gpg,
     }
 }
 
-export default async function files(paths: Paths, gpg: Gpg, environment: Environment) {
+export default async function files(paths: Paths, gpg: Gpg, environment: Environment, eta: Eta) {
     const publicDir = getPublicDir(environment);
     const cssFilePath = osPath.join(publicDir, "style.css");
     const faviconFilePath = osPath.join(publicDir, "favicon.svg");
@@ -214,7 +211,7 @@ export default async function files(paths: Paths, gpg: Gpg, environment: Environ
     router.get("/favicon.svg", serveMiddleware(faviconFilePath, environment));
     router.use(filterHidden());
     router.use(serveStatic(paths.repoDir, { index: false, setHeaders: setRepoFileHeaders }),
-        await serveHtmlTemplateIndex(paths, gpg, environment, cssFileUrl, iconNames)
+        serveHtmlTemplateIndex(paths, gpg, eta, cssFileUrl, iconNames)
     );
     return router;
 }

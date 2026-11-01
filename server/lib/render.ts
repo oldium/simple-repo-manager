@@ -6,6 +6,9 @@ import fs from "fs/promises";
 import { default as osPath } from "node:path";
 import path from "node:path/posix";
 import type { Distribution, Release, Repository, RepoType } from "./repo.ts";
+import type { RepositoryRef } from "./repo-service.ts";
+import { RepoNotFoundError } from "./errors.ts";
+import { htmlToMarkdown } from "./html-markdown.ts";
 import { getEnv, sanitize } from "./env.ts";
 import logger from "./logger.ts";
 import { fileURLToPath } from "node:url";
@@ -103,38 +106,50 @@ type RenderData = {
     [key: string]: string[] | string | undefined;
 };
 
+type RepoData<T extends Repository> = (repoObj: T, distro: string, release: string, data: RenderData) => object;
+
+async function releaseRenderData<T extends Repository>(req: Request, repoDir: string, gpg: Gpg, repoObj: T, distro: string, release: string,
+    repoData: RepoData<T>): Promise<RenderData> {
+    const distroObj = repoObj.distributions[distro];
+    const repoEnvPrefix = repoObj.type.toUpperCase();
+    const gpgPath = await gpgPublicKeyPath(repoDir, gpg, repoObj.type);
+    const repoSlug = getEnv(`${ repoEnvPrefix }_SLUG`, distro, release) ?? getEnv("SLUG") ?? getHostname(req);
+    const data: RenderData = {
+        gpgUri: gpgPath ? getUriNoQuery(req, gpgPath) : undefined,
+        rootUri: getUriNoQuery(req, "/"),
+        repoUri: getUriNoQuery(req, repoObj.path),
+        repoSlug: repoSlug,
+        repoDashSlug: safeSlug(repoSlug),
+        repoName: getEnv(`${ repoEnvPrefix }_REPO_NAME`, distro, release) ?? getEnv("REPO_NAME") ??
+            `Repository ${ repoSlug }`,
+        distroUri: getUriNoQuery(req, distroObj.path),
+        distroSlug: distro,
+        distroName: getEnv(`${ repoEnvPrefix }_DISTRO_NAME`, distro) ?? _.capitalize(distro),
+        releaseUri: getUriNoQuery(req, distroObj.releases[release].path),
+        releaseSlug: release,
+        releaseName: getEnv(`${ repoEnvPrefix }_RELEASE_NAME`, distro, release) ?? _.capitalize(release),
+    };
+    _.merge(data, repoData(repoObj, distro, release, data));
+    return data;
+}
+
+async function renderRelease(eta: Eta, type: RepoType, data: RenderData) {
+    const { templateName, templateFile } = await locateTemplate(eta, type, data.distroSlug, data.releaseSlug);
+    return renderTemplate(eta, templateName, templateFile, data);
+}
+
 async function renderDistroConfig<T extends Repository>(req: Request, eta: Eta, repoDir: string, gpg: Gpg,
-    repoObj: T, repoData?: (repoObj: T, distro: string, release: string, data: RenderData) => object) {
+    repoObj: T, repoData: RepoData<T>) {
     const navigation: string[] = [];
     const configs: string[] = [];
 
     const collator = new Intl.Collator("en", { sensitivity: "base", numeric: true });
-    const repoEnvPrefix = repoObj.type.toUpperCase();
     const debDistros = repoObj.distributions;
     const renderData: Record<string, RenderData[]> = {};
     if (Object.keys(repoObj.distributions).length !== 0) {
         for (const [distro, distroObj] of Object.entries(debDistros)) {
-            for (const [release, releaseObj] of Object.entries(distroObj.releases)) {
-                const gpgPath = await gpgPublicKeyPath(repoDir, gpg, repoObj.type);
-                const repoSlug = getEnv(`${ repoEnvPrefix }_SLUG`, distro, release) ?? getEnv("SLUG") ?? getHostname(req);
-                const data: RenderData = {
-                    gpgUri: gpgPath ? getUriNoQuery(req, gpgPath) : undefined,
-                    rootUri: getUriNoQuery(req, "/"),
-                    repoUri: getUriNoQuery(req, repoObj.path),
-                    repoSlug: repoSlug,
-                    repoDashSlug: safeSlug(repoSlug),
-                    repoName: getEnv(`${ repoEnvPrefix }_REPO_NAME`, distro, release) ?? getEnv("REPO_NAME") ??
-                        `Repository ${ repoSlug }`,
-                    distroUri: getUriNoQuery(req, distroObj.path),
-                    distroSlug: distro,
-                    distroName: getEnv(`${ repoEnvPrefix }_DISTRO_NAME`, distro) ?? _.capitalize(distro),
-                    releaseUri: getUriNoQuery(req, releaseObj.path),
-                    releaseSlug: release,
-                    releaseName: getEnv(`${ repoEnvPrefix }_RELEASE_NAME`, distro, release) ?? _.capitalize(release),
-                };
-                if (repoData) {
-                    _.merge(data, repoData(repoObj, distro, release, data));
-                }
+            for (const release of Object.keys(distroObj.releases)) {
+                const data = await releaseRenderData(req, repoDir, gpg, repoObj, distro, release, repoData);
                 const distroData = renderData[data.distroName] ?? (renderData[data.distroName] = []);
                 distroData.push(data);
             }
@@ -145,9 +160,7 @@ async function renderDistroConfig<T extends Repository>(req: Request, eta: Eta, 
         const distroRender = [];
         const sortedReleases = renderData[distroKeys].toSorted((a, b) => collator.compare(a.releaseName, b.releaseName));
         for (const data of sortedReleases.reverse()) {
-            const { templateName, templateFile } = await locateTemplate(eta, repoObj.type, data.distroSlug, data.releaseSlug);
-            const rendered = await renderTemplate(eta, templateName, templateFile,
-                data);
+            const rendered = await renderRelease(eta, repoObj.type, data);
             if (rendered) {
                 const refName = `${ repoObj.type }-${ safeSlug(data.distroSlug) }-${ safeSlug(data.releaseSlug) }`;
                 if (distroRender.length == 0) {
@@ -187,6 +200,62 @@ function toRepository<V extends { distro: string; release: string }, R extends R
     return repoObj;
 }
 
+type RepositoryTree = ReturnType<ReturnType<typeof getBackend>["repositoryTree"]>;
+
+function debRepository(tree: RepositoryTree, distro: string | undefined, release: string | undefined) {
+    return toRepository("deb", tree.deb, distro, release, (distroPath, view) => ({
+        path: path.join(distroPath, "dists", view.release),
+        components: view.components,
+        architectures: view.architectures,
+    }));
+}
+
+const debData: RepoData<ReturnType<typeof debRepository>> = (repoObj, distro, release, data) => ({
+    releaseComponents: repoObj.distributions[distro].releases[release].components,
+    releaseArchitectures: repoObj.distributions[distro].releases[release].architectures,
+    sourcesListDir: getEnv("DEB_SOURCES_LIST_DIR", distro, release) ?? "/etc/apt/sources.list.d",
+    gpgKeyDir: data.gpgUri ?
+        (getEnv(`DEB_GPG_KEY_DIR`, distro, release) || "/etc/apt/trusted.gpg.d") :
+        undefined,
+    gpgKeyFile: data.gpgUri ?
+        (getEnv(`DEB_GPG_KEY_FILE`, distro, release) || `${ data.repoSlug }.gpg`) :
+        undefined,
+});
+
+function rpmRepository(tree: RepositoryTree, distro: string | undefined, release: string | undefined) {
+    return toRepository("rpm", tree.rpm, distro, release, (distroPath, view) => ({
+        path: path.join(distroPath, view.release),
+    }));
+}
+
+const rpmData: RepoData<ReturnType<typeof rpmRepository>> = (_repoObj, distro, release, data) => ({
+    reposDir: getEnv("RPM_REPOS_DIR", distro, release) ?? "/etc/yum.repos.d",
+    gpgKeyDir: data.gpgUri ?
+        (getEnv(`RPM_GPG_KEY_DIR`, distro, release) || "/etc/pki/rpm-gpg") :
+        undefined,
+    gpgKeyFile: data.gpgUri ?
+        (getEnv(`RPM_GPG_KEY_FILE`, distro, release) || `RPM-GPG-KEY-${ data.repoDashSlug }`) :
+        undefined,
+});
+
+/** The setup of one release as markdown, from the template its browse page shows */
+export async function renderSetupInstructions(req: Request, paths: Paths, gpg: Gpg, eta: Eta, target: RepositoryRef): Promise<string> {
+    const tree = getBackend(paths.repoStateDir).repositoryTree();
+    const distro = repoDirectoryName(target.distribution);
+    const release = repoDirectoryName(target.release);
+    if (!tree[target.format].some(view => view.distro === distro && view.release === release)) {
+        throw new RepoNotFoundError(`No such repository ${ target.format }/${ target.distribution }/${ target.release }`);
+    }
+    const data = target.format === "deb"
+        ? await releaseRenderData(req, paths.repoDir, gpg, debRepository(tree, distro, release), distro, release, debData)
+        : await releaseRenderData(req, paths.repoDir, gpg, rpmRepository(tree, distro, release), distro, release, rpmData);
+    const rendered = await renderRelease(eta, target.format, data);
+    if (!rendered) {
+        throw new Error(`No setup of ${ target.format }/${ distro }/${ release }, the template did not render`);
+    }
+    return `# ${ data.distroName } ${ data.releaseName }\n\n${ htmlToMarkdown(rendered) }\n`;
+}
+
 export async function renderDistroConfigs(req: Request, paths: Paths, gpg: Gpg, eta: Eta, directory: string) {
     const navigation: string[] = [];
     const configs: string[] = [];
@@ -196,46 +265,16 @@ export async function renderDistroConfigs(req: Request, paths: Paths, gpg: Gpg, 
 
     if (browsed === "/" || browsed.startsWith("/deb/")) {
         const [, , pathDistro, , pathRelease] = browsed.split("/");
-        const repoObj = toRepository("deb", tree.deb, pathDistro, pathRelease, (distroPath, view) => ({
-            path: path.join(distroPath, "dists", view.release),
-            components: view.components,
-            architectures: view.architectures,
-        }));
         const { navigation: repoNavigation, configs: repoConfigs } = await renderDistroConfig(req, eta, paths.repoDir, gpg,
-            repoObj, (repoObj, distro, release, data) => {
-                return {
-                    releaseComponents: repoObj.distributions[distro].releases[release].components,
-                    releaseArchitectures: repoObj.distributions[distro].releases[release].architectures,
-                    sourcesListDir: getEnv("DEB_SOURCES_LIST_DIR", distro, release) ?? "/etc/apt/sources.list.d",
-                    gpgKeyDir: data.gpgUri ?
-                        (getEnv(`DEB_GPG_KEY_DIR`, distro, release) || "/etc/apt/trusted.gpg.d") :
-                        undefined,
-                    gpgKeyFile: data.gpgUri ?
-                        (getEnv(`DEB_GPG_KEY_FILE`, distro, release) || `${ data.repoSlug }.gpg`) :
-                        undefined,
-                };
-            });
+            debRepository(tree, pathDistro, pathRelease), debData);
         navigation.push(...repoNavigation);
         configs.push(...repoConfigs);
     }
 
     if (browsed === "/" || browsed.startsWith("/rpm/")) {
         const [, , pathDistro, pathRelease] = browsed.split("/");
-        const repoObj = toRepository("rpm", tree.rpm, pathDistro, pathRelease, (distroPath, view) => ({
-            path: path.join(distroPath, view.release),
-        }));
         const { navigation: repoNavigation, configs: repoConfigs } = await renderDistroConfig(req, eta, paths.repoDir, gpg,
-            repoObj, (repoObj, distro, release, data) => {
-                return {
-                    reposDir: getEnv("RPM_REPOS_DIR", distro, release) ?? "/etc/yum.repos.d",
-                    gpgKeyDir: data.gpgUri ?
-                        (getEnv(`RPM_GPG_KEY_DIR`, distro, release) || "/etc/pki/rpm-gpg") :
-                        undefined,
-                    gpgKeyFile: data.gpgUri ?
-                        (getEnv(`RPM_GPG_KEY_FILE`, distro, release) || `RPM-GPG-KEY-${ data.repoDashSlug }`) :
-                        undefined,
-                };
-            });
+            rpmRepository(tree, pathDistro, pathRelease), rpmData);
         navigation.push(...repoNavigation);
         configs.push(...repoConfigs);
     }

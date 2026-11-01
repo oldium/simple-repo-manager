@@ -24,7 +24,8 @@ export type ToolResult<T extends object | undefined = undefined> = {
 export function successResult<T extends object>(text: string, structured?: T): ToolResult<T> {
     return {
         isError: false,
-        content: [{ type: "text", text }],
+        // Clients that ignore structuredContent would get only the summary
+        content: structured === undefined ? [{ type: "text", text }] : [{ type: "text", text }, { type: "text", text: JSON.stringify(structured) }],
         structuredContent: structured,
     };
 }

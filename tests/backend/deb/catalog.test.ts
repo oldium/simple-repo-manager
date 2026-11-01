@@ -5,6 +5,7 @@ import type { Database } from "node:sqlite";
 import { openDatabase } from "../../../server/backend/db.ts";
 import { DebCatalog, MAX_PAGE_SIZE } from "../../../server/backend/deb/catalog.ts";
 import type { DebBinaryInput, DebUploadInput, PoolFile } from "../../../server/backend/deb/catalog.ts";
+import type { PackageQuery } from "../../../server/backend/paging.ts";
 import { binarySortKey, poolDirectory, sourceSortKey } from "../../../server/backend/deb/stanzas.ts";
 import { RepoValidationError } from "../../../server/lib/errors.ts";
 
@@ -32,10 +33,10 @@ function poolDir(t: Target): string {
     return `deb/${ t.distro ?? "debian" }/${ poolDirectory(t.component ?? "main", t.source ?? "srm-hello") }`;
 }
 
-function binary(pkg: string, version: string, arch: string, o: Target & { kind?: DebBinaryInput["kind"]; variant?: string } = {}): DebBinaryInput {
+function binary(pkg: string, version: string, arch: string, o: Target & { kind?: DebBinaryInput["kind"]; variant?: string; section?: string } = {}): DebBinaryInput {
     const kind = o.kind ?? "deb";
     return {
-        kind, package: pkg, version, architecture: arch, section: kind === "ddeb" ? "debug" : "utils",
+        kind, package: pkg, version, architecture: arch, section: o.section ?? (kind === "ddeb" ? "debug" : "utils"),
         stanza: `Package: ${ pkg }\nVersion: ${ version }\n`,
         file: poolFile(`${ poolDir(o) }/${ pkg }_${ version }_${ arch }.${ kind }`, o.variant),
         paths: [`usr/bin/${ pkg }`],
@@ -411,6 +412,56 @@ describe("Tests for DebCatalog.remove", () => {
 });
 
 describe("Tests for DebCatalog listing", () => {
+    test("The version filters compare as dpkg does, by the parts asked for, and latest keeps the newest of them", withCatalog((_db, catalog) => {
+        catalog.applyUpload(upload({ version: "1.0-1", binaries: [binary("srm-hello", "1.0-1", "amd64"), binary("srm-hello", "1.0-1", "arm64")] }), NOW);
+        for (const version of ["1.0-2", "1.1-1", "2:0.9-1"]) {
+            catalog.applyUpload(upload({ version, binaries: [binary("srm-hello", version, "amd64")] }), NOW);
+        }
+        const found = (q: Partial<PackageQuery>) => catalog.searchFiles({ name: "srm-hello", ...q }, {}).items
+            .map(i => `${ i.kind } ${ i.version } ${ i.architecture }`);
+
+        expect(found({ version: "1.0" })).toEqual(["binary 1.0-1 amd64", "binary 1.0-1 arm64", "source 1.0-1 source", "binary 1.0-2 amd64", "source 1.0-2 source"]);
+        expect(found({ version: "0:1.0-2" })).toEqual(["binary 1.0-2 amd64", "source 1.0-2 source"]);
+        expect(found({ version: "0.9" })).toEqual(["binary 2:0.9-1 amd64", "source 2:0.9-1 source"]);
+        expect(found({ version: "1:0.9" })).toEqual([]);
+        expect(found({ latest: true })).toEqual(["binary 1.0-1 arm64", "binary 2:0.9-1 amd64", "source 2:0.9-1 source"]);
+        expect(found({ latest: true, version: "1.0" })).toEqual(["binary 1.0-1 arm64", "binary 1.0-2 amd64", "source 1.0-2 source"]);
+        expect(found({ latest: true, architectures: ["arm64"] })).toEqual(["binary 1.0-1 arm64"]);
+    }));
+
+    test("Each package once, with its versions newest first as dpkg orders them and the architectures of each", withCatalog((_db, catalog) => {
+        for (const [version, arches] of [["1.0-9", ["amd64", "arm64"]], ["1.0-10", ["amd64"]], ["1.0~rc1-1", ["arm64"]]] as const) {
+            catalog.applyUpload(upload({ version, binaries: arches.map(arch => binary("srm-hello", version, arch)) }), NOW);
+        }
+
+        expect(catalog.searchPackages({ name: "srm-hello" }, {}).items).toEqual([
+            { distro: "debian", release: "trixie", kind: "binary", package: "srm-hello", source: "srm-hello",
+                versions: [{ version: "1.0-10", architectures: ["amd64"] }, { version: "1.0-9", architectures: ["amd64", "arm64"] },
+                    { version: "1.0~rc1-1", architectures: ["arm64"] }] },
+            { distro: "debian", release: "trixie", kind: "source", package: "srm-hello", source: "srm-hello",
+                versions: ["1.0-10", "1.0-9", "1.0~rc1-1"].map(version => ({ version, architectures: ["source"] })) },
+        ]);
+        expect(catalog.searchPackages({ name: "srm-hello", kinds: ["binary"], latest: true }, {}).items.map(i => i.versions))
+            .toEqual([[{ version: "1.0-10", architectures: ["amd64"] }, { version: "1.0-9", architectures: ["arm64"] }]]);
+    }));
+
+    test("A package in section debug is a debug package, a .deb as Debian ships them or a .ddeb", withCatalog((_db, catalog) => {
+        catalog.applyUpload(upload({
+            binaries: [
+                binary("srm-hello", "1.0-1", "amd64"),
+                binary("srm-hello-dbgsym", "1.0-1", "amd64", { section: "debug" }),
+                binary("srm-hello-doc-dbgsym", "1.0-1", "amd64", { kind: "ddeb" }),
+            ],
+        }), NOW);
+
+        expect(catalog.searchFiles({ source: "srm-hello" }, {}).items.map(i => `${ i.kind } ${ i.package }`)).toEqual([
+            "binary srm-hello",
+            "source srm-hello",
+            "debug srm-hello-dbgsym",
+            "debug srm-hello-doc-dbgsym",
+        ]);
+    }));
+
     test("listSources pages with a cursor", withCatalog((db, catalog) => {
         for (const source of ["srm-c", "srm-a", "srm-b"]) {
             catalog.applyUpload(upload({ source, binaries: [binary(source, "1.0-1", "amd64", { source })] }), NOW);

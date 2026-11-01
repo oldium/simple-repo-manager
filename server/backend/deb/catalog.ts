@@ -1,7 +1,8 @@
 import type { Database } from "node:sqlite";
 import { transaction } from "../db.ts";
-import { collectPage } from "../paging.ts";
-import type { FileListing, Page, SourceListing } from "../paging.ts";
+import { collectPage, groupPackages, searchParameters } from "../paging.ts";
+import type { FileListing, FoundPackage, FoundPackageVersions, Listing, PackageKind, PackageQuery, Page, SourceListing } from "../paging.ts";
+import { compareStoredDebianVersions, registerVersionFunctions } from "../versions.ts";
 import { Pool } from "../pool.ts";
 import type { PoolFile } from "../pool.ts";
 import { binarySortKey, sourceSortKey } from "./stanzas.ts";
@@ -42,6 +43,11 @@ export type DebReleaseView = { distro: string; release: string; components: stri
 
 export type DebCell = { distro: string; release: string; component: string; architecture: string; kind: DebBinaryInput["kind"] | "source" };
 
+/** kind is the stored one, which the order uses; found_kind what the search reports */
+type SearchRow = {
+    kind: DebBinaryInput["kind"] | "source"; found_kind: PackageKind; package: string; version: string; architecture: string; source: string;
+    source_version: string; path: string;
+};
 type SourceRow = { id: number; component: string; sort_key: string };
 type BinaryRow = { id: number; component: string; kind: DebBinaryInput["kind"]; architecture: string; sort_key: string; file_id: number };
 type UploadRow = { id: number; changes_name: string; architectures: string };
@@ -62,6 +68,43 @@ class UploadConflicts {
     constructor(paths: string[]) {
         this.paths = paths;
     }
+}
+
+/** Debian ships debug symbols as .deb files in section debug, Ubuntu as .ddeb files */
+function binaryKind(alias: string): string {
+    return `CASE WHEN ${ alias }.kind = 'ddeb' OR ${ alias }.section = 'debug' THEN 'debug' WHEN ${ alias }.kind = 'udeb' THEN 'installer' ELSE 'binary' END`;
+}
+
+function filters(alias: string, own: string, source: string, kind: string): string {
+    return `(:name IS NULL OR ${ own } LIKE :name ESCAPE '!') AND (:source IS NULL OR ${ source } LIKE :source ESCAPE '!')
+        AND (:kinds IS NULL OR ${ kind } IN (SELECT value FROM json_each(:kinds)))
+        AND (:version IS NULL OR deb_version_cmp(${ alias }.version, :version) = 0)`;
+}
+
+/**
+ * Sources, found by their .dsc and with the architecture "source" as in a .changes, and binaries, each in index order.
+ * latest: no row of the same package passes the same filters with a newer version.
+ */
+function searchArms(): string {
+    const after = (columns: string) => `AND (${ columns }) > (:a1, :a2, :a3, :a4)`;
+    return `
+        SELECT 'source' AS kind, 'source' AS found_kind, s.source AS package, s.version AS version, 'source' AS architecture,
+                s.source AS source, s.version AS source_version, p.path AS path
+            FROM deb_sources s JOIN deb_source_files sf ON sf.source_id = s.id JOIN pool_files p ON p.id = sf.file_id AND p.path LIKE '%.dsc'
+            WHERE s.release_id = :release AND (:architectures IS NULL OR 'source' IN (SELECT value FROM json_each(:architectures)))
+                ${ after("s.source, s.version, 'source', 'source'") }
+                AND ${ filters("s", "s.source", "s.source", "'source'") }
+                AND (:latest = 0 OR NOT EXISTS (SELECT 1 FROM deb_sources n WHERE n.release_id = s.release_id AND n.source = s.source
+                    AND ${ filters("n", "n.source", "n.source", "'source'") } AND deb_version_order(n.version, s.version) > 0))
+        UNION ALL
+        SELECT b.kind, ${ binaryKind("b") }, b.package, b.version, b.architecture, b.source, b.source_version, p.path
+            FROM deb_binaries b JOIN pool_files p ON p.id = b.file_id
+            WHERE b.release_id = :release AND (:architectures IS NULL OR b.architecture IN (SELECT value FROM json_each(:architectures)))
+                ${ after("b.package, b.version, b.architecture, b.kind") }
+                AND ${ filters("b", "b.package", "b.source", binaryKind("b")) }
+                AND (:latest = 0 OR NOT EXISTS (SELECT 1 FROM deb_binaries n WHERE n.release_id = b.release_id AND n.package = b.package
+                    AND n.architecture = b.architecture AND n.kind = b.kind
+                    AND ${ filters("n", "n.package", "n.source", binaryKind("n")) } AND deb_version_order(n.version, b.version) > 0))`;
 }
 
 function prepareStatements(db: Database) {
@@ -118,6 +161,8 @@ function prepareStatements(db: Database) {
                 UNION SELECT uf.file_id FROM deb_uploads u JOIN deb_upload_files uf ON uf.upload_id = u.id
                     WHERE u.release_id = ?1 AND u.source = ?2 AND (?3 IS NULL OR u.version = ?3))
                 ORDER BY path LIMIT ?5`),
+        // A merge of both arms in index order, so a page of a name in every row stops at the page limit
+        searchFiles: db.prepare(`${ searchArms() } ORDER BY 3, 4, 5, 1 LIMIT :limit`),
     };
 }
 
@@ -147,6 +192,7 @@ export class DebCatalog {
     constructor(db: Database) {
         this.db = db;
         this.pool = new Pool(db, "deb", REFERENCING_TABLES);
+        registerVersionFunctions(db);
         this.s = prepareStatements(db);
     }
 
@@ -207,6 +253,47 @@ export class DebCatalog {
             (r, after, limit) => (this.s.listFiles.all(r.id, f.source, f.version ?? null, after?.[0] ?? "", limit) as { path: string }[])
                 .map(row => ({ distro: r.distro, release: r.name, path: row.path })),
             i => [i.path]);
+    }
+
+    /** The files of the sources and binaries the query finds */
+    searchFiles(q: PackageQuery, page: Page): Listing<FoundPackage> {
+        const listing = collectPage(page, 4, from => this.pool.releaseRows(q.distro, q.release, from), (r, after, limit) => {
+            const rows = this.s.searchFiles.all({
+                ...searchParameters(q, r.id), a1: after?.[0] ?? "", a2: after?.[1] ?? "", a3: after?.[2] ?? "", a4: after?.[3] ?? "", limit,
+            }) as SearchRow[];
+            return rows.map(row => ({ distro: r.distro, release: r.name, row }));
+        }, i => [i.row.package, i.row.version, i.row.architecture, i.row.kind]);
+        return {
+            ...listing,
+            items: listing.items.map(({ distro, release, row }) => ({
+                distro, release, kind: row.found_kind, package: row.package, version: row.version, architecture: row.architecture,
+                source: row.source, sourceVersion: row.source_version, path: row.path,
+            })),
+        };
+    }
+
+    /** The sources and binaries the query finds, each once, with its versions newest first */
+    searchPackages(q: PackageQuery, page: Page): Listing<FoundPackageVersions> {
+        const listing = collectPage(page, 2, from => this.pool.releaseRows(q.distro, q.release, from), (r, after, limit) => {
+            const rows = this.s.searchFiles.iterate({ ...searchParameters(q, r.id), a1: after?.[0] ?? "", a2: "", a3: "", a4: "", limit: -1 });
+            return groupPackages(rows as Iterable<unknown> as Iterable<SearchRow>, after, limit, row => row.package, row => row.found_kind)
+                .map(group => ({ distro: r.distro, release: r.name, group }));
+        }, i => [i.group.package, i.group.kind]);
+        return {
+            ...listing,
+            items: listing.items.map(({ distro, release, group }) => {
+                const versions = new Map<string, { architectures: string[]; source: string }>();
+                for (const row of group.rows) {
+                    const seen = versions.get(row.version) ?? versions.set(row.version, { architectures: [], source: row.source }).get(row.version)!;
+                    seen.architectures.push(row.architecture);
+                }
+                const newest = [...versions.keys()].sort((a, b) => compareStoredDebianVersions(b, a));
+                return {
+                    distro, release, kind: group.kind, package: group.package, source: versions.get(newest[0])!.source,
+                    versions: newest.map(version => ({ version, architectures: versions.get(version)!.architectures.sort() })),
+                };
+            }),
+        };
     }
 
     /** Components and architectures with an index file; "all" is reported only when no concrete architecture exists */

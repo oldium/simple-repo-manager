@@ -1,5 +1,6 @@
 import express from "express";
 import type { Request, Response } from "express";
+import type { Eta } from "eta";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createRequire } from "node:module";
@@ -8,10 +9,11 @@ import { RepoService } from "../../lib/repo-service.ts";
 import { registerTools } from "./tools.ts";
 import logger from "../../lib/logger.ts";
 import { writeGateRefusal } from "../../lib/auth.ts";
+import { renderSetupInstructions } from "../../lib/render.ts";
 
 const pkg = createRequire(import.meta.url)("../../../package.json") as { version: string };
 
-export default function mcpRouter(config: AppConfig) {
+export default function mcpRouter(config: AppConfig, eta: Eta) {
     const router = express.Router({ strict: true });
     const service = new RepoService(config.paths, config.gpg, config.upload);
     const { allowedIps, basicAuth, bearerAuth } = config.upload;
@@ -29,7 +31,7 @@ export default function mcpRouter(config: AppConfig) {
         if (refusal === "ip") {
             logger.info(`Client ${ req.ip } gets only the MCP read tools: IP not in the allowlist`);
         }
-        const actions = writeAllowed ? "list, upload, import, and remove" : "list";
+        const actions = writeAllowed ? "list, search, upload, import, and remove" : "list and search";
         const baseInstructions = `Use these tools to ${ actions } deb and rpm packages from the configured repositories.`;
 
         const { instanceLabel } = config;
@@ -54,7 +56,7 @@ export default function mcpRouter(config: AppConfig) {
             instructions,
         });
 
-        registerTools(server, service, req, writeAllowed);
+        registerTools(server, service, req, writeAllowed, target => renderSetupInstructions(req, config.paths, config.gpg, eta, target));
 
         const transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: undefined,

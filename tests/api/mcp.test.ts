@@ -4,24 +4,28 @@ import fs from "node:fs/promises";
 import osPath from "path";
 import { fileURLToPath } from "url";
 import { jest } from "@jest/globals";
+import dedent from "dedent";
+import * as openpgp from "openpgp";
 
 import createTestApp from "../testapp.ts";
-import { poolRemovedAt, servedStatuses, uploadFileByPost, withLocalTmpDir } from "../utils.ts";
-import { fixtureNames, importedApp } from "../fixture-upload.ts";
+import { createFiles, poolRemovedAt, servedStatuses, uploadFileByPost, withLocalTmpDir } from "../utils.ts";
+import { fixtureNames, importFixtures, importedApp, uploadSecondVersion } from "../fixture-upload.ts";
 import logger from "../../server/lib/logger.ts";
 
 const RPM_FIXTURES = fileURLToPath(new URL("../fixtures/packages/rpm/fedora/42/", import.meta.url));
 const BASIC = ["upload:pw"];
 const BEARER = ["token-abc"];
 const AUTH = "Bearer token-abc";
-const READ_TOOLS = ["list_package_files", "list_repositories", "list_source_packages", "server_status"];
+const READ_TOOLS = ["get_setup_instructions", "list_package_files", "list_repositories", "list_source_packages", "search_packages", "server_status"];
 const ALL_TOOLS = [
+    "get_setup_instructions",
     "import_repository",
     "list_package_files",
     "list_repositories",
     "list_source_packages",
     "prepare_upload",
     "remove_package",
+    "search_packages",
     "server_status",
 ];
 const INITIALIZE = {
@@ -105,7 +109,7 @@ describe("MCP server", () => {
         expect(response.status).toBe(401);
     }));
 
-    test("tools/list returns the seven tools when both backends enabled", withLocalTmpDir(async () => {
+    test("tools/list returns all tools when both backends enabled", withLocalTmpDir(async () => {
         const app = await createTestApp();
         const response = await request(app)
             .post("/api/v1/mcp")
@@ -113,16 +117,7 @@ describe("MCP server", () => {
             .set("Accept", "application/json, text/event-stream")
             .send(jsonRpc("tools/list"));
         expect(response.status).toBe(200);
-        const names = response.body.result.tools.map((t: { name: string }) => t.name).sort();
-        expect(names).toEqual([
-            "import_repository",
-            "list_package_files",
-            "list_repositories",
-            "list_source_packages",
-            "prepare_upload",
-            "remove_package",
-            "server_status",
-        ]);
+        expect(toolNames(response)).toEqual(ALL_TOOLS);
     }));
 
     test("server_status reports both formats", withLocalTmpDir(async () => {
@@ -476,8 +471,346 @@ describe("MCP server", () => {
 
 });
 
+describe("get_setup_instructions", () => {
+    async function setup(app: Application, args: Record<string, unknown>): Promise<string> {
+        const result = await callTool(app, "get_setup_instructions", args);
+        expect(result.isError).toBe(false);
+        expect(result.structuredContent).toEqual({ ...args, markdown: result.content[0].text });
+        return result.content[0].text.replace(/127\.0\.0\.1:\d+/g, "HOST");
+    }
+
+    test("A Debian release without a key gets its sources file", withLocalTmpDir(async () => {
+        const app = await importedApp("packages/deb/debian/trixie");
+
+        expect(await setup(app, { format: "deb", distribution: "debian", release: "trixie" })).toBe(dedent`
+            # Debian Trixie
+
+            \`\`\`
+            sudo tee /etc/apt/sources.list.d/127.0.0.1.sources >/dev/null <<'EOF'
+            Types: deb deb-src
+            URIs: http://HOST/deb/debian
+            Suites: trixie
+            Components: main
+            EOF
+            \`\`\`
+
+            \`\`\`
+            sudo apt update
+            \`\`\`
+        ` + "\n");
+    }));
+
+    test("An RPM release without a key gets its repo file", withLocalTmpDir(async () => {
+        const app = await importedApp("packages/rpm/fedora/42");
+
+        expect(await setup(app, { format: "rpm", distribution: "fedora", release: "42" })).toBe(dedent`
+            # Fedora 42
+
+            \`\`\`
+            sudo tee /etc/yum.repos.d/127-0-0-1.repo >/dev/null <<'EOF'
+            [127-0-0-1]
+            name=Repository 127.0.0.1
+            baseurl=http://HOST/rpm/fedora/42
+            enabled=1
+            EOF
+            \`\`\`
+
+            \`\`\`
+            sudo dnf -q makecache -y --disablerepo='*' --enablerepo=127-0-0-1
+            \`\`\`
+        ` + "\n");
+    }));
+
+    test("With a signing key, the setup installs the key too", withLocalTmpDir(async () => {
+        const unsigned = await createTestApp();
+        await importFixtures(unsigned, "packages/deb/debian/trixie");
+        await importFixtures(unsigned, "packages/rpm/fedora/42");
+        const { privateKey } = await openpgp.generateKey({ type: "curve25519", userIDs: [{ name: "t" }], format: "armored" });
+        await fs.writeFile("key.asc", privateKey);
+        const app = await createTestApp({ gpg: { gpgRepoPrivateKeyFile: "key.asc" } });
+
+        const deb = await setup(app, { format: "deb", distribution: "debian", release: "trixie" });
+        expect(deb).toContain("curl -fsSL http://HOST/deb/archive-keyring.asc |\nsudo gpg --dearmor -o /etc/apt/trusted.gpg.d/127.0.0.1.gpg");
+        expect(deb).toContain("Signed-By: /etc/apt/trusted.gpg.d/127.0.0.1.gpg");
+
+        const rpm = await setup(app, { format: "rpm", distribution: "fedora", release: "42" });
+        expect(rpm).toContain("sudo curl -fsSL http://HOST/rpm/RPM-GPG-KEY.asc -o /etc/pki/rpm-gpg/RPM-GPG-KEY-127-0-0-1");
+        expect(rpm).toContain("gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-127-0-0-1");
+        expect(rpm).toContain("sudo rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-127-0-0-1 && \\\nsudo dnf");
+    }));
+
+    test("A custom template counts here as on the browse page", withLocalTmpDir(async () => {
+        await createFiles({ "my-templates/deb-debian-trixie.eta.html": "<h2>For <%= distroName %></h2>\n<p>Then:</p>\n<pre>apt update</pre>\n" });
+        const app = await createTestApp({ paths: { templateDir: "my-templates" } });
+        await importFixtures(app, "packages/deb/debian/trixie");
+
+        expect(await setup(app, { format: "deb", distribution: "debian", release: "trixie" })).toBe(
+            "# Debian Trixie\n\n## For Debian\n\nThen:\n\n```\napt update\n```\n");
+    }));
+
+    test("A template that does not render is an error, without its details", withLocalTmpDir(async () => {
+        await createFiles({ "my-templates/deb-debian-trixie.eta.html": "<%= noSuchValue.at.all %>" });
+        const app = await createTestApp({ paths: { templateDir: "my-templates" } });
+        await importFixtures(app, "packages/deb/debian/trixie");
+
+        const result = await callTool(app, "get_setup_instructions", { format: "deb", distribution: "debian", release: "trixie" });
+
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toMatch(/^Internal error; check server logs/);
+    }));
+
+    test.each([
+        ["format", "rpm", "debian", "trixie", "rpm/debian/trixie"],
+        ["distribution", "deb", "ubuntu", "trixie", "deb/ubuntu/trixie"],
+        ["release", "deb", "debian", "sid", "deb/debian/sid"],
+    ])("Another %s is not found", (_, format, distribution, release, named) => withLocalTmpDir(async () => {
+        const app = await importedApp("packages/deb/debian/trixie");
+
+        const result = await callTool(app, "get_setup_instructions", { format, distribution, release });
+
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toBe(`Not found: No such repository ${ named }`);
+    })());
+
+    test("Anonymous callers get it when publicRead is on", withLocalTmpDir(async () => {
+        await importedApp("packages/rpm/fedora/42");
+        const app = await createTestApp({ upload: { publicRead: true, bearerAuth: BEARER } });
+
+        expect(await setup(app, { format: "rpm", distribution: "fedora", release: "42" })).toStartWith("# Fedora 42\n");
+    }));
+});
+
+describe("search_packages", () => {
+    type Found = { format: string; distribution: string; release: string; kind: string; package: string; version: string; architecture: string;
+        source: string; sourceVersion: string; filename: string; path: string; downloadUrl: string };
+    type Entry = { format: string; distribution: string; release: string; kind: string; package: string; source: string;
+        versions: { version: string; architectures: string[] }[] };
+
+    async function search(app: Application, args: Record<string, unknown>): Promise<Found[]> {
+        const result = await callTool(app, "search_packages", args);
+        expect(result.isError).toBe(false);
+        return result.structuredContent.files;
+    }
+
+    async function searchPackages(app: Application, args: Record<string, unknown>): Promise<Entry[]> {
+        const result = await callTool(app, "search_packages", { ...args, results: "packages" });
+        expect(result.isError).toBe(false);
+        return result.structuredContent.packages;
+    }
+
+    const names = (found: Found[]) => found.map(f => `${ f.kind } ${ f.package } ${ f.version } ${ f.architecture }`);
+
+    test("A name matches exactly, ignoring case, with what is needed to get the file", withLocalTmpDir(async () => {
+        const app = await importedApp("packages/deb/debian/trixie");
+
+        const found = await search(app, { name: "srm-hello" });
+
+        expect(names(found)).toEqual(["binary srm-hello 1.0-1 amd64", "source srm-hello 1.0-1 source"]);
+        expect(found[0]).toEqual({
+            format: "deb",
+            distribution: "debian",
+            release: "trixie",
+            kind: "binary",
+            package: "srm-hello",
+            version: "1.0-1",
+            architecture: "amd64",
+            source: "srm-hello",
+            sourceVersion: "1.0-1",
+            filename: "srm-hello_1.0-1_amd64.deb",
+            path: "deb/debian/pool/main/s/srm-hello/srm-hello_1.0-1_amd64.deb",
+            downloadUrl: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/deb\/debian\/pool\/main\/s\/srm-hello\/srm-hello_1\.0-1_amd64\.deb$/),
+        });
+        expect(found[1].filename).toBe("srm-hello_1.0-1.dsc");
+        expect((await request(app).get("/" + found[0].path)).status).toBe(200);
+        expect(names(await search(app, { name: "SRM-HELLO-DOC" }))).toEqual(["binary srm-hello-doc 1.0-1 all"]);
+        expect(await search(app, { name: "hello" })).toEqual([]);
+    }));
+
+    test("The wildcards * and ? match, what SQL takes as wildcards counts as itself", withLocalTmpDir(async () => {
+        const app = await importedApp("packages/deb/debian/trixie");
+
+        expect(names(await search(app, { name: "srm-*" }))).toEqual(["binary srm-hello 1.0-1 amd64", "source srm-hello 1.0-1 source", "binary srm-hello-doc 1.0-1 all"]);
+        expect(names(await search(app, { name: "*-DOC" }))).toEqual(["binary srm-hello-doc 1.0-1 all"]);
+        expect(names(await search(app, { name: "srm?hello" }))).toEqual(["binary srm-hello 1.0-1 amd64", "source srm-hello 1.0-1 source"]);
+        for (const name of ["%", "_", "srm_hello", "!", "srm%hello", "srm!hello"]) {
+            expect(await search(app, { name })).toEqual([]);
+        }
+    }));
+
+    test("A source finds what is built from it, also under other names; with a name both have to match", withLocalTmpDir(async () => {
+        const app = await importedApp("packages/deb/ubuntu/noble");
+
+        expect(names(await search(app, { source: "srm-zst" }))).toEqual([
+            "binary srm-zst 2:3.0-1 amd64",
+            "source srm-zst 2:3.0-1 source",
+            "debug srm-zst-dbgsym 2:3.0-1 amd64",
+        ]);
+        expect(names(await search(app, { source: "srm-*", name: "*dbgsym" }))).toEqual(["debug srm-zst-dbgsym 2:3.0-1 amd64"]);
+        expect(await search(app, { source: "srm-hello", name: "srm-zst" })).toEqual([]);
+    }));
+
+    test("Name or source is required", withLocalTmpDir(async () => {
+        const app = await importedApp("packages/deb/debian/trixie");
+
+        const result = await callTool(app, "search_packages", { distribution: "debian", release: "trixie" });
+
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toBe("Invalid argument: name or source is required");
+    }));
+
+    test("A udeb is an installer package", withLocalTmpDir(async () => {
+        const app = await importedApp("packages-udeb/deb/debian/trixie");
+
+        expect(names(await search(app, { name: "*udeb*" }))).toEqual(["installer srm-hello-udeb 1.0-1 amd64"]);
+    }));
+
+    test("RPM packages come with their kind and the source they were built from", withLocalTmpDir(async () => {
+        const app = await importedApp("packages/rpm/fedora/42");
+
+        const found = await search(app, { source: "srm-hello" });
+
+        expect(names(found)).toEqual([
+            "source srm-hello 1.0-1.fc42 src",
+            "binary srm-hello 1.0-1.fc42 x86_64",
+            "binary srm-hello-doc 1.0-1.fc42 noarch",
+        ]);
+        expect(found[1]).toMatchObject({ format: "rpm", distribution: "fedora", release: "42", source: "srm-hello", sourceVersion: "1.0-1.fc42" });
+        expect(found[1].filename).toBe("srm-hello-1.0-1.fc42.x86_64.rpm");
+        expect((await request(app).get("/" + found[1].path)).status).toBe(200);
+    }));
+
+    test("Kind and architecture narrow what is found; a source's architecture is the one its format names", withLocalTmpDir(async () => {
+        const app = await createTestApp();
+        await importFixtures(app, "packages/deb/debian/trixie");
+        await importFixtures(app, "packages/rpm/fedora/42");
+        const deb = { source: "srm-hello", format: "deb" };
+
+        expect(names(await search(app, { ...deb, kind: ["binary"] }))).toEqual(["binary srm-hello 1.0-1 amd64", "binary srm-hello-doc 1.0-1 all"]);
+        expect(names(await search(app, { ...deb, kind: ["source"] }))).toEqual(["source srm-hello 1.0-1 source"]);
+        expect(names(await search(app, { ...deb, architecture: ["all"] }))).toEqual(["binary srm-hello-doc 1.0-1 all"]);
+        expect(names(await search(app, { ...deb, architecture: ["arm64", "all", "source"] })))
+            .toEqual(["source srm-hello 1.0-1 source", "binary srm-hello-doc 1.0-1 all"]);
+        expect(await search(app, { ...deb, kind: ["source"], architecture: ["amd64"] })).toEqual([]);
+        expect(names(await search(app, { source: "srm-hello", format: "rpm", architecture: ["noarch"] }))).toEqual(["binary srm-hello-doc 1.0-1.fc42 noarch"]);
+        expect(names(await search(app, { source: "srm-hello", format: "rpm", architecture: ["src"] }))).toEqual(["source srm-hello 1.0-1.fc42 src"]);
+        expect(await search(app, { source: "srm-hello", format: "rpm", architecture: ["source"] })).toEqual([]);
+    }));
+
+    test("The filters narrow the search across formats and releases", withLocalTmpDir(async () => {
+        const app = await createTestApp();
+        await importFixtures(app, "packages/deb/debian/trixie");
+        await importFixtures(app, "packages/rpm/fedora/42");
+
+        const where = (found: Found[]) => [...new Set(found.map(f => `${ f.format }/${ f.distribution }/${ f.release }`))];
+        expect(where(await search(app, { name: "srm-hello" }))).toEqual(["deb/debian/trixie", "rpm/fedora/42"]);
+        expect(where(await search(app, { name: "srm-hello", format: "rpm" }))).toEqual(["rpm/fedora/42"]);
+        expect(where(await search(app, { name: "srm-hello", distribution: "debian", release: "trixie" }))).toEqual(["deb/debian/trixie"]);
+    }));
+
+    test("Pages go over all results, each one once, in both shapes", withLocalTmpDir(async () => {
+        const app = await createTestApp();
+        await importFixtures(app, "packages/deb/debian/trixie");
+        await importFixtures(app, "packages/rpm/fedora/42");
+
+        const whole = await search(app, { source: "srm-hello" });
+        const pages = await listByPage(app, "search_packages", { source: "srm-hello" }, whole.length);
+        expect(whole).toHaveLength(6);
+        expect(pages.flatMap(page => page.files.map((f: Found) => f.path))).toEqual(whole.map(f => f.path));
+
+        const entries = await searchPackages(app, { source: "srm-hello" });
+        const entryPages = await listByPage(app, "search_packages", { source: "srm-hello", results: "packages" }, entries.length);
+        expect(entries).toHaveLength(6);
+        expect(entryPages.flatMap(page => page.packages)).toEqual(entries);
+
+        const mixed = await callTool(app, "search_packages", { source: "srm-hello", results: "packages", limit: 1, cursor: pages[0].nextCursor });
+        expect(mixed.content[0].text).toBe("Invalid argument: Invalid cursor");
+    }));
+
+    test("results: packages lists each package once, with its versions newest first", withLocalTmpDir(async () => {
+        const app = await importedApp("packages/deb/debian/trixie");
+        await uploadSecondVersion(app);
+        expect((await request(app).post("/api/v1/repo/import")).status).toBe(200);
+
+        const entries = await searchPackages(app, { source: "srm-hello" });
+
+        expect(entries).toEqual([
+            { format: "deb", distribution: "debian", release: "trixie", kind: "binary", package: "srm-hello", source: "srm-hello",
+                versions: [{ version: "1.0-1", architectures: ["amd64"] }] },
+            { format: "deb", distribution: "debian", release: "trixie", kind: "source", package: "srm-hello", source: "srm-hello",
+                versions: [{ version: "1.0-2", architectures: ["source"] }, { version: "1.0-1", architectures: ["source"] }] },
+            { format: "deb", distribution: "debian", release: "trixie", kind: "binary", package: "srm-hello-doc", source: "srm-hello",
+                versions: [{ version: "1.0-1", architectures: ["all"] }] },
+        ]);
+        expect((await searchPackages(app, { name: "srm-hello", kind: ["source"], latest: true }))[0].versions)
+            .toEqual([{ version: "1.0-2", architectures: ["source"] }]);
+        const result = await callTool(app, "search_packages", { name: "srm-hello", results: "packages" });
+        expect(result.content[0].text).toBe("Found 2 packages.");
+    }));
+
+    test("An agent finds the latest version, and every build of a version", withLocalTmpDir(async () => {
+        const app = await importedApp("packages/deb/debian/trixie");
+        await uploadSecondVersion(app);
+        expect((await request(app).post("/api/v1/repo/import")).status).toBe(200);
+
+        expect(names(await search(app, { name: "srm-hello", latest: true }))).toEqual(["binary srm-hello 1.0-1 amd64", "source srm-hello 1.0-2 source"]);
+        expect(names(await search(app, { name: "srm-hello", version: "1.0", kind: ["source"] })))
+            .toEqual(["source srm-hello 1.0-1 source", "source srm-hello 1.0-2 source"]);
+        expect(names(await search(app, { name: "srm-hello", version: "1.0", kind: ["source"], latest: true }))).toEqual(["source srm-hello 1.0-2 source"]);
+
+        const invalid = await callTool(app, "search_packages", { name: "srm-hello", version: "a:1" });
+        expect(invalid.isError).toBe(true);
+        expect(invalid.content[0].text).toBe("Invalid argument: Invalid version a:1: the epoch is not a number");
+    }));
+
+    test("A name longer than any file name is refused", withLocalTmpDir(async () => {
+        const app = await createTestApp();
+
+        for (const args of [{ name: "a".repeat(256) }, { source: "a".repeat(256) }]) {
+            const result = await callTool(app, "search_packages", args);
+            expect(result.isError).toBe(true);
+            expect(result.content[0].text).toMatch(/Input validation error.*(name|source)/s);
+        }
+    }));
+
+    test("An unknown repository is an error, an unknown package is not", withLocalTmpDir(async () => {
+        const app = await importedApp("packages/rpm/fedora/42");
+
+        const unknown = await callTool(app, "search_packages", { name: "srm-hello", distribution: "fedora", release: "41" });
+        expect(unknown.isError).toBe(true);
+        expect(unknown.content[0].text).toBe("Not found: No such repository -/fedora/41");
+
+        const none = await callTool(app, "search_packages", { name: "no-such-package", distribution: "fedora", release: "42" });
+        expect(none.isError).toBe(false);
+        expect(none.content[0].text).toBe("Found 0 files.");
+    }));
+
+    test("Anonymous callers can search when publicRead is on", withLocalTmpDir(async () => {
+        await importedApp("packages/rpm/fedora/42");
+        const app = await createTestApp({ upload: { publicRead: true, bearerAuth: BEARER } });
+
+        expect(await search(app, { name: "srm-hello-doc" })).toHaveLength(1);
+    }));
+});
+
 describe("MCP tools by access", () => {
-    test("Anonymous tools/list shows only server_status and the three list tools when publicRead is on", withLocalTmpDir(async () => {
+    test("The read tools say they change nothing, the others do not", withLocalTmpDir(async () => {
+        const app = await createTestApp();
+
+        const tools = (await mcpPost(app, "tools/list")).body.result.tools as { name: string; annotations?: { readOnlyHint?: boolean } }[];
+
+        expect(tools.filter(t => t.annotations?.readOnlyHint).map(t => t.name).sort()).toEqual(READ_TOOLS);
+    }));
+
+    test("A client that reads only the text gets the results too", withLocalTmpDir(async () => {
+        const app = await importedApp("packages/rpm/fedora/42");
+
+        const result = await callTool(app, "list_repositories", {});
+
+        expect(result.content[0].text).toBe("Found 1 repository.");
+        expect(JSON.parse(result.content[1].text)).toEqual(result.structuredContent);
+    }));
+
+    test("Anonymous tools/list shows only the read tools when publicRead is on", withLocalTmpDir(async () => {
         const app = await createTestApp({ upload: { publicRead: true, bearerAuth: BEARER } });
 
         const response = await mcpPost(app, "tools/list");
@@ -486,7 +819,7 @@ describe("MCP tools by access", () => {
         expect(JSON.stringify(response.body.result.tools)).not.toMatch(/prepare_upload|import_repository|remove_package/);
     }));
 
-    test("Authenticated tools/list shows all seven tools", withLocalTmpDir(async () => {
+    test("Authenticated tools/list shows all tools", withLocalTmpDir(async () => {
         for (const publicRead of [true, false]) {
             const app = await createTestApp({ upload: { publicRead, basicAuth: BASIC, bearerAuth: BEARER } });
 
@@ -611,9 +944,9 @@ describe("MCP tools by access", () => {
         const authenticated = await mcpPost(app, "initialize", INITIALIZE).set("Authorization", AUTH);
 
         expect(anonymous.body.result.instructions)
-            .toBe("Use these tools to list deb and rpm packages from the configured repositories.");
+            .toBe("Use these tools to list and search deb and rpm packages from the configured repositories.");
         expect(authenticated.body.result.instructions)
-            .toBe("Use these tools to list, upload, import, and remove deb and rpm packages from the configured repositories.");
+            .toBe("Use these tools to list, search, upload, import, and remove deb and rpm packages from the configured repositories.");
     }));
 });
 

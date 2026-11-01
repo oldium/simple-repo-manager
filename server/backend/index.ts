@@ -12,7 +12,7 @@ import { publishDebian } from "./deb/publisher.ts";
 import { deletePoolFile, startGc } from "./gc.ts";
 import type { Digests } from "./hash.ts";
 import { MAX_PAGE_SIZE } from "./paging.ts";
-import type { Listing, Page } from "./paging.ts";
+import type { Listing, PackageQuery, Page } from "./paging.ts";
 import { MissingKeyError, describeSigningKey, keyFileStamp, loadSigningKey, loadUploadKeys, logUploadKeys } from "./pgp.ts";
 import type { UploadKeySources } from "./pgp.ts";
 import { isFormat, Pool } from "./pool.ts";
@@ -32,8 +32,8 @@ import { addPublicKeyToKeyrings } from "../lib/gpg.ts";
 import lock from "../lib/lock.ts";
 import logger from "../lib/logger.ts";
 import type {
-    ImportResult, ListFilesFilter, RemovalFile, RemovalFilter, RemovalResult, RepoFile, RepositoryFilter, RepositoryRef,
-    SourcePackage, SourcePackageFilter,
+    FoundPackage, FoundPackageVersions, ImportResult, ListFilesFilter, PackageSearchFilter, RemovalFile, RemovalFilter, RemovalResult, RepoFile,
+    RepositoryFilter, RepositoryRef, SourcePackage, SourcePackageFilter,
 } from "../lib/repo-service.ts";
 import { reservedNameProblem } from "../lib/validations.ts";
 
@@ -49,6 +49,15 @@ export type OpenOptions = { rebuild?: boolean; uploadKeys?: UploadKeySources };
 export type PackageFile = RepositoryRef & RepoFile;
 
 const FORMATS: Format[] = ["deb", "rpm"];
+
+const PACKAGES_CURSOR = "packages:";
+
+function packageQuery(f: PackageSearchFilter): PackageQuery {
+    return {
+        distro: f.distribution, release: f.release, name: f.name, source: f.source, kinds: f.kind, architectures: f.architecture,
+        version: f.version, latest: f.latest,
+    };
+}
 
 /** A listing over both formats continues where its cursor says: "<format>:<that catalog's cursor>" */
 function splitCursor(cursor: string | undefined): { format?: Format; cursor?: string } {
@@ -246,6 +255,30 @@ export class Backend {
                 ...listing, items: listing.items.map(i => ({ format, distribution: i.distro, release: i.release, path: i.path, filename: path.basename(i.path) })),
             };
         });
+    }
+
+    searchFiles(f: PackageSearchFilter, page: Page = {}): Listing<FoundPackage> {
+        this.assertOpen();
+        return this.pageAcross(f.format, page, (format, p) => {
+            const listing = this.catalogs[format].searchFiles(packageQuery(f), p);
+            return {
+                ...listing,
+                items: listing.items.map(({ distro, ...found }) => ({ format, distribution: distro, ...found, filename: path.basename(found.path) })),
+            };
+        });
+    }
+
+    /** Its cursors start with "packages:", so one of searchFiles is refused rather than read the wrong way */
+    searchPackages(f: PackageSearchFilter, page: Page = {}): Listing<FoundPackageVersions> {
+        this.assertOpen();
+        if (page.cursor !== undefined && !page.cursor.startsWith(PACKAGES_CURSOR)) {
+            throw new RepoValidationError("Invalid cursor");
+        }
+        const listing = this.pageAcross(f.format, { ...page, cursor: page.cursor?.slice(PACKAGES_CURSOR.length) }, (format, p) => {
+            const found = this.catalogs[format].searchPackages(packageQuery(f), p);
+            return { ...found, items: found.items.map(({ distro, ...entry }) => ({ format, distribution: distro, ...entry })) };
+        });
+        return listing.nextCursor === undefined ? listing : { ...listing, nextCursor: PACKAGES_CURSOR + listing.nextCursor };
     }
 
     repositoryTree(): { deb: DebReleaseView[]; rpm: RpmReleaseView[] } {
