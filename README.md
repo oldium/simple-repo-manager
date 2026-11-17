@@ -1743,25 +1743,60 @@ signed them with `rnp`, with `gpg` checking signed uploads. None of them is
 needed any more: the first start of the new version migrates the published
 repositories once, with the [rebuild](#rebuilding-the-repository-database)
 described above. Back up the `data` directory before that start, and keep the
-backup until the migration is verified.
+backup until the migration is verified, for example with `apt update` and
+`dnf makecache` on a client.
 
-* The repository URLs and the installation instructions stay the same. RPMs
-  move from `Packages/<first character>/` to
-  `Packages/<first character>/<source name>/` in lower case, clients pick up the
-  new paths with their next metadata refresh.
+Kept as it is:
+
+* `REPO_DIR` with the published repositories, which the migration reads. The
+  repository URLs and the installation instructions stay the same.
+* `INCOMING_DIR`. Uploads waiting there are imported as before, with the
+  signature check below.
+* The configuration, except the variables removed below.
+
+New:
+
+* The repository database `REPO_STATE_DIR/repo.db`, with `repo.db-wal` and
+  `repo.db-shm` next to it while the server runs, and the directories
+  `REPO_STATE_DIR/shadow` and `REPO_STATE_DIR/tmp`. The server manages them,
+  back them up with the rest of the data.
+* RPMs move from `Packages/<first character>/` to
+  `Packages/<first character>/<source name>/` in lower case. A client picks up
+  the new paths with its next metadata refresh, until then the download of a
+  moved package fails. `sudo dnf makecache --refresh` refreshes at once.
+* The generated `.repo` file sets `metadata_expire=12h`. Add the line to the
+  `.repo` files of clients set up with 2.x, which otherwise keep the metadata
+  for up to 48 hours.
 * Debian-like releases publish only compressed indexes, with `by-hash` copies.
-  The uncompressed `Packages` and `Sources` files and the per-component
-  `Release` files are gone.
-* The `reprepro` state in `REPO_STATE_DIR/deb-<distribution>/` is no longer
-  used and can be deleted after a successful migration. Staged uploads keep
-  working.
-* `REPREPRO_BIN`, `CREATEREPO_SCRIPT`, `GPG_BIN`, `SIGN_SCRIPT` and `GNUPGHOME`
-  are no longer used, and the server logs a warning when they are set.
-* With any key configured, uploads now have to be signed, also the RPMs. An upload
-  that 2.x took unsigned or signed by an unknown key is refused, see
+* With any key configured, uploads now have to be signed, also the RPMs. An
+  upload that 2.x took unsigned or signed by an unknown key is refused, see
   [Verifying Uploads](#verifying-uploads).
 * The signing key must be usable by OpenPGP.js, see
   [Signing Repository Metadata](#signing-repository-metadata).
+* The Docker image holds Node.js and the server only, with no shell and no
+  `tini`. Run it with `--init`, or `init: true` with Docker Compose, and inspect
+  the data on the host, see [Docker Build](#docker-build).
+* A manual installation runs `server/server.ts` from the sources instead of
+  `dist/server.js`, see [Manual Build](#manual-build).
+
+Removed by the migration itself, in `REPO_DIR`:
+
+* The index files of 2.x that the new ones replace: the uncompressed `Packages`
+  and `Sources` files and the per-component `Release` files of Debian-like
+  releases, and the old metadata in the `repodata` directories of RPM releases.
+  Some go at once, the rest after a one-day grace period.
+
+To remove by hand:
+
+* `REPO_STATE_DIR/deb-<distribution>/`, the state of `reprepro`, once the
+  migration is verified.
+* The directory `GNUPGHOME` pointed to, if only the server used it, once the
+  migration is verified.
+* The `dist/` directory of a manual installation, before copying the new
+  version. The new `dist/` holds only the stylesheet.
+* The variables `REPREPRO_BIN`, `CREATEREPO_SCRIPT`, `GPG_BIN`, `SIGN_SCRIPT`
+  and `GNUPGHOME` in the configuration. The server logs a warning when they are
+  set.
 
 ## Troubleshooting
 
