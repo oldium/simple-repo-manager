@@ -63,9 +63,9 @@ Rebuild the image
 (`--build`) any time you change `server/`, `tsconfig.json`, etc. — the
 container runs the baked-in `dist/`, not source.
 
-`.dockerignore` excludes `tmp/*` (except its tracked `.gitignore` and
-`README.md`) so scratch files in `tmp/` don't break the in-image lint
-step.
+`.dockerignore` lets in only what lint, tests and the build read, so a
+new file they need outside `server/`, `tests/`, `types/` and `public/`
+needs a line there.
 
 ## Driving the server: REST upload + MCP import
 
