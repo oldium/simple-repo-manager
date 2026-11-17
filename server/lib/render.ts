@@ -1,4 +1,4 @@
-import type { Environment, Gpg, Paths } from "./config.ts";
+import type { Gpg, Paths } from "./config.ts";
 import { Eta } from "eta";
 import escapeHtml from "escape-html";
 import fsExtra from "fs-extra";
@@ -41,14 +41,7 @@ async function locateTemplate(eta: Eta, type: RepoType, distro: string, release:
     return { templateName: `@default-${ type }` }
 }
 
-function getTemplateDir(environment: Environment) {
-    switch (environment) {
-        case "production":
-            return osPath.join(osPath.dirname(fileURLToPath(import.meta.url)), "..", "templates");
-        default:
-            return osPath.join(osPath.dirname(fileURLToPath(import.meta.url)), "..", "..", "templates");
-    }
-}
+const DEFAULT_TEMPLATE_DIR = osPath.join(osPath.dirname(fileURLToPath(import.meta.url)), "..", "..", "templates");
 
 function renderConfigRef(refName: string, title: string, releaseName: string) {
     return `<a href="#cfg:${ escapeHtml(refName) }" title="${ escapeHtml(title) }">${ escapeHtml(releaseName) }</a>`
@@ -355,7 +348,7 @@ export async function renderDistroConfigs(req: Request, paths: Paths, gpg: Gpg, 
     return render.join("\n");
 }
 
-export async function initEta(templateDir: string | undefined, environment: Environment) {
+export async function initEta(templateDir: string | undefined) {
     const eta = new Eta({
         debug: true,
         cache: true,
@@ -371,7 +364,7 @@ export async function initEta(templateDir: string | undefined, environment: Envi
     // Check if we need default templates
     for (const template of ["deb", "rpm"]) {
         const templateContent = await fs.readFile(
-            osPath.join(getTemplateDir(environment), `${ template }.eta.html`), 'utf8');
+            osPath.join(DEFAULT_TEMPLATE_DIR, `${ template }.eta.html`), 'utf8');
         const compiledTemplate = eta.compile(templateContent);
         eta.loadTemplate(`@default-${ template }`, compiledTemplate);
     }

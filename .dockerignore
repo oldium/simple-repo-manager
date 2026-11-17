@@ -12,6 +12,7 @@
 !/server
 !/types
 !/public
+!/styles
 !/tests
 !/templates/deb.eta.html
 !/templates/rpm.eta.html

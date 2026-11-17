@@ -22,13 +22,14 @@ RUN npm ci
 COPY --chmod=u=rw,go=r . .
 RUN find . -mindepth 1 -maxdepth 1 -type d ! -name node_modules -exec chmod -R ugo+X {} +
 
-# Run linter
+# Run linter and type check
 RUN npm run lint
+RUN npm run typecheck
 
 # Run tests, silent so that their report fits the build log
 RUN npm run test -- --silent
 
-# Build the application
+# Build the CSS, the rest runs from its sources
 RUN npm run build
 
 FROM dhi.io/node:26-debian13 AS runtime
@@ -73,6 +74,9 @@ ENV NODE_ENV=production
 
 COPY --from=initial /build/package*.json ./
 COPY --from=initial /build/node_modules ./node_modules/
+COPY --from=builder /build/server ./server/
+COPY --from=builder /build/templates ./templates/
+COPY --from=builder /build/public ./public/
 COPY --from=builder /build/dist ./dist/
 
 USER 1000:1000
@@ -83,4 +87,4 @@ VOLUME /app/data
 
 # -s keeps zombie reaping working when Docker's --init runs as PID 1
 ENTRYPOINT ["/usr/bin/tini", "-s", "--"]
-CMD ["node", "--enable-source-maps", "./dist/server.js"]
+CMD ["node", "server/server.ts"]

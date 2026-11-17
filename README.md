@@ -67,7 +67,11 @@ so you can run the server with the following command:
 npm run dev
 ```
 
-This will start the server listening on http://localhost:3000.
+This will start the server listening on http://localhost:3000. Node.js runs
+the TypeScript sources directly, and in development the server compiles the
+stylesheet `styles/style.css` on every request, so a change to it shows at the
+next page load. Check a change with `npm run lint`, `npm run typecheck` and
+`npm test`.
 
 The Development Container (devcontainer in short) comes with Node.js and the
 `sqlite3` command-line tool for inspecting the repository database, so you can
@@ -1489,46 +1493,36 @@ below for details on how to build and run the Docker image.
 
 ### Manual Build
 
-To build the production version of the application, run:
+The server runs from its TypeScript sources, so only the stylesheet needs a
+build. It compiles `styles/style.css` into the `dist` directory:
 
 ```bash
 npm run build
 ```
 
-This will create a production build in the `dist` directory. The application can
-then be started with:
+The production version can then be started with:
 
 ```bash
 npm run prod
 ```
 
-This `dist` directory is not self-contained, it needs `node_modules` in order to
-run. So to create the smallest runnable application, you need to copy the
-`dist` directory, as well as the `package.json` and `package-lock.json` files
-to the target directory (the example uses `/app` directory, use any target
-directory you like) and prepare the `node_modules` directory with the following
-commands:
+To run it in another directory, copy what the server runs from and install the
+production dependencies there. The example uses the `/app` directory, use any
+target directory you like:
 
 ```bash
-mkdir -p /app/dist
-cp --recursive dist/ package.json package-lock.json /app/
+mkdir -p /app
+cp --recursive server/ templates/ public/ dist/ package.json package-lock.json /app/
 cd /app
 npm ci --omit=dev
 ```
 
-The resulting target directory now contains the production build of the
-application, which can be run with:
+The target directory can then be run with:
 
 ```bash
 cd /app
-NODE_ENV=production \
-  node --enable-source-maps ./dist/server.js
+NODE_ENV=production node server/server.ts
 ```
-
-> [!NOTE]
-> The `--enable-source-maps` option is used to enable source maps for debugging
-> the production build. It is not required, but it is recommended for easier
-> finding the location of the code in the source files.
 
 The configuration (see [Configuration](#configuration) section for details) can
 be supplied by environment variables set in the `.env` file located in the
@@ -1704,7 +1698,7 @@ Ctrl+C and start the regular container again:
 ```bash
 docker stop simple-repo-manager
 docker run --rm -it --env-file .env --volume ./data:/app/data \
-  simple-repo-manager node --enable-source-maps ./dist/server.js --rebuild
+  simple-repo-manager node server/server.ts --rebuild
 docker start simple-repo-manager
 ```
 
@@ -1712,7 +1706,7 @@ With Docker Compose, the one-off run takes the service configuration:
 
 ```bash
 docker compose stop
-docker compose run --rm simple-repo-manager node --enable-source-maps ./dist/server.js --rebuild
+docker compose run --rm simple-repo-manager node server/server.ts --rebuild
 docker compose up --detach
 ```
 

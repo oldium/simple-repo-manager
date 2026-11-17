@@ -15,12 +15,9 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "allowImportingTsExtensions": true,
-    "rewriteRelativeImportExtensions": true,
     "jsx": "preserve",
     "incremental": true,
-    "inlineSourceMap": true,
-    "rootDir": "./server",
-    "outDir": "./dist"
+    "noEmit": true
   },
   "include": [
     "server/**/*.ts",

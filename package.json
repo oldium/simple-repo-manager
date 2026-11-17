@@ -11,11 +11,12 @@
   },
   "scripts": {
     "dev": "node --env-file=env.development --enable-source-maps ./server/server.ts",
-    "build": "node ./node_modules/typescript7/bin/tsc --project ./tsconfig.json && node --enable-source-maps ./build.ts",
+    "build": "node ./build.ts",
+    "typecheck": "node ./node_modules/typescript7/bin/tsc --project ./tsconfig.json",
     "test": "node --enable-source-maps --experimental-vm-modules --no-warnings node_modules/jest/bin/jest.js --colors",
     "test:debug": "node --enable-source-maps --experimental-vm-modules --no-warnings node_modules/jest/bin/jest.js --colors --detectOpenHandles --runInBand",
     "lint": "eslint",
-    "prod": "node --env-file=env.production --enable-source-maps ./dist/server.js"
+    "prod": "node --env-file=env.production ./server/server.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

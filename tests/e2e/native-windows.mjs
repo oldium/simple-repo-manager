@@ -17,7 +17,7 @@ const repo = osPath.resolve(import.meta.dirname, "..", "..");
 const [workArg = osPath.join(repo, "tmp", "native-windows"), portArg = "38473"] = process.argv.slice(2);
 const work = osPath.resolve(workArg);
 const port = Number(portArg);
-if (process.platform !== "win32" || !existsSync(osPath.join(repo, "dist", "server.js"))) {
+if (process.platform !== "win32" || !existsSync(osPath.join(repo, "dist", "style.css"))) {
     console.error("This runs on Windows, after npm run build");
     process.exit(2);
 }
@@ -43,7 +43,7 @@ let logIndex = 0;
 
 async function start() {
     logIndex++;
-    server = spawn(process.execPath, ["--enable-source-maps", osPath.join(repo, "dist", "server.js")], {
+    server = spawn(process.execPath, [osPath.join(repo, "server", "server.ts")], {
         cwd: work, env, stdio: ["ignore", openSync(osPath.join(work, `server${ logIndex }.log`), "w"), openSync(osPath.join(work, `server${ logIndex }.err`), "w")],
     });
     for (let i = 0; i < 600; i++) {
@@ -427,13 +427,13 @@ if (reach.status === 0) {
 await kill();
 
 // ---------------------------------------------------------------- wrong configuration
-const refused = spawnSync(process.execPath, [osPath.join(repo, "dist", "server.js")], { cwd: work, env: { ...env, GPG_PUBLIC_KEYS_FILE: "missing.asc" }, encoding: "utf8", timeout: 60000 });
+const refused = spawnSync(process.execPath, [osPath.join(repo, "server", "server.ts")], { cwd: work, env: { ...env, GPG_PUBLIC_KEYS_FILE: "missing.asc" }, encoding: "utf8", timeout: 60000 });
 check("A configured key file that is missing refuses the start", refused.status !== 0 && refused.status !== null && `${ refused.stdout }${ refused.stderr }`.includes("GPG key file missing.asc does not exist"), `exit ${ refused.status }`);
 
 // ---------------------------------------------------------------- the console closing
 const consoleLog = osPath.join(work, "console.log");
 const closing = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", osPath.join(import.meta.dirname, "native-windows-close.ps1"),
-    "-CommandLine", `"${ process.execPath }" --enable-source-maps "${ osPath.join(repo, "dist", "server.js") }"`, "-ReadyUrl", `${ base }/api/v1/status`,
+    "-CommandLine", `"${ process.execPath }" "${ osPath.join(repo, "server", "server.ts") }"`, "-ReadyUrl", `${ base }/api/v1/status`,
     "-Log", consoleLog], { cwd: work, env, encoding: "utf8", timeout: 120000 });
 const consoleLines = existsSync(consoleLog)
     ? stripVTControlCharacters(await fs.readFile(consoleLog, "utf8")).split(/\r?\n/).map(line => line.trim()).filter(Boolean)

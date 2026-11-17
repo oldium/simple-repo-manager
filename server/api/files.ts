@@ -166,13 +166,11 @@ function setRepoFileHeaders(res: Response, filePath: string, _stat: unknown) {
     res.setHeader("X-Content-Type-Options", "nosniff");
 }
 
-function getPublicDir(environment: Environment) {
-    switch (environment) {
-        case "production":
-            return osPath.join(osPath.dirname(fileURLToPath(import.meta.url)), "..", "public");
-        default:
-            return osPath.join(osPath.dirname(fileURLToPath(import.meta.url)), "..", "..", "public");
-    }
+const ROOT_DIR = osPath.join(osPath.dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+/** Production serves the CSS that `npm run build` compiled, the other modes its source */
+function getCssFile(environment: Environment) {
+    return environment === "production" ? osPath.join(ROOT_DIR, "dist", "style.css") : osPath.join(ROOT_DIR, "styles", "style.css");
 }
 
 type RequestLocalStorage = {
@@ -195,9 +193,8 @@ function serveHtmlTemplateIndex(paths: Paths, gpg: Gpg, eta: Eta, cssFileUrl: st
 }
 
 export default async function files(paths: Paths, gpg: Gpg, environment: Environment, eta: Eta, publicRead: boolean) {
-    const publicDir = getPublicDir(environment);
-    const cssFilePath = osPath.join(publicDir, "style.css");
-    const faviconFilePath = osPath.join(publicDir, "favicon.svg");
+    const cssFilePath = getCssFile(environment);
+    const faviconFilePath = osPath.join(ROOT_DIR, "public", "favicon.svg");
 
     const cssFileUrl = "/style.css";
     const cssFileContent = await fs.readFile(cssFilePath, 'utf8');

@@ -60,12 +60,12 @@ while `./data/repo/deb` or `./data/repo/rpm` exists makes the next start
 rebuild the database from the tree (see
 [Rebuilding the database](#rebuilding-the-database)).
 Rebuild the image
-(`--build`) any time you change `server/`, `tsconfig.json`, etc. — the
-container runs the baked-in `dist/`, not source.
+(`--build`) any time you change `server/`, `styles/`, etc. — the
+container runs the sources baked into the image, not your checkout.
 
 `.dockerignore` lets in only what lint, tests and the build read, so a
-new file they need outside `server/`, `tests/`, `types/` and `public/`
-needs a line there.
+new file they need outside `server/`, `tests/`, `types/`, `public/` and
+`styles/` needs a line there.
 
 ## Driving the server: REST upload + MCP import
 
@@ -179,7 +179,7 @@ file — is logged and aborts the start, with nothing on disk changed.
 ```bash
 docker compose stop
 docker compose run --rm simple-repo-manager \
-  node --enable-source-maps ./dist/server.js --rebuild
+  node server/server.ts --rebuild
 # it keeps serving after the rebuild: Ctrl+C, then
 docker compose up -d
 ```

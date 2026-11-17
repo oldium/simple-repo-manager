@@ -59,7 +59,7 @@ export default async function createApp(config: AppConfig, environment: Environm
         res.send('Package Uploader API (TypeScript) is running.');
     });
 
-    const eta = await initEta(config.paths.templateDir, environment);
+    const eta = await initEta(config.paths.templateDir);
 
     app.use("/api", api(config, eta));
 
