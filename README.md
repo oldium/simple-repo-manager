@@ -248,6 +248,7 @@ sudo tee /etc/yum.repos.d/my-repo.repo >/dev/null <<'EOF'
 name=My Repository
 baseurl=<scheme>://<host>:<port>/rpm/<distribution>/<release>/
 enabled=1
+metadata_expire=12h
 gpgcheck=1
 repo_gpgcheck=1
 gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-my-repo
@@ -266,7 +267,9 @@ This configuration expects that the packages are either signed with the
 signature available in the repository public GPG key, or the packages signature
 is already installed in the system keyring. If that is not the case and the
 packages signature should not be verified, you can omit the `gpgcheck=1`
-line.
+line. With `metadata_expire=12h`, DNF looks for new metadata at least every
+twelve hours instead of its default 48, half the day a removed package stays
+downloadable.
 
 If you do not have a signed repository at all, skip the `curl` command and omit
 the `gpgcheck`, `repo_gpgcheck` and `gpgkey` lines in the repository
@@ -294,6 +297,7 @@ sudo tee /etc/yum.repos.d/my-repo.repo >/dev/null <<'EOF'
 name=My Repository
 baseurl=https://my-repo.example.com/rpm/fedora/41/
 enabled=1
+metadata_expire=12h
 gpgcheck=1
 repo_gpgcheck=1
 gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-my-repo

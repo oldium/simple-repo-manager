@@ -512,6 +512,7 @@ describe("get_setup_instructions", () => {
             name=Repository 127.0.0.1
             baseurl=http://HOST/rpm/fedora/42
             enabled=1
+            metadata_expire=12h
             EOF
             \`\`\`
 

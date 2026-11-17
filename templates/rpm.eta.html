@@ -6,6 +6,7 @@
 name=<%= repoName %>
 baseurl=<%= releaseUri %>
 enabled=1
+metadata_expire=12h
 <% if (gpgUri) { -%>
 gpgcheck=1
 repo_gpgcheck=1
