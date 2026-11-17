@@ -235,10 +235,9 @@ curl -sS -X POST http://127.0.0.1:80/api/v1/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call",
        "params":{"name":"import_repository","arguments":{}}}'
 
-# 4. inspect what landed (adjust the find path to match the format
-#    you tested)
-docker compose exec simple-repo-manager bash -lc \
-  'find /app/data/repo/deb -type f | head'
+# 4. inspect what landed, on the host: the image has no shell (adjust
+#    the find path to match the format you tested)
+find ./data/repo/deb -type f | head
 ```
 
 ## End-to-end scripts

@@ -105,21 +105,25 @@ state_digests() {
 
 # Runs as the server's user, so the server can move what it restores
 restore_script=$(cat <<'EOF'
-set -euo pipefail
-cd /app/data
-mkdir -p repo
-cp -R /golden/deb /golden/rpm repo/
-while IFS= read -r line; do
-    link=${line%% -> *}
-    ln -s "${line#* -> }" "/app/${link#./}"
-done < /golden/symlinks.txt
-# Stand-in for the reprepro state, which the capture lacks
-for dir in /golden/deb/*/; do
-    state="repo-state/deb-$(basename "${dir}")"
-    mkdir -p "${state}/conf" "${state}/db"
-    printf 'Codename: stand-in\nComponents: main\nArchitectures: amd64 source\n' > "${state}/conf/distributions"
-    head -c 65536 /dev/urandom > "${state}/db/packages.db"
-done
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+process.chdir("/app/data");
+fs.mkdirSync("repo", { recursive: true });
+for (const format of ["deb", "rpm"]) {
+    fs.cpSync(`/golden/${format}`, `repo/${format}`, { recursive: true });
+}
+for (const line of fs.readFileSync("/golden/symlinks.txt", "utf8").split("\n").filter(Boolean)) {
+    const at = line.indexOf(" -> ");
+    fs.symlinkSync(line.slice(at + 4), `/app/${line.slice(0, at).replace(/^\.\//, "")}`);
+}
+// Stand-in for the reprepro state, which the capture lacks
+for (const dir of fs.readdirSync("/golden/deb", { withFileTypes: true }).filter(entry => entry.isDirectory())) {
+    const state = `repo-state/deb-${dir.name}`;
+    fs.mkdirSync(`${state}/conf`, { recursive: true });
+    fs.mkdirSync(`${state}/db`, { recursive: true });
+    fs.writeFileSync(`${state}/conf/distributions`, "Codename: stand-in\nComponents: main\nArchitectures: amd64 source\n");
+    fs.writeFileSync(`${state}/db/packages.db`, crypto.randomBytes(65536));
+}
 EOF
 )
 
@@ -150,8 +154,8 @@ removed_at() {
 }
 
 check_rebuild() {
-    step restore dc run --rm --no-deps -T -v "${root}/${golden}:/golden:ro" --entrypoint bash simple-repo-manager \
-        -c "${restore_script}" || return 1
+    step restore dc run --rm --no-deps -T -v "${root}/${golden}:/golden:ro" simple-repo-manager \
+        node -e "${restore_script}" || return 1
     step restored compare_restored || return 1
     state_digests > "${work}/state-before.txt" && [[ -s "${work}/state-before.txt" ]] \
         || { reason="cannot hash repo-state/deb-*"; return 1; }
@@ -213,7 +217,8 @@ check_reupload() {
     for name in "${conflict}"/deb/debian/bookworm/main/*; do
         staged+=("data/incoming/process/deb/debian/bookworm/main/${name##*/}")
     done
-    step conflict-cleanup dc exec -T simple-repo-manager rm -f "${staged[@]}" || return 1
+    step conflict-cleanup dc exec -T simple-repo-manager \
+        node -e 'for (const file of process.argv.slice(1)) require("node:fs").rmSync(file, { force: true })' "${staged[@]}" || return 1
     step verify node "${tool}" verify data/repo "${pubkey}" strict || return 1
 }
 

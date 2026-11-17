@@ -972,6 +972,7 @@ For Docker, make a copy of the [`env.example`][env-example] to `.env` file
 docker run --detach \
   --name simple-repo-manager \
   --publish 80:3000 \
+  --init \
   --read-only --tmpfs /tmp \
   --env-file .env \
   --volume ./data:/app/data \
@@ -986,6 +987,7 @@ passing the shorter `--env VARIABLE` form:
 docker run --detach \
   --name simple-repo-manager \
   --publish 80:3000 \
+  --init \
   --read-only --tmpfs /tmp \
   --env UPLOAD_POST_FIELD=file \
   --volume ./data:/app/data \
@@ -1015,6 +1017,7 @@ For the simple `compose.yml` file:
 services:
   simple-repo-manager:
     image: simple-repo-manager
+    init: true
     read_only: true
     tmpfs:
       - /tmp
@@ -1552,14 +1555,8 @@ docker build -t simple-repo-manager .
 ```
 
 This will create a Docker image with the name `simple-repo-manager`. The image
-is self-contained and can be used to run the application in production, the
-server needs nothing but Node.js. For troubleshooting, the image also contains
-`bash`, [BusyBox][busybox] with the standard tools like `ls`, `find`, `grep`,
-`less`, `vi`, `tar` or `ps`, and `zstd` and `rpm2cpio` to inspect packages (see
-[Troubleshooting](#repository-management-api-call-failed)), but no package
-manager.
-
-[busybox]: https://busybox.net/
+is self-contained and can be used to run the application in production. It
+holds Node.js and the server only, with no shell and no package manager.
 
 [dhi]: https://docs.docker.com/dhi/
 
@@ -1584,6 +1581,7 @@ storage, you can use the following command:
 docker run --detach \
   --name simple-repo-manager \
   --publish 80:3000 \
+  --init \
   --read-only --tmpfs /tmp \
   --volume ./data:/app/data \
   simple-repo-manager
@@ -1591,9 +1589,9 @@ docker run --detach \
 
 The application writes only to `/app/data`, the rest of the image is owned by
 `root`. The container can therefore run with a read-only root filesystem, with
-`/tmp` as a tmpfs scratch space for troubleshooting. The image
-already contains [tini][tini] as the init process, so the `--init` option is not
-needed.
+`/tmp` as a tmpfs for the temporary files of SQLite. The image has no init
+process, so the `--init` option puts the one of Docker in front of the server,
+which forwards signals and reaps processes.
 
 By default, the application runs as user `node` with UID/GID `1000:1000`. Use
 the `--user` option to run it as a different user, for example as your own user:
@@ -1602,6 +1600,7 @@ the `--user` option to run it as a different user, for example as your own user:
 docker run --detach \
   --name simple-repo-manager \
   --publish 80:3000 \
+  --init \
   --read-only --tmpfs /tmp \
   --user "$(id -u):$(id -g)" \
   --volume ./data:/app/data \
@@ -1624,8 +1623,6 @@ When running as a different user, change the owner to that user and use a
 bind-mounted directory, because a new named volume would be owned by
 `1000:1000`. When the application cannot access the data directories or the
 mounted files at start-up, it stops and logs their owner and mode.
-
-[tini]: https://github.com/krallin/tini
 
 See the [Configuration](#configuration) section for details on how to configure
 the Docker environment.
@@ -1697,7 +1694,7 @@ Ctrl+C and start the regular container again:
 
 ```bash
 docker stop simple-repo-manager
-docker run --rm -it --env-file .env --volume ./data:/app/data \
+docker run --rm -it --init --env-file .env --volume ./data:/app/data \
   simple-repo-manager node server/server.ts --rebuild
 docker start simple-repo-manager
 ```
@@ -1787,45 +1784,20 @@ or in the case of the Docker Compose:
 docker compose logs simple-repo-manager
 ```
 
-You can then enter the Docker container to inspect the files with the
-following command:
+The image has no shell, so inspect the files on the host, in the directory
+mounted as `/app/data`, for example the packages with the tools of the host:
 
 ```bash
-docker exec -it simple-repo-manager bash
-```
-
-or in the case of the Docker Compose:
-
-```bash
-docker compose exec simple-repo-manager bash
-```
-
-The packages can be inspected with the BusyBox tools, which cannot decompress
-zstd used by Ubuntu, Fedora and Enterprise Linux 9 packages, so pipe them
-through `zstd` or use `rpm2cpio`. Extract the files to the writable `/tmp`:
-
-```bash
-ar t package.deb
-ar p package.deb control.tar.zst | zstd -dc | tar -xO ./control
-ar p package.deb data.tar.zst | zstd -dc | tar -t
+dpkg-deb --info package.deb
+dpkg-deb --contents package.deb
 rpm -qpi package.rpm
 rpm -qpl package.rpm
-cd /tmp && rpm2cpio package.rpm | cpio -idm
 ```
 
-For packages with `.xz` members, replace `zstd -dc` with `xz -dc`.
-
-If you have the persistent storage mounted as a host directory into the
-container, you can benefit from using the local tools instead of inspecting the
-files in the container directly.
-
-The shell runs as the same user as the application.
-
 > [!IMPORTANT]
-> Do not enter the container as `root` (`-u root`) to test anything. Files
-> created by `root` inside the `INCOMING_DIR`, `REPO_DIR` or `REPO_STATE_DIR`
-> are not accessible by the application, and nothing fixes their ownership
-> automatically.
+> Do not create or change files in `INCOMING_DIR`, `REPO_DIR` or
+> `REPO_STATE_DIR` as `root`. The application cannot access them, and nothing
+> fixes their ownership automatically.
 
 ### Uploading and Re-uploading Debian Packages
 

@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    init: true
     read_only: true
     tmpfs:
       - /tmp
