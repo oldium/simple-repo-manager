@@ -1371,13 +1371,15 @@ at the start. Choose an algorithm the clients of your repositories can verify,
 as newer ones may not work on older distributions. For example, Debian Bullseye,
 Ubuntu Noble and CentOS Stream 9 cannot verify algorithm 27 (RFC 9580 Ed25519).
 
-A new key needs no restart. Every import, also with nothing to import, compares
-the date and size of the key file. When they changed, the new public key is added
-to the keyrings below and the published releases are signed again. A changed file
-the server cannot use refuses the import with `503`, and uploads stay where they
-are until the file is fixed. When the file is gone, the server logs a warning and
-keeps signing with the key it has until the next start. A removal signs with the
-key loaded so far.
+A new key needs no restart. Every action that signs compares the date and size
+of the key file first: an import, also one with nothing to import, a removal,
+and the garbage collection when it repairs a failed publish. When they changed,
+the new public key is added to the keyrings below and the published releases
+are signed again, see [Rotating the Signing Key](#rotating-the-signing-key). A
+changed file the server cannot use refuses the import or the removal with
+`503`, and uploads stay where they are until the file is fixed. When the file is
+gone, the server logs a warning and keeps signing with the key it has until the
+next start.
 
 [openpgpjs]: https://openpgpjs.org/
 
@@ -1407,8 +1409,8 @@ The key file must be readable by the user the container runs as, see
 [Docker Build](#docker-build).
 
 The public key is extracted automatically during server start-up, and when an
-import finds a changed key file, from the private key and is _added_ as an
-ASCII-armored key to the repository files
+action that signs finds a changed key file, from the private key and is _added_
+as an ASCII-armored key to the repository files
 `<REPO_DIR>/deb/archive-keyring.asc` and `<REPO_DIR>/rpm/RPM-GPG-KEY.asc`, which
 correspond to the following URIs:
 
@@ -1456,7 +1458,8 @@ repository metadata. The uploader must sign the packages themselves.
 
 An upload has to be signed by one of the keys that verify uploads: the keys in
 `GPG_PUBLIC_KEYS_FILE`, which can hold several, the keys in the files of
-`GPG_PUBLIC_KEYS_DIR`, and the public part of `GPG_REPO_PRIVATE_KEY_FILE`.
+`GPG_PUBLIC_KEYS_DIR`, and the public part of `GPG_REPO_PRIVATE_KEY_FILE`. The
+import verifies the uploads, the upload itself only stages the files.
 
 ```dotenv
 GPG_PUBLIC_KEYS_FILE=gpg-keyring.asc
@@ -1479,18 +1482,58 @@ in `INCOMING_DIR`, naming the reason, for:
 Without any key the server warns at the start that it cannot verify, and for
 every signed file it imports.
 
-The start log names the keys. They are read again at every import, so a changed
-file counts at once. A configured file or directory that does not exist, or a
-directory with no file in it, is a wrong configuration and refuses the start;
-during a run it only warns, and the keys loaded before stay. A file that cannot
-be read refuses the start and later the import, with nothing moved. A rebuild does
-not verify anything: what is published stays, also after a key changed.
+The start log names the keys. Every import reads `GPG_PUBLIC_KEYS_FILE` and
+every file in `GPG_PUBLIC_KEYS_DIR` again, so a changed file, and a file added
+to or removed from the directory, counts from that import on without a restart.
+A configured file or directory that does not exist, or a directory with no file
+in it, is a wrong configuration and refuses the start; during a run it only
+warns, and the keys loaded before stay. A file that cannot be read refuses the
+start and later the import, with nothing moved. A rebuild does not verify
+anything: what is published stays, also after a key changed.
 
 A signature says who built a package, not where it goes: the upload URL decides
 that, within the releases its `.changes` allows. The repository is a storage, so
 an older signed version can be uploaded again too. Changing files in
 `INCOMING_DIR` directly is what an administrator does to fix things, and not
 checked against.
+
+### Rotating the Signing Key
+
+To change the key that signs the repository metadata, replace the file of
+`GPG_REPO_PRIVATE_KEY_FILE` with the new private key. Any of these activates it:
+
+* A restart of the server.
+* An import with nothing to import, a `POST` to `/api/v1/repo/import`, see
+  [Repository Management API](#repository-management-api).
+* An import of uploaded packages.
+* A removal of packages.
+
+An import and a removal notice the new key by the changed date or size of the
+file, as every action that signs checks it first. The hourly garbage collection
+only deletes what the grace period released and does not sign. Only when it
+repairs a failed publish does it sign, and then it checks the key file first
+too.
+
+When it activates the new key, the server by itself:
+
+* Adds the new public key to the published keyrings, which keep the old one
+  next to it, see [Signing Repository Metadata](#signing-repository-metadata).
+* Signs the published releases again with the new key.
+* Verifies the uploads it imports with the new key, and no longer with the old
+  one, also in the import that activates it. Importing an upload signed with the
+  old key fails, also one already waiting in `INCOMING_DIR`. What is published
+  already stays.
+
+What has to be done by hand:
+
+* Every client fetches the keyring again, as its setup instructions do. Until
+  then, it cannot verify the repository signed with the new key.
+* If newly uploaded files signed with the old key are to be trusted, put the old
+  public key into `GPG_PUBLIC_KEYS_FILE` or into a file in
+  `GPG_PUBLIC_KEYS_DIR`. Every import reads the file and all files of the
+  directory again, so the key counts from the next import on, without a
+  restart. Removing it there later stops trusting it the same way, see
+  [Verifying Uploads](#verifying-uploads).
 
 ## Production Build
 

@@ -997,6 +997,69 @@ describe("Tests for a changed signing key file", () => {
         await backend.close();
     }));
 
+    test("A removal signs again with a changed key and adds it to the keyrings", withLocalTmpDir(async () => {
+        const backend = await published();
+        await replaceKeyFile(otherKey);
+
+        await backend.remove({ source: "srm-hello" });
+
+        await expectSignedDeb();
+        await expectSignedRpm();
+        const fingerprint = (await openpgp.readPrivateKey({ armoredKey: otherKey })).getFingerprint();
+        for (const keyring of KEYRINGS) {
+            expect(await keyringFingerprints(keyring)).toEqual([fingerprint]);
+        }
+        await backend.close();
+    }));
+
+    test("A key file changed to garbage refuses the removal and removes nothing", withLocalTmpDir(async () => {
+        const backend = await published();
+        const listed = sources(backend);
+        const before = await signatures();
+        await replaceKeyFile("not a key");
+        const error = jest.spyOn(logger, "error").mockReturnValue(logger);
+
+        await expect(backend.remove({ source: "srm-hello" })).rejects.toStrictEqual(new RepoServiceUnavailableError("The signing key file changed and cannot be used, nothing was removed. See server logs for details"));
+
+        expect(error).toHaveBeenCalledWith("Refusing the removal, the signing key file changed and cannot be used", { err: expect.anything() });
+        error.mockRestore();
+        expect(sources(backend)).toEqual(listed);
+        expect(await signatures()).toEqual(before);
+        await backend.close();
+    }));
+
+    test("The garbage collection, which does not sign, leaves a changed key to the next action that does", withLocalTmpDir(async () => {
+        await stage(TRIXIE);
+        await stage(RPMS);
+        const { backend, tick } = await openWithGcTick();
+        await backend.importStaged();
+        const before = await signatures();
+        await replaceKeyFile(otherKey);
+
+        tick();
+        await backend.close();
+
+        expect(await signatures()).toEqual(before);
+        expect(await exists(repoFile(KEYRINGS[0]))).toBe(false);
+    }));
+
+    test("The garbage collection signs with a changed key when it repairs a failed publish", withLocalTmpDir(async () => {
+        await stage(TRIXIE);
+        await stage(RPMS);
+        const { backend, tick } = await openWithGcTick();
+        await backend.importStaged();
+        const unblock = await blockWrite(dists("Release"));
+        await expect(backend.remove({ source: "srm-hello" })).rejects.toThrow();
+        await unblock();
+        await replaceKeyFile(otherKey);
+
+        tick();
+        await backend.close();
+
+        await expectSignedDeb();
+        await expectSignedRpm();
+    }));
+
     test.each<[string, () => Promise<string>]>([
         ["garbage", async () => "not a key"],
         ["a protected key", async () => (await openpgp.generateKey({ type: "curve25519", userIDs: [{ name: "p" }], passphrase: "secret", format: "armored" })).privateKey],

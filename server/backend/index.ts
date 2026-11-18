@@ -52,6 +52,10 @@ const FORMATS: Format[] = ["deb", "rpm"];
 
 const PACKAGES_CURSOR = "packages:";
 
+type SigningAction = "import" | "removal" | "garbage collection";
+
+const NOTHING_DONE: Record<SigningAction, string> = { "import": "imported", "removal": "removed", "garbage collection": "collected" };
+
 function packageQuery(f: PackageSearchFilter): PackageQuery {
     return {
         distro: f.distribution, release: f.release, name: f.name, source: f.source, kinds: f.kind, architectures: f.architecture,
@@ -162,6 +166,8 @@ export class Backend {
         this.gc = startGc(this.ctx, <T>(fn: () => Promise<T>) => this.mutex.run(async () => {
             // A failure here skips the collection: a stale Release still names what it would delete
             if (this.repairDue) {
+                // Only this repair signs, the collection itself does not
+                await this.refreshSigningKey("garbage collection");
                 await this.publish();
             }
             return fn();
@@ -173,7 +179,7 @@ export class Backend {
         this.assertOpen();
         const run = lock.forExecOnce(() => this.mutex.run(async () => {
             this.assertNotSealed();
-            await this.refreshSigningKey();
+            await this.refreshSigningKey("import");
             await this.refreshUploadKeys();
             await moveAll(osPath.join(this.ctx.paths.incomingDir, "staging"), osPath.join(this.ctx.paths.incomingDir, "process"));
             return this.importProcess();
@@ -191,6 +197,7 @@ export class Backend {
         this.assertOpen();
         return this.mutex.run(async () => {
             this.assertNotSealed();
+            await this.refreshSigningKey("removal");
             const now = this.ctx.now();
             const files = new Map<string, RemovalFile>();
             const deleteNow = new Map<string, Format>();
@@ -356,10 +363,11 @@ export class Backend {
     }
 
     /**
-     * A key file with another date or size takes over, so a new key needs no restart: its public part goes to the keyrings
-     * first, then the publish of this import signs again. A file that cannot be used refuses the import, with nothing moved.
+     * Before every action that signs: a key file with another date or size takes over, so a new key needs no restart. Its
+     * public part goes to the keyrings first, then the publish of the action signs again. A file that cannot be used refuses
+     * the action, with nothing changed.
      */
-    private async refreshSigningKey(): Promise<void> {
+    private async refreshSigningKey(action: SigningAction): Promise<void> {
         const stamp = await keyFileStamp(this.signingKeyFile);
         if (stamp === this.signingKeyStamp) {
             return;
@@ -368,8 +376,8 @@ export class Backend {
         try {
             key = await loadSigningKey(this.signingKeyFile);
         } catch (err) {
-            logger.error("Refusing the import, the signing key file changed and cannot be used", { err });
-            throw new RepoServiceUnavailableError("The signing key file changed and cannot be used, nothing was imported. See server logs for details", { cause: err });
+            logger.error(`Refusing the ${ action }, the signing key file changed and cannot be used`, { err });
+            throw new RepoServiceUnavailableError(`The signing key file changed and cannot be used, nothing was ${ NOTHING_DONE[action] }. See server logs for details`, { cause: err });
         }
         if (key === undefined) {
             logger.warn(`GPG key file ${ this.signingKeyFile } does not exist, signing with the key loaded before.`);
