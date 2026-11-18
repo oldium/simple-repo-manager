@@ -1567,10 +1567,11 @@ holds Node.js and the server only, with no shell and no package manager.
 > [!NOTE]
 > The author of Simple Repo Manager creates the release builds with the
 > following command, which ensures that fresh third-party images are used and
-> adds additional metadata to the Docker image itself:
+> adds additional metadata to the Docker image itself. [RELEASING.md](RELEASING.md)
+> describes the whole release:
 >
 > ```bash
-> docker buildx build --progress=plain --attest type=provenance,mode=max \
+> docker buildx build --progress=plain --pull --attest type=provenance,mode=max \
 >   --attest type=sbom,generator=docker/scout-sbom-indexer:latest \
 >   --no-cache -f .\Dockerfile . -t simple-repo-manager
 > ```
