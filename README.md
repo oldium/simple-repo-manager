@@ -1903,3 +1903,7 @@ external Nginx reverse proxy but can run behind it as well.
 [openrepo]: https://github.com/openkilt/openrepo
 
 [pulp]: https://www.pulpproject.org/
+
+## License
+
+Simple Repository Manager is licensed under the [BSD 2-Clause License](LICENSE.md).
